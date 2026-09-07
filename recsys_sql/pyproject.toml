@@ -1,0 +1,30 @@
+[project]
+name = "recsys-sql"
+version = "0.1.0"
+description = "추천 비즈니스 로직 SQL + pytest 검증 환경"
+requires-python = "==3.11.*"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.13.1",
+    "sqlalchemy[asyncio]>=2.0.44",
+]
+
+[project.scripts]
+recsys-sql = "recsys_sql.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recsys_sql"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "db: 실제 Neon DB 연결이 필요한 테스트 (DATABASE_URL 없으면 skip)",
+    "llm: 실제 OpenAI API 호출이 필요한 테스트 (기본 skip)",
+]
