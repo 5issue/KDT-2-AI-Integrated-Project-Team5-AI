@@ -119,6 +119,23 @@ SLOT_DERIVATION: dict[str, tuple[str, str]] = {
 STORAGE_SLOTS = tuple(SLOT_DERIVATION)
 
 
+def ingredient_match_key(name: str) -> str:
+    """재료명을 매칭용 키로 바꿉니다. 공백을 전부 없애고 소문자로 만듭니다.
+
+    2단계 LLM 이 같은 재료를 띄어쓰기만 다르게 내놓는 일이 실제로 있었습니다.
+    331건 표본에서 `베이킹파우더`(26회) 와 `베이킹 파우더`(23회) 가 따로 잡혀
+    같은 재료가 두 종으로 쪼개졌습니다. 종이 갈리면 3단계 호출이 늘고,
+    한쪽만 매칭되면 나머지 레시피의 재료가 통째로 빠집니다.
+
+    공백을 '하나로 줄이는' 대신 '전부 없애는' 이유는 한국어 합성어 때문입니다.
+    `베이킹 파우더` 와 `베이킹파우더` 는 하나로 줄여도 여전히 다릅니다.
+
+    **`resolve` 와 `load` 가 반드시 같은 함수를 써야 합니다.** staging 두 테이블이
+    이 값으로 조인하기 때문에, 한쪽만 바뀌면 조인이 통째로 어긋납니다.
+    """
+    return "".join(name.split()).lower()
+
+
 def derive_storage_columns(slot: str) -> tuple[str, str]:
     """source_slot 에서 storage_location / storage_context 를 정합니다."""
     try:

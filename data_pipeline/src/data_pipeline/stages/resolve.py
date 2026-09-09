@@ -25,7 +25,7 @@ from sqlalchemy import text
 from data_pipeline.batch.client import BatchRunner, build_chat_request
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import engine_scope
-from data_pipeline.domain import SAFETY_RULES, load_terminology
+from data_pipeline.domain import SAFETY_RULES, ingredient_match_key, load_terminology
 from data_pipeline.schemas import IngredientMatchBatch
 from data_pipeline.stages import STAGE_RESOLVE
 
@@ -120,7 +120,7 @@ def collect_names(records_dir: Path) -> list[NameRequest]:
     seen: dict[str, NameRequest] = {}
 
     def add(normalized: str, display: str, raw: str) -> None:
-        key = (normalized or "").strip().lower()
+        key = ingredient_match_key(normalized or "")
         if not key:
             return
         if key in seen:
@@ -183,9 +183,10 @@ async def exact_match(
                         "       CASE WHEN LOWER(BTRIM(i.normalized_name)) = w.normalized_name THEN 0 "
                         "            WHEN LOWER(BTRIM(i.name)) = w.normalized_name THEN 1 ELSE 2 END AS rank "
                         "FROM wanted w JOIN ingredient i "
-                        "  ON LOWER(BTRIM(i.normalized_name)) = w.normalized_name "
-                        "  OR LOWER(BTRIM(i.name)) = w.normalized_name "
-                        "  OR EXISTS (SELECT 1 FROM UNNEST(i.aliases) a WHERE LOWER(BTRIM(a)) = w.normalized_name) "
+                        "  ON LOWER(REGEXP_REPLACE(i.normalized_name, '\\s', '', 'g')) = w.normalized_name "
+                        "  OR LOWER(REGEXP_REPLACE(i.name, '\\s', '', 'g')) = w.normalized_name "
+                        "  OR EXISTS (SELECT 1 FROM UNNEST(i.aliases) a "
+                        "             WHERE LOWER(REGEXP_REPLACE(a, '\\s', '', 'g')) = w.normalized_name) "
                         "ORDER BY w.normalized_name, rank, (i.parent_ingredient_id IS NULL) DESC, i.ingredient_id"
                     ),
                     {"names": [item.normalized_name for item in names]},
@@ -337,7 +338,8 @@ def collect(
     for _, parsed in outcome.records:
         assert isinstance(parsed, IngredientMatchBatch)
         for match in parsed.matches:
-            name = match.source_name.strip().lower()
+            # LLM 이 공백을 넣거나 빼서 돌려줄 수 있으므로 보낼 때와 같은 키로 되돌립니다.
+            name = ingredient_match_key(match.source_name)
             if name not in requested or name in decided:
                 continue
             decided.add(name)

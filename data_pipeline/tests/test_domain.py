@@ -85,3 +85,29 @@ def test_contracts_mention_actual_columns() -> None:
     assert "source_recipe_id" in TARGET_TABLE_CONTRACTS
     assert "ingredient_id" in TARGET_TABLE_CONTRACTS
     assert "ingredient_id2" not in TARGET_TABLE_CONTRACTS
+
+
+def test_match_key_collapses_spacing_variants() -> None:
+    """같은 재료가 띄어쓰기만 달라 두 종으로 갈리면 3단계 호출이 늘고 적재가 빠집니다.
+
+    331건 표본에서 실제로 `베이킹파우더`(26회) 와 `베이킹 파우더`(23회) 가 따로 잡혔습니다.
+    """
+    from data_pipeline.domain import ingredient_match_key
+
+    assert ingredient_match_key("베이킹 파우더") == ingredient_match_key("베이킹파우더")
+    assert ingredient_match_key("  다진 마늘  ") == "다진마늘"
+    assert ingredient_match_key("Olive Oil") == "oliveoil"
+    assert ingredient_match_key("") == ""
+
+
+def test_match_key_is_shared_by_resolve_and_load() -> None:
+    """staging 두 테이블이 이 값으로 조인합니다. 한쪽만 바뀌면 조인이 통째로 어긋납니다."""
+    import inspect
+
+    from data_pipeline.load import bulk_insert
+    from data_pipeline.stages import resolve
+
+    for module in (bulk_insert, resolve):
+        source = inspect.getsource(module)
+        assert "ingredient_match_key(" in source, f"{module.__name__} 이 공용 키 함수를 쓰지 않습니다"
+        assert ".strip().lower()" not in source, f"{module.__name__} 에 옛 정규화가 남아 있습니다"

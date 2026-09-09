@@ -29,7 +29,7 @@ import asyncpg
 
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import engine_scope
-from data_pipeline.domain import derive_storage_columns
+from data_pipeline.domain import derive_storage_columns, ingredient_match_key
 
 STAGING_RECIPE_COLUMNS = (
     "source_type",
@@ -216,7 +216,7 @@ def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str
     _append_recipe_steps(rows, payload, source_type=source_type, source_id=source_id)
 
     for line_no, item in enumerate(payload.get("ingredients", []), start=1):
-        normalized = str(item.get("normalized_name") or "").strip().lower()
+        normalized = ingredient_match_key(str(item.get("normalized_name") or ""))
         if not normalized:
             continue
         if normalized not in matches:
@@ -267,7 +267,7 @@ def _append_recipe_steps(
 
 def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[str, int]) -> None:
     """ExtractedStorageItem 한 건을 staging 행으로."""
-    normalized = str(payload.get("normalized_name") or "").strip().lower()
+    normalized = ingredient_match_key(str(payload.get("normalized_name") or ""))
     source_item_id = str(payload.get("source_item_id") or payload.get("_entity_key") or "").strip()
     if not source_item_id:
         return
