@@ -36,7 +36,9 @@ venv = ".venv"
 
 [dependency-groups]
 dev = [
+    "alembic>=1.19.2",
     "pre-commit>=4.6.2",
+    "psycopg[binary]>=3.3.5",
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
