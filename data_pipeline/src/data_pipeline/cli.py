@@ -152,10 +152,23 @@ def command_resolve(args: argparse.Namespace) -> int:
 
 
 def command_submit(args: argparse.Namespace) -> int:
-    """단계별 배치 제출."""
+    """단계별 배치 제출. --parts 로 몇 파트만 넣을 수 있습니다."""
     runner = BatchRunner(STAGE_NAMES[args.stage], get_settings())
-    for job in runner.submit(args.job):
+    try:
+        already = {job.batch_id for job in runner.load_manifest(args.job)}
+    except FileNotFoundError:
+        already = set()
+
+    jobs = runner.submit(args.job, max_parts=args.parts if args.parts > 0 else None)
+    fresh = [job for job in jobs if job.batch_id not in already]
+    for job in fresh:
         print(f"제출: {job.input_file} -> {job.batch_id} ({job.status})")
+    if not fresh:
+        print("새로 제출할 파트가 없습니다.")
+
+    remaining = len(runner.pending_parts(args.job))
+    if remaining:
+        print(f"남은 파트 {remaining}개. 이번 파트가 끝난 뒤 같은 명령을 다시 실행하세요.")
     return 0
 
 
@@ -250,6 +263,12 @@ def build_parser() -> argparse.ArgumentParser:
     submit = sub.add_parser("submit", help="배치 제출")
     submit.add_argument("--stage", required=True, choices=sorted(STAGE_NAMES))
     submit.add_argument("--job", required=True)
+    submit.add_argument(
+        "--parts",
+        type=int,
+        default=1,
+        help="이번에 제출할 파트 수 (기본 1). 대기 토큰 한도 때문에 나눠 넣습니다. 0 이면 전부",
+    )
     submit.set_defaults(func=command_submit)
 
     collect = sub.add_parser("collect", help="결과 수거 + 중간 산출물 생성")

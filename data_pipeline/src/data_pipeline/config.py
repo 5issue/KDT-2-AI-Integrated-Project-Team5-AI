@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     terminology_path: Path | None = None
 
     batch_max_requests: int = Field(default=40_000, ge=1, le=50_000)
+    # 입력 파일 하나에 담을 토큰 상한. OpenAI 는 조직 단위로 "대기 중인 토큰" 한도를 두는데
+    # (gpt-4.1-mini 기준 200만) 한 번에 넘기면 배치가 몇 초 만에 token_limit_exceeded 로
+    # 죽습니다. 파일을 나눠 순차 제출하려고 둡니다.
+    batch_max_tokens: int = Field(default=1_000_000, ge=1_000)
     copy_chunk_size: int = Field(default=5_000, ge=1)
     dry_run: bool = False
 

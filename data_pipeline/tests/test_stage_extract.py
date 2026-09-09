@@ -248,3 +248,42 @@ def test_recipe_prompt_states_normalization_rules(tmp_settings: Settings) -> Non
     assert "단위(unit)도 한국어로 통일한다" in system
     assert "description 에 URL 이나 출처 표기를 넣지 않는다" in system
     assert "원문의 번호 접두사를 뗀다" in system
+
+
+def test_requests_split_by_token_budget(tmp_settings: Settings) -> None:
+    """대기 토큰 한도 때문에 파일 하나가 예산을 넘으면 안 됩니다.
+
+    실제로 3.81M 토큰짜리 파일 하나를 넣었다가 배치가 64초 만에
+    token_limit_exceeded 로 죽었습니다.
+    """
+    from data_pipeline.batch.client import BatchRunner, estimate_tokens
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    tmp_settings.batch_max_tokens = 5_000
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    requests = [{"custom_id": f"r-{i:03d}", "body": {"messages": [{"content": "가" * 5_000}]}} for i in range(6)]
+    paths = runner.write_requests(requests, job_name="x9")
+
+    assert len(paths) > 1, "예산을 넘겼는데 파일이 하나뿐입니다."
+    for path in paths:
+        lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+        assert sum(estimate_tokens(line) for line in lines) <= tmp_settings.batch_max_tokens
+
+
+def test_submit_skips_parts_already_submitted(tmp_settings: Settings) -> None:
+    """파트를 나눠 순차 제출하려면 이미 넣은 것을 다시 넣지 않아야 합니다."""
+    from data_pipeline.batch.client import BatchJob, BatchRunner
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    for part in (1, 2, 3):
+        (runner.requests_dir / f"x9_part{part:03d}_input.jsonl").write_text("{}\n", encoding="utf-8")
+
+    assert len(runner.pending_parts("x9")) == 3
+    runner.save_manifest(
+        "x9",
+        [BatchJob("x9_part001_input.jsonl", "file-1", "batch_1", "completed", "2026-09-09T00:00:00+00:00")],
+    )
+    pending = runner.pending_parts("x9")
+    assert [path.name for path in pending] == ["x9_part002_input.jsonl", "x9_part003_input.jsonl"]
