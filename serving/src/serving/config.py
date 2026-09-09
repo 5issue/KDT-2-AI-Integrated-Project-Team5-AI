@@ -2,10 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # src/serving/config.py -> serving/
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
-    cors_allow_origins: tuple[str, ...] = ()
+    cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
     @field_validator("cors_allow_origins", mode="before")

@@ -53,7 +53,12 @@ def synthetic_rows(ingredient_id: int) -> StagingRows:
                 "끓이기",
                 '{"calories_kcal": 100}',
                 ["한식"],
+                "https://example.test/recipe-1.jpg",
             )
+        ],
+        recipe_steps=[
+            (SOURCE_TYPE, "recipe-1", 1, "재료를 손질한다", None),
+            (SOURCE_TYPE, "recipe-1", 2, None, "https://example.test/step-2.jpg"),
         ],
         recipe_ingredients=[
             (
@@ -128,7 +133,7 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
             await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
             await assert_prerequisites(conn)
             await conn.execute(
-                "TRUNCATE staging_recipe, staging_recipe_ingredient, "
+                "TRUNCATE staging_recipe, staging_recipe_step, staging_recipe_ingredient, "
                 "staging_storage_guideline, staging_ingredient_match"
             )
             await copy_staging(conn, synthetic_rows(int(ingredient_id)), chunk_size=100)
@@ -143,7 +148,26 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
             guidelines = await conn.fetchval(
                 "SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'"
             )
-            assert (recipes, lines, guidelines) == (1, 1, 1)
+            steps = await conn.fetchval(
+                "SELECT COUNT(*) FROM recipe_step rs JOIN recipe r USING (recipe_id) WHERE r.source_type = $1",
+                SOURCE_TYPE,
+            )
+            assert (recipes, lines, guidelines, steps) == (1, 1, 1, 2)
+
+            # 대표 사진과 단계 사진이 실제로 들어갔는지.
+            assert (
+                await conn.fetchval("SELECT image_url FROM recipe WHERE source_type = $1", SOURCE_TYPE)
+                == "https://example.test/recipe-1.jpg"
+            )
+            # 설명 없이 사진만 있는 단계도 CHECK 를 통과해야 합니다.
+            assert (
+                await conn.fetchval(
+                    "SELECT rs.image_url FROM recipe_step rs JOIN recipe r ON r.recipe_id = rs.recipe_id "
+                    "WHERE r.source_type = $1 AND rs.step_no = 2",
+                    SOURCE_TYPE,
+                )
+                == "https://example.test/step-2.jpg"
+            )
 
             # 매칭 전용 정책: 적재 SQL 은 마스터에 행을 추가하지 않는다.
             assert await conn.fetchval("SELECT COUNT(*) FROM ingredient") == before
@@ -155,7 +179,11 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
             again_guidelines = await conn.fetchval(
                 "SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'"
             )
-            assert (again, again_guidelines) == (1, 1)
+            again_steps = await conn.fetchval(
+                "SELECT COUNT(*) FROM recipe_step rs JOIN recipe r USING (recipe_id) WHERE r.source_type = $1",
+                SOURCE_TYPE,
+            )
+            assert (again, again_guidelines, again_steps) == (1, 1, 2)
 
             raise RollbackError
 

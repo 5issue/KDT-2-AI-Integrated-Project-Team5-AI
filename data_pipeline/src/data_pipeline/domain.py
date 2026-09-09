@@ -58,7 +58,7 @@ def load_terminology(path: Path | None = None) -> str:
 # 타깃 테이블 계약 (실제 Neon 스키마 기준. 문서가 아니라 DB 를 정본으로 씁니다)
 # ---------------------------------------------------------------------------
 
-TARGET_TABLES = ("recipe", "recipe_ingredient", "storage_guideline")
+TARGET_TABLES = ("recipe", "recipe_ingredient", "recipe_step", "storage_guideline")
 
 TARGET_TABLE_CONTRACTS = """\
 [적재 대상 테이블 (실제 Neon 스키마)]
@@ -68,7 +68,16 @@ recipe
   name varchar(255) 필수 / description text / cuisine_type varchar(50) / difficulty varchar(20)
   prep_time_min int / cook_time_min int / servings numeric(5,2) / cooking_method varchar(50)
   nutrition jsonb (기본 {}) / tags text[] (기본 {})
+  image_url text  -- 레시피 대표 사진 URL. 원문에 있으면 그대로 넣는다
   * category_id, embedding 은 이 파이프라인에서 채우지 않는다.
+  * description 에 조리 순서를 몰아넣지 않는다. 순서는 recipe_step 으로 분리한다.
+
+recipe_step
+  PK (recipe_id, step_no)  -- step_no 는 1부터 시작하는 표시 순서
+  instruction text / image_url text
+  * instruction 과 image_url 중 **적어도 하나는 있어야 한다**(CHECK 제약).
+  * step_no 는 원천의 단계 번호가 아니라 1,2,3... 으로 정리한 순서다. 빈 번호를 두지 않는다.
+  * 단계 정보가 없는 레시피는 행을 하나도 갖지 않는다. 지어내지 않는다.
 
 recipe_ingredient
   PK (recipe_id, ingredient_id)  -- ingredient_id 는 기존 마스터를 참조. 새로 만들지 않는다.

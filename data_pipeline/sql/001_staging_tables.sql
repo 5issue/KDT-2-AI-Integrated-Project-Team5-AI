@@ -16,7 +16,19 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe (
     cooking_method TEXT,
     nutrition      JSONB  NOT NULL DEFAULT '{}'::jsonb,
     tags           TEXT[] NOT NULL DEFAULT '{}',
+    image_url      TEXT,
     PRIMARY KEY (source_type, source_id)
+);
+
+-- 조리 단계. recipe.description 에 순서를 몰아넣지 않고 단계로 분리합니다.
+-- instruction 과 image_url 이 둘 다 비면 recipe_step 의 CHECK 에 걸리므로 적재 전에 거릅니다.
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe_step (
+    source_type TEXT    NOT NULL,
+    source_id   TEXT    NOT NULL,
+    step_no     INTEGER NOT NULL,
+    instruction TEXT,
+    image_url   TEXT,
+    PRIMARY KEY (source_type, source_id, step_no)
 );
 
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe_ingredient (

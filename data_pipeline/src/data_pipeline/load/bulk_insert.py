@@ -44,7 +44,9 @@ STAGING_RECIPE_COLUMNS = (
     "cooking_method",
     "nutrition",
     "tags",
+    "image_url",
 )
+STAGING_RECIPE_STEP_COLUMNS = ("source_type", "source_id", "step_no", "instruction", "image_url")
 STAGING_RECIPE_INGREDIENT_COLUMNS = (
     "source_type",
     "source_id",
@@ -85,6 +87,7 @@ SQL_STEPS = (
     "002_insert_recipe.sql",
     "003_insert_recipe_ingredient.sql",
     "004_insert_storage_guideline.sql",
+    "005_insert_recipe_step.sql",
 )
 
 
@@ -94,10 +97,12 @@ class StagingRows:
 
     recipes: list[tuple[Any, ...]] = field(default_factory=list)
     recipe_ingredients: list[tuple[Any, ...]] = field(default_factory=list)
+    recipe_steps: list[tuple[Any, ...]] = field(default_factory=list)
     storage: list[tuple[Any, ...]] = field(default_factory=list)
     matches: list[tuple[Any, ...]] = field(default_factory=list)
     skipped_ingredients: int = 0
     skipped_storage: int = 0
+    skipped_steps: int = 0
 
     def is_empty(self) -> bool:
         """적재할 것이 하나도 없는지."""
@@ -113,6 +118,7 @@ class LoadReport:
     row_counts: dict[str, int] = field(default_factory=dict)
     skipped_ingredients: int = 0
     skipped_storage: int = 0
+    skipped_steps: int = 0
 
     def render(self) -> str:
         """사람이 읽을 요약."""
@@ -121,6 +127,8 @@ class LoadReport:
             lines.append(f"{'매칭 실패로 건너뛴 재료줄':<28}: {self.skipped_ingredients}행")
         if self.skipped_storage:
             lines.append(f"{'매칭 실패로 건너뛴 보관기준':<28}: {self.skipped_storage}행")
+        if self.skipped_steps:
+            lines.append(f"{'내용이 비어 건너뛴 조리단계':<28}: {self.skipped_steps}행")
         lines.append(f"{'적용한 SQL':<28}: {', '.join(self.applied_sql) or '없음'}")
         lines.extend(f"{table:<28}: {count}행 (적재 후)" for table, count in sorted(self.row_counts.items()))
         return "\n".join(lines)
@@ -201,8 +209,11 @@ def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str
             _truncate(payload.get("cooking_method"), 50),
             json.dumps(nutrition, ensure_ascii=False),
             [tag.strip() for tag in payload.get("tags", []) if str(tag).strip()],
+            _truncate(payload.get("image_url"), 2000),
         )
     )
+
+    _append_recipe_steps(rows, payload, source_type=source_type, source_id=source_id)
 
     for line_no, item in enumerate(payload.get("ingredients", []), start=1):
         normalized = str(item.get("normalized_name") or "").strip().lower()
@@ -225,6 +236,33 @@ def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str
                 _truncate(item.get("purpose"), 50),
             )
         )
+
+
+def _append_recipe_steps(
+    rows: StagingRows,
+    payload: dict[str, Any],
+    *,
+    source_type: str,
+    source_id: str,
+) -> None:
+    """ExtractedRecipe 의 조리 단계를 staging 행으로.
+
+    `recipe_step` 은 instruction 과 image_url 중 하나는 있어야 한다는 CHECK 를 갖습니다.
+    둘 다 빈 단계를 그대로 밀면 적재 전체가 롤백되므로 여기서 걸러 리포트에 셉니다.
+
+    step_no 는 LLM 이 준 번호를 믿지 않고 **살아남은 단계에 1부터 다시 매깁니다.**
+    빈 단계를 걸러내면 번호에 구멍이 생기는데, PK 가 (recipe_id, step_no) 라
+    구멍 자체는 문제가 없지만 화면이 순서를 그대로 쓰기 때문에 촘촘한 편이 낫습니다.
+    """
+    step_no = 0
+    for item in payload.get("steps") or []:
+        instruction = (str(item.get("instruction")).strip() if item.get("instruction") else None) or None
+        image_url = _truncate(item.get("image_url"), 2000)
+        if instruction is None and image_url is None:
+            rows.skipped_steps += 1
+            continue
+        step_no += 1
+        rows.recipe_steps.append((source_type, source_id, step_no, instruction, image_url))
 
 
 def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[str, int]) -> None:
@@ -301,6 +339,7 @@ async def copy_staging(conn: asyncpg.Connection, rows: StagingRows, *, chunk_siz
     plan = (
         ("staging_ingredient_match", STAGING_MATCH_COLUMNS, rows.matches),
         ("staging_recipe", STAGING_RECIPE_COLUMNS, rows.recipes),
+        ("staging_recipe_step", STAGING_RECIPE_STEP_COLUMNS, rows.recipe_steps),
         ("staging_recipe_ingredient", STAGING_RECIPE_INGREDIENT_COLUMNS, rows.recipe_ingredients),
         ("staging_storage_guideline", STAGING_STORAGE_COLUMNS, rows.storage),
     )
@@ -323,11 +362,13 @@ async def run_load(
     report = LoadReport(
         skipped_ingredients=rows.skipped_ingredients,
         skipped_storage=rows.skipped_storage,
+        skipped_steps=rows.skipped_steps,
     )
 
     if settings.dry_run:
         report.staged = {
             "staging_recipe": len(rows.recipes),
+            "staging_recipe_step": len(rows.recipe_steps),
             "staging_recipe_ingredient": len(rows.recipe_ingredients),
             "staging_storage_guideline": len(rows.storage),
             "staging_ingredient_match": len(rows.matches),

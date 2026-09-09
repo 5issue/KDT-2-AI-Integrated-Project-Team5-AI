@@ -75,6 +75,11 @@ PROFILE_SYSTEM_TEMPLATE = """\
   그런 것은 2단계에서 쪼개고 없는 값은 null 로 둔다. 지금 판단할 것은 "재료 정보가
   들어 있는가" 뿐이다. 재료 컬럼을 보고도 recipe 만 고르면 재료가 통째로 유실된다.
 - 재료 목록 컬럼은 column_meanings 에서 recipe_ingredient 의 필드로 대응시킨다.
+- **조리 순서 컬럼이 있으면 recipe_step 도 함께 고른다.** 순서가 한 덩어리 문자열이든
+  단계마다 한 행이든 마찬가지다. 2단계에서 단계로 쪼갠다.
+  조리 순서를 `recipe.description` 으로 대응시키지 않는다. description 은 요리 소개이고,
+  순서는 recipe_step 이 받는다. 둘을 섞으면 화면이 단계를 표시하지 못한다.
+- 사진 URL 컬럼이 있으면 `recipe.image_url` 로 대응시킨다.
 - storage_guideline 은 source_slot 을 위 9개 열거형 중 하나로 **확정할 수 있는 구조화된
   데이터에만** 쓴다. "서늘한 곳에 보관" 같은 자유 서술 문장만 있고 슬롯·기간을 특정할 수
   없으면 storage_guideline 을 고르지 않는다. 지어내면 CHECK 제약에서 실패한다.

@@ -192,6 +192,11 @@ def test_collect_dispatches_schema_per_request(tmp_settings: Settings) -> None:
                             "purpose": None,
                         }
                     ],
+                    "image_url": None,
+                    "steps": [
+                        {"step_no": 1, "instruction": "쌀을 씻는다", "image_url": None},
+                        {"step_no": 2, "instruction": "밥을 짓는다", "image_url": None},
+                    ],
                     "confidence": 0.9,
                     "reason": "재료 목록에서 추출",
                 },

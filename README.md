@@ -9,7 +9,8 @@ KDT-2-AI-INTEGRATED-PROJECT-TEAM5 팀명: 5이쉬에 AI팀 깃허브입니다.
 
 | 폴더 | 역할 | 주요 스택 |
 | --- | --- | --- |
-| [`data_pipeline/`](data_pipeline/README.md) | raw(스키마 제각각) -> LLM Batch 3단계(프로파일·추출·해석) -> Neon 적재 | openai, pyarrow, SQLAlchemy 2.0, asyncpg, alembic |
+| [`data_pipeline/`](data_pipeline/README.md) | raw(스키마 제각각) -> LLM Batch 3단계(프로파일·추출·해석) -> Neon 적재 | openai, pyarrow, SQLAlchemy 2.0, asyncpg |
+| [`database/`](database/) | 스키마 마이그레이션 (alembic). 워크스페이스 멤버는 아닙니다 | alembic, psycopg 3 |
 | [`recsys_sql/`](recsys_sql/README.md) | 추천 비즈니스 로직 SQL 카탈로그 + pytest 검증 | SQLAlchemy 2.0, asyncpg, pytest |
 | [`rag_lab/`](rag_lab/README.md) | RAG 실험 환경 (라우팅 -> 검색 -> 생성) | LangGraph, pgvector, openai |
 | [`serving/`](serving/README.md) | 추천 API 서빙 서버 | FastAPI, asyncpg |

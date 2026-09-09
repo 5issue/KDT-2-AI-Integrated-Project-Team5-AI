@@ -2,9 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # src/recsys_sql/config.py -> recsys_sql/
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
 
     query_owner: str = ""
     query_timeout_seconds: float = Field(default=10.0, gt=0)
-    forbid_seq_scan_on: tuple[str, ...] = ("product", "recipe", "recipe_ingredient")
+    forbid_seq_scan_on: Annotated[tuple[str, ...], NoDecode] = ("product", "recipe", "recipe_ingredient")
 
     @field_validator("forbid_seq_scan_on", mode="before")
     @classmethod

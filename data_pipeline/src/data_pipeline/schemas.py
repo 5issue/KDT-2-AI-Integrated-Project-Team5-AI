@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from data_pipeline.domain import STORAGE_SLOTS, TARGET_TABLES
 
-TargetTable = Literal["recipe", "recipe_ingredient", "storage_guideline", "none"]
+TargetTable = Literal["recipe", "recipe_ingredient", "recipe_step", "storage_guideline", "none"]
 Language = Literal["ko", "en", "mixed", "unknown"]
 Difficulty = Literal["EASY", "MEDIUM", "HARD"]
 RowsPerEntity = Literal["one", "many"]
@@ -126,8 +126,20 @@ class ExtractedIngredientLine(StrictModel):
     )
 
 
+class ExtractedRecipeStep(StrictModel):
+    """recipe_step 한 줄. 조리 순서를 단계로 분리합니다.
+
+    DB CHECK 가 instruction 과 image_url 중 하나는 있을 것을 요구합니다.
+    둘 다 비면 적재 시점에 걸리므로 여기서 만들지 않습니다.
+    """
+
+    step_no: int = Field(description="1부터 시작하는 표시 순서. 원천 번호가 아니라 정리된 순서다")
+    instruction: str | None = Field(default=None, description="단계 설명(한국어). 사진만 있으면 null")
+    image_url: str | None = Field(default=None, description="단계 사진 URL. 원문에 있으면 그대로, 없으면 null")
+
+
 class ExtractedRecipe(StrictModel):
-    """원본 레코드 하나(또는 그룹)를 recipe + recipe_ingredient 모양으로 변환한 결과."""
+    """원본 레코드 하나(또는 그룹)를 recipe + recipe_ingredient + recipe_step 모양으로 변환한 결과."""
 
     source_recipe_id: str = Field(description="원본 자연키. 프로파일의 entity_key_columns 값을 조합해 만든다")
     name: str = Field(description="레시피 이름(한국어)")
@@ -141,7 +153,11 @@ class ExtractedRecipe(StrictModel):
     cooking_method: str | None = Field(default=None, description="대표 조리법. 예: 볶음, 조림, 구이, 끓이기")
     tags: list[str] = Field(description="용어 기준의 용도/TPO 태그. 없으면 빈 배열")
     nutrition: ExtractedNutrition | None = Field(default=None, description="영양정보. 원문에 없으면 null")
+    image_url: str | None = Field(default=None, description="레시피 대표 사진 URL. 원문에 없으면 null")
     ingredients: list[ExtractedIngredientLine] = Field(description="재료 목록")
+    steps: list[ExtractedRecipeStep] = Field(
+        description="조리 단계. 원문에 조리 순서가 있으면 단계로 쪼갠다. 없으면 빈 배열",
+    )
     confidence: float = Field(description="추출 확신도 0~1")
     reason: str = Field(description="판단 근거 한 줄. 특히 원문에 없어 null 로 둔 값이 있으면 적는다")
 

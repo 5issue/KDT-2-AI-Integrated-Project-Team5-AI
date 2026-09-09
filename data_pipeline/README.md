@@ -149,11 +149,12 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `sql/001_staging_tables.sql` | staging 5종 + `CREATE EXTENSION vector` |
+| `sql/001_staging_tables.sql` | staging 6종 + `CREATE EXTENSION vector` |
 | `sql/002_insert_recipe.sql` | `(source_type, source_recipe_id)` 기준 `recipe` upsert |
 | `sql/003_insert_recipe_ingredient.sql` | 매칭 결과로 FK 를 채워 `recipe_ingredient` upsert |
 | `sql/004_insert_storage_guideline.sql` | `storage_guideline` upsert |
-| `sql/005_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
+| `sql/005_insert_recipe_step.sql` | 조리 단계를 `recipe_step` 으로 upsert (줄어든 뒤쪽 단계는 삭제) |
+| `sql/006_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
 | `sql/099_truncate_staging.sql` | staging 비우기 |
 
 001~004 는 **한 트랜잭션**입니다. 004 에서 실패하면 002 가 넣은 레시피도 남지 않습니다.
@@ -185,14 +186,19 @@ COPY 와 긴 트랜잭션은 PgBouncer transaction 모드와 맞지 않습니다
 
 ## 마이그레이션
 
-스키마는 이미 Neon 에 있으므로 기존 브랜치에는 baseline 도장만 찍고 시작합니다.
+**마이그레이션은 이 폴더가 아니라 레포 루트의 [`database/`](../database/) 에서 관리합니다.**
+data_pipeline 은 스키마를 바꾸지 않고 이미 있는 테이블에 적재만 합니다.
 
 ```bash
-cd data_pipeline
-uv run alembic stamp 0001
+uv run alembic -c database/alembic.ini current
+uv run alembic -c database/alembic.ini upgrade head
 ```
 
-`sql/002~004` 의 `ON CONFLICT` 는 실제 스키마에 이미 있는 유니크 제약을 씁니다
+`database/migrations/env.py` 는 프로세스 환경변수 -> 루트 `.env` -> `data_pipeline/.env`
+순으로 접속 정보를 찾고, `DATABASE_URL_DIRECT` 가 있으면 그쪽을 먼저 씁니다.
+DDL 은 pooler 가 아니라 direct 로 거는 편이 안전하기 때문입니다.
+
+`sql/002~005` 의 `ON CONFLICT` 는 실제 스키마에 이미 있는 유니크 제약을 씁니다
 (`recipe_source_unique_idx`, `uq_storage_guideline_source_rule`). 없으면 `load` 가 먼저 막습니다.
 
 ## 테스트
