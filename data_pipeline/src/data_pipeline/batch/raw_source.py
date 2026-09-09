@@ -224,6 +224,21 @@ def render_dataset_brief(dataset: RawDataset, *, limit: int = DEFAULT_SAMPLE_ROW
     )
 
 
+def render_sibling_catalog(datasets: Sequence[RawDataset], *, exclude: str) -> str:
+    """같은 폴더의 다른 데이터셋 목록(이름 + 행수 + 컬럼).
+
+    이름만으로는 중복 사본을 알아낼 수 없습니다. 실제로 `foodkeeper_product` 와
+    `foodkeeper_xls_product` 는 컬럼 38개가 같고 행수도 661 로 같은데 이름만 다릅니다.
+    반대로 `korean_recipe_ingredients` 와 `korean_recipe_steps` 는 `recipe_name` 을
+    공유하는 서로 다른 반쪽입니다. 둘 다 컬럼 구성을 봐야 판단할 수 있어서
+    스키마까지 넣습니다.
+    """
+    others = [dataset for dataset in datasets if dataset.name != exclude]
+    if not others:
+        return "(다른 데이터셋 없음)"
+    return "\n".join(f"- {dataset.name} ({dataset.row_count}행): {', '.join(dataset.columns)}" for dataset in others)
+
+
 def preview_raw_source(path: Path, *, limit: int = 3) -> str:
     """CLI inspect 용 요약. 어떤 데이터셋이 몇 개 잡혔는지 확인합니다."""
     datasets = discover_datasets(path)

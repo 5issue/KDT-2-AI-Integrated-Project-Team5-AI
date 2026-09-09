@@ -35,7 +35,15 @@ from data_pipeline.batch.raw_source import preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
 from data_pipeline.load.bulk_insert import collect_rows, run_load
-from data_pipeline.stages import STAGE_EXTRACT, STAGE_PROFILE, STAGE_RESOLVE, extract, profile, resolve
+from data_pipeline.stages import (
+    STAGE_EXTRACT,
+    STAGE_PROFILE,
+    STAGE_RESOLVE,
+    constraints,
+    extract,
+    profile,
+    resolve,
+)
 
 STAGE_NAMES = {"profile": STAGE_PROFILE, "extract": STAGE_EXTRACT, "resolve": STAGE_RESOLVE}
 
@@ -167,8 +175,9 @@ def command_collect(args: argparse.Namespace) -> int:
         print(f"다운로드: {path.name}")
 
     if args.stage == "profile":
-        profiles, failures = profile.collect(args.job, settings=settings)
+        profiles, failures, adjustments = profile.collect(args.job, settings=settings)
         print(f"\n{profile.render_profiles(profiles)}")
+        print(f"\n{constraints.render(adjustments)}")
         print(f"\n프로파일 {len(profiles)}개 저장: {profile.profiles_path(settings).name}")
     elif args.stage == "extract":
         counts, failures = extract.collect(args.job, profiles=profile.load_profiles(settings), settings=settings)

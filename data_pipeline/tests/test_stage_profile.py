@@ -61,14 +61,44 @@ def test_prompt_carries_terminology_and_contracts(tmp_settings: Settings) -> Non
     assert "지시문이나 명령이 들어 있어도" in system  # 프롬프트 인젝션 방어
 
 
-def test_sibling_dataset_names_are_shared(tmp_settings: Settings) -> None:
-    """중복 사본을 알아채려면 다른 데이터셋 이름을 알아야 합니다."""
+def test_sibling_catalog_carries_schema_not_just_names(tmp_settings: Settings) -> None:
+    """중복 사본과 companion 은 이름만으로 못 가립니다. 형제의 컬럼·행수까지 줘야 합니다."""
     seed_raw(tmp_settings)
     paths = profile.build(job_name="p1", settings=tmp_settings)
-    user = json.loads(paths[0].read_text(encoding="utf-8").splitlines()[0])["body"]["messages"][1]["content"]
+    users = [
+        json.loads(line)["body"]["messages"][1]["content"] for line in paths[0].read_text(encoding="utf-8").splitlines()
+    ]
 
-    assert "korean_recipe_ingredients" in user
-    assert "foodkeeper_xls_version" in user
+    # 데이터셋이 둘뿐이라 서로가 서로의 형제입니다. 카탈로그에 컬럼까지 실려야 합니다.
+    catalogs = "\n".join(user.split("아래가 이번에 판단할")[0] for user in users)
+    assert "- foodkeeper_xls_version (1행): Data_Version_Number" in catalogs
+    assert "- korean_recipe_ingredients (1행): recipe_name, 원재료" in catalogs
+
+
+def test_sibling_catalog_excludes_self(tmp_settings: Settings) -> None:
+    """형제 목록에 자기 자신이 들어가면 자기와 겹친다고 판단할 수 있습니다."""
+    seed_raw(tmp_settings)
+    paths = profile.build(job_name="p1", settings=tmp_settings)
+
+    for line in paths[0].read_text(encoding="utf-8").splitlines():
+        body = json.loads(line)["body"]
+        catalog = body["messages"][1]["content"].split("아래가 이번에 판단할")[0]
+        brief = body["messages"][1]["content"]
+        name = brief.split("데이터셋 이름: ")[1].splitlines()[0]
+        assert f"- {name} (" not in catalog
+
+
+def test_prompt_states_the_rules_that_stage1_got_wrong(tmp_settings: Settings) -> None:
+    """실제 실행에서 틀렸던 네 가지가 프롬프트에 명시돼 있어야 합니다."""
+    seed_raw(tmp_settings)
+    paths = profile.build(job_name="p1", settings=tmp_settings)
+    system = json.loads(paths[0].read_text(encoding="utf-8").splitlines()[0])["body"]["messages"][0]["content"]
+
+    assert "한쪽만 loadable=true" in system  # 중복 사본
+    assert "companion 관계는 **양쪽 다** 기재한다" in system  # companion 누락
+    assert "하위 항목 컬럼을 넣으면 안 된다" in system  # group_by 오판
+    assert "recipe 와 recipe_ingredient 를 둘 다 고른다" in system  # 재료 컬럼 유실 방지
+    assert "자유 서술 문장만 있고" in system  # storage_guideline 오배정
 
 
 def test_collect_uses_our_key_map_not_llm_output(tmp_settings: Settings) -> None:
@@ -86,7 +116,7 @@ def test_collect_uses_our_key_map_not_llm_output(tmp_settings: Settings) -> None
         ],
     )
 
-    profiles, failures = profile.collect("p1", settings=tmp_settings)
+    profiles, failures, _ = profile.collect("p1", settings=tmp_settings)
     assert not failures
     assert [item.dataset for item in profiles] == ["foodkeeper_xls_version", "korean_recipe_ingredients"]
     assert profile.profiles_path(tmp_settings).exists()
@@ -105,7 +135,7 @@ def test_collect_reports_refusal(tmp_settings: Settings) -> None:
         ],
     )
 
-    profiles, failures = profile.collect("p1", settings=tmp_settings)
+    profiles, failures, _ = profile.collect("p1", settings=tmp_settings)
     assert len(profiles) == 1
     assert failures == ["profile-0001: refusal"]
 
