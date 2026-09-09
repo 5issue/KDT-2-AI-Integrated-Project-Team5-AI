@@ -25,6 +25,8 @@ from data_pipeline.schemas import strict_json_schema
 
 CHAT_COMPLETIONS_URL = "/v1/chat/completions"
 TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+# 종료됐지만 결과가 없는 상태. 더 기다려도 달라지지 않으므로 폴링을 멈춰야 합니다.
+DEAD_STATUSES = frozenset({"failed", "expired", "cancelled"})
 
 # OpenAI 제한: 입력 파일 하나에 50,000줄 / 200MB
 HARD_MAX_REQUESTS = 50_000
@@ -41,6 +43,7 @@ class BatchJob:
     submitted_at: str
     output_file_id: str | None = None
     error_file_id: str | None = None
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -219,6 +222,7 @@ class BatchRunner:
             job.status = batch.status
             job.output_file_id = batch.output_file_id
             job.error_file_id = batch.error_file_id
+            job.error = _first_error(batch)
         self.save_manifest(job_name, jobs)
         return jobs
 
@@ -282,6 +286,22 @@ class BatchRunner:
                     BatchFailure(custom_id=custom_id, reason="schema_validation", detail=str(exc)[:500])
                 )
         return outcome
+
+
+def _first_error(batch: Any) -> str | None:
+    """배치 자체가 실패했을 때의 사유. 요청 단위 실패가 아니라 배치 전체 거절입니다.
+
+    한도 초과(`token_limit_exceeded`)처럼 몇 초 만에 죽는 경우가 있어, 이 값이 없으면
+    호출한 쪽이 "아직 도는 중" 과 구분하지 못합니다.
+    """
+    errors = getattr(batch, "errors", None)
+    data = getattr(errors, "data", None) if errors is not None else None
+    if not data:
+        return None
+    first = data[0]
+    code = getattr(first, "code", None)
+    message = getattr(first, "message", None)
+    return f"{code}: {message}" if code else str(message)
 
 
 def _iter_jsonl(files: Sequence[Path]) -> Iterator[dict[str, Any]]:

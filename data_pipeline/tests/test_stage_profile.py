@@ -178,3 +178,55 @@ def test_build_writes_key_sidecar(tmp_settings: Settings) -> None:
     path: Path = tmp_settings.stage_dir(STAGE_PROFILE) / "requests" / "p1_keys.json"
     key_map = json.loads(path.read_text(encoding="utf-8"))
     assert set(key_map.values()) == {dataset.name for dataset in discover_datasets(tmp_settings.raw_dir)}
+
+
+def test_failed_batch_is_not_reported_as_still_running(tmp_settings: Settings, capsys: object) -> None:
+    """실패한 배치를 '아직 안 끝남' 으로 보고하면 폴링이 영원히 돕니다.
+
+    실제로 token_limit_exceeded 로 64초 만에 죽은 배치를 2시간 동안 다시 물어봤습니다.
+    """
+    import argparse
+
+    from data_pipeline.batch.client import BatchJob, BatchRunner
+    from data_pipeline.cli import command_collect
+    from data_pipeline.stages import STAGE_PROFILE
+
+    runner = BatchRunner(STAGE_PROFILE, tmp_settings)
+    runner.save_manifest(
+        "p1",
+        [
+            BatchJob(
+                input_file="p1_part001_input.jsonl",
+                input_file_id="file-1",
+                batch_id="batch_dead",
+                status="failed",
+                submitted_at="2026-09-09T17:58:24+00:00",
+                error="token_limit_exceeded: Enqueued token limit reached",
+            )
+        ],
+    )
+
+    class _Stub:
+        def __init__(self) -> None:
+            self.batches = self
+
+        def retrieve(self, batch_id: str) -> object:
+            class _Batch:
+                status = "failed"
+                output_file_id = None
+                error_file_id = None
+                errors = None
+
+            return _Batch()
+
+    runner._client = _Stub()  # type: ignore[assignment]
+    args = argparse.Namespace(stage="profile", job="p1", wait=False, poll=1)
+
+    import data_pipeline.cli as cli_module
+
+    original = cli_module.BatchRunner
+    cli_module.BatchRunner = lambda *a, **k: runner  # type: ignore[assignment]
+    try:
+        assert command_collect(args) == 2  # 1(진행 중) 과 구분되는 종료 코드
+    finally:
+        cli_module.BatchRunner = original

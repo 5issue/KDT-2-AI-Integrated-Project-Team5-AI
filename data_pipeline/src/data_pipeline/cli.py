@@ -30,7 +30,7 @@ import json
 import sys
 from pathlib import Path
 
-from data_pipeline.batch.client import BatchRunner
+from data_pipeline.batch.client import DEAD_STATUSES, BatchRunner
 from data_pipeline.batch.raw_source import preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
@@ -167,7 +167,16 @@ def command_collect(args: argparse.Namespace) -> int:
 
     jobs = runner.wait(args.job, poll_seconds=args.poll) if args.wait else runner.refresh(args.job)
     for job in jobs:
-        print(f"{job.batch_id}: {job.status}")
+        print(f"{job.batch_id}: {job.status}" + (f" ({job.error})" if job.error else ""))
+
+    # 실패/만료/취소는 기다려도 달라지지 않습니다. "아직 안 끝남" 과 섞어 보고하면
+    # 폴링 스크립트가 죽은 배치를 몇 시간이고 다시 물어보게 됩니다(실제로 한 번 겪었습니다).
+    dead = [job for job in jobs if job.status in DEAD_STATUSES]
+    if dead:
+        print(f"배치가 종료 상태입니다({dead[0].status}). 다시 기다려도 결과가 나오지 않습니다.", file=sys.stderr)
+        for job in dead:
+            print(f"  {job.batch_id}: {job.error or '사유 없음'}", file=sys.stderr)
+        return 2
     if any(job.status != "completed" for job in jobs):
         print("아직 완료되지 않은 배치가 있습니다.", file=sys.stderr)
         return 1
