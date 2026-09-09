@@ -57,18 +57,18 @@ def _column_values(dataset: RawDataset, column: str, *, limit: int = VALUE_SAMPL
     return values
 
 
-def _has_slot_column(dataset: RawDataset) -> bool:
-    """이 데이터셋이 storage_guideline 의 9개 슬롯 열거형을 값으로 갖고 있는가.
+def _slot_column(dataset: RawDataset) -> str | None:
+    """storage_guideline 의 9개 슬롯 열거형을 값으로 가진 컬럼 이름. 없으면 None.
 
-    갖고 있으면 이미 타깃 테이블 모양(한 행이 한 슬롯)으로 펼쳐진 소스라는 뜻입니다.
+    있으면 이미 타깃 테이블 모양(한 행이 한 슬롯)으로 펼쳐진 소스라는 뜻입니다.
     넓은 원본(컬럼 수십 개에 슬롯이 흩어진 형태)보다 이쪽이 변환 위험이 훨씬 낮습니다.
     """
     slots = set(STORAGE_SLOTS)
     for column in dataset.columns:
         values = _column_values(dataset, column)
         if values and values <= slots:
-            return True
-    return False
+            return column
+    return None
 
 
 def find_duplicate_groups(datasets: Sequence[RawDataset]) -> list[list[str]]:
@@ -177,7 +177,8 @@ def apply(
     # 이미 슬롯 단위로 펼쳐진 소스가 있으면 그쪽만 씁니다. 넓은 원본은 같은 내용을
     # 중복 적재하게 되고, 자연키에 source_item_id 가 들어가서 UNIQUE 로도 안 막힙니다.
     storage_targets = [name for name, profile in result.items() if "storage_guideline" in profile.target_tables]
-    slot_ready = [name for name in storage_targets if name in by_name and _has_slot_column(by_name[name])]
+    slot_columns = {name: _slot_column(by_name[name]) for name in storage_targets if name in by_name}
+    slot_ready = [name for name, column in slot_columns.items() if column is not None]
     if slot_ready:
         for name in storage_targets:
             if name in slot_ready:
@@ -192,6 +193,22 @@ def apply(
                 )
             result[name] = profile.model_copy(update=updates_any)
             adjustments.append(Adjustment(name, "storage_source", f"storage_guideline 제외 (슬롯 보유: {slot_ready})"))
+
+    # --- 3-1. 슬롯 컬럼은 그룹 키가 될 수 없음 ------------------------------
+    # 2단계 스키마(ExtractedStorageItem)는 **품목 하나에 슬롯 여러 개를 묶어서** 받습니다
+    # (`rules: list[ExtractedStorageRule]`). 슬롯 컬럼을 그룹 키에 넣으면 한 품목이 슬롯 수만큼
+    # 쪼개져 요청이 배로 늘고, 응답마다 rules 가 1개짜리로 옵니다.
+    # 실제로 storage_guide 가 651품목 대신 1298건으로 갈렸습니다.
+    for name in slot_ready:
+        column = slot_columns[name]
+        profile = result[name]
+        if column is None or column not in profile.group_by_columns:
+            continue
+        kept_keys = [item for item in profile.group_by_columns if item != column]
+        result[name] = profile.model_copy(update={"group_by_columns": kept_keys})
+        adjustments.append(
+            Adjustment(name, "slot_not_a_key", f"그룹 키에서 슬롯 컬럼 {column!r} 제거 (품목 단위로 묶음)")
+        )
 
     # --- 4. recipe_ingredient 외래키 불변식 ---------------------------------
     # recipe_ingredient 는 recipe_id 를 참조합니다. recipe 없이 단독으로 적재할 수 없습니다.

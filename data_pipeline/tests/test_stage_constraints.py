@@ -281,3 +281,47 @@ def test_companion_group_untouched_when_targets_differ(tmp_settings: Settings) -
 
     assert by_name["left"].loadable is True
     assert by_name["right"].loadable is True
+
+
+def test_slot_column_is_removed_from_grouping_key(tmp_settings: Settings) -> None:
+    """2단계 스키마는 품목 하나에 슬롯 여러 개를 묶어 받습니다(rules 리스트).
+
+    슬롯을 그룹 키에 넣으면 한 품목이 슬롯 수만큼 쪼개져 요청이 배로 늘어납니다.
+    실제로 storage_guide 가 651품목 대신 1298건으로 갈렸습니다.
+    """
+    write_parquet(
+        tmp_settings.raw_dir / "flat.parquet",
+        [
+            {"product_id": "fk_1", "storage": "refrigerate", "tips": "a"},
+            {"product_id": "fk_1", "storage": "freeze", "tips": "b"},
+            {"product_id": "fk_2", "storage": "pantry", "tips": "c"},
+        ],
+    )
+    datasets = discover_datasets(tmp_settings.raw_dir)
+
+    profiles = [
+        make_profile(
+            "flat",
+            target_tables=["storage_guideline"],
+            group_by_columns=["product_id", "storage"],
+        )
+    ]
+    adjusted, adjustments = constraints.apply(profiles, datasets)
+
+    assert adjusted[0].group_by_columns == ["product_id"]
+    assert any(item.rule == "slot_not_a_key" for item in adjustments)
+
+
+def test_grouping_key_without_slot_is_left_alone(tmp_settings: Settings) -> None:
+    """이미 품목 단위로 묶여 있으면 건드리지 않습니다."""
+    write_parquet(
+        tmp_settings.raw_dir / "flat.parquet",
+        [{"product_id": "fk_1", "storage": "refrigerate"}, {"product_id": "fk_2", "storage": "freeze"}],
+    )
+    datasets = discover_datasets(tmp_settings.raw_dir)
+
+    profiles = [make_profile("flat", target_tables=["storage_guideline"], group_by_columns=["product_id"])]
+    adjusted, adjustments = constraints.apply(profiles, datasets)
+
+    assert adjusted[0].group_by_columns == ["product_id"]
+    assert not any(item.rule == "slot_not_a_key" for item in adjustments)
