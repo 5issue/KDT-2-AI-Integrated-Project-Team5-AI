@@ -82,3 +82,7 @@ uv run pytest serving/tests -q
 | `tests/test_dsn.py` | 아니오 | DSN 변환, pooler 감지, 마스킹 |
 | `tests/test_app.py` | 아니오 | 라우팅, 503 처리, 입력 검증, SQL 화이트리스트 |
 | `tests/test_endpoints_db.py` | 예 | 실제 Neon 에서 promoted SQL 실행 + 응답 스키마 |
+
+# fastapi 배포
+
+기본적으로 Dockerfile로 만들어서 AWS EKS에 배포할 계획
