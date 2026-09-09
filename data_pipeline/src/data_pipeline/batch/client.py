@@ -204,13 +204,18 @@ class BatchRunner:
         return [BatchJob(**item) for item in payload["jobs"]]
 
     def pending_parts(self, job_name: str) -> list[Path]:
-        """아직 제출하지 않은 입력 파일. 매니페스트에 있는 것은 건너뜁니다."""
+        """아직 제출하지 않았거나, 제출했지만 죽은 파트.
+
+        실패/만료/취소된 파트는 결과가 없으므로 다시 넣어야 합니다. 매니페스트에 있다는
+        이유로 건너뛰면 그 파트가 조용히 빠진 채로 파이프라인이 끝납니다.
+        """
         inputs = sorted(self.requests_dir.glob(f"{job_name}_part*_input.jsonl"))
         try:
-            submitted = {job.input_file for job in self.load_manifest(job_name)}
+            jobs = self.load_manifest(job_name)
         except FileNotFoundError:
-            submitted = set()
-        return [path for path in inputs if path.name not in submitted]
+            return inputs
+        alive = {job.input_file for job in jobs if job.status not in DEAD_STATUSES}
+        return [path for path in inputs if path.name not in alive]
 
     def submit(self, job_name: str, *, max_parts: int | None = None) -> list[BatchJob]:
         """아직 제출하지 않은 입력 파일을 업로드하고 배치를 생성합니다.
@@ -231,7 +236,11 @@ class BatchRunner:
             jobs: list[BatchJob] = self.load_manifest(job_name)
         except FileNotFoundError:
             jobs = []
-        for path in pending[:max_parts] if max_parts else pending:
+        targets = pending[:max_parts] if max_parts else pending
+        # 죽은 파트를 재제출하는 경우, 매니페스트의 옛 기록은 새 배치로 갈아끼웁니다.
+        retry = {path.name for path in targets}
+        jobs = [job for job in jobs if job.input_file not in retry]
+        for path in targets:
             with path.open("rb") as handle:
                 uploaded = self.client.files.create(file=handle, purpose="batch")
             batch = self.client.batches.create(

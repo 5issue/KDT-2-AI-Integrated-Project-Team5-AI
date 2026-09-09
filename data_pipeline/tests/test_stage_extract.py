@@ -287,3 +287,25 @@ def test_submit_skips_parts_already_submitted(tmp_settings: Settings) -> None:
     )
     pending = runner.pending_parts("x9")
     assert [path.name for path in pending] == ["x9_part002_input.jsonl", "x9_part003_input.jsonl"]
+
+
+def test_dead_parts_are_resubmitted(tmp_settings: Settings) -> None:
+    """실패한 파트를 '제출됨' 으로 보고 건너뛰면 그 파트가 조용히 빠집니다."""
+    from data_pipeline.batch.client import BatchJob, BatchRunner
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    for part in (1, 2):
+        (runner.requests_dir / f"x9_part{part:03d}_input.jsonl").write_text("{}\n", encoding="utf-8")
+
+    runner.save_manifest(
+        "x9",
+        [
+            BatchJob("x9_part001_input.jsonl", "f1", "b1", "completed", "2026-09-09T00:00:00+00:00"),
+            BatchJob("x9_part002_input.jsonl", "f2", "b2", "failed", "2026-09-09T00:00:00+00:00"),
+        ],
+    )
+
+    # 완료된 파트는 건너뛰고, 실패한 파트만 다시 대상이 됩니다.
+    assert [path.name for path in runner.pending_parts("x9")] == ["x9_part002_input.jsonl"]
