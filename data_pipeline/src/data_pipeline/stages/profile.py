@@ -40,6 +40,9 @@ PROFILE_SYSTEM_TEMPLATE = """\
 - target_tables 는 위 계약에 있는 테이블만 고른다. 어디에도 안 맞으면 ["none"] 과
   loadable=false, skip_reason 을 적는다.
 - entity_key_columns 는 그 엔티티를 다시 찾을 수 있는 자연키다. 없으면 이름 컬럼이라도 적는다.
+- **group_by_columns 와 entity_key_columns 에는 아래 <data> 에 실제로 있는 컬럼 이름만 적는다.**
+  타깃 테이블 컬럼명(source_item_id, source_slot, ingredient_id 등)을 여기 적으면 안 된다.
+  타깃 필드와의 대응은 column_meanings 에서만 다룬다.
 - 버전 이력, 컬럼 사전, 변환 실패 로그처럼 적재 대상이 아닌 것은 loadable=false 로 둔다.
 
 [엔티티와 group_by_columns]

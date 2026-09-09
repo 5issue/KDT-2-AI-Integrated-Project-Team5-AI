@@ -21,7 +21,7 @@ def make_profile(dataset: str, **overrides: object) -> DatasetProfile:
         "summary": "요약",
         "language": "ko",
         "target_tables": ["recipe"],
-        "rows_per_entity": "many",
+        "rows_per_entity": "one",
         "group_by_columns": [],
         "entity_key_columns": [],
         "content_columns": [],
@@ -251,7 +251,7 @@ def test_companion_group_extracts_from_one_side_only(tmp_settings: Settings) -> 
     adjusted, adjustments = constraints.apply(profiles, datasets)
     by_name = {item.dataset: item for item in adjusted}
 
-    # 대응 수가 같으면 이름순으로 결정적으로 고릅니다.
+    # 이름 오름차순으로 고정합니다. LLM 출력에 의존하지 않아야 재실행에도 안 바뀝니다.
     assert by_name["ko_ingredients"].loadable is True
     assert by_name["ko_steps"].loadable is False
     assert "ko_ingredients" in (by_name["ko_steps"].skip_reason or "")
@@ -325,3 +325,78 @@ def test_grouping_key_without_slot_is_left_alone(tmp_settings: Settings) -> None
 
     assert adjusted[0].group_by_columns == ["product_id"]
     assert not any(item.rule == "slot_not_a_key" for item in adjustments)
+
+
+def test_recipe_step_also_requires_recipe(tmp_settings: Settings) -> None:
+    """recipe_step 도 recipe_id 외래키를 씁니다. recipe 없이 적재하면 JOIN 이 조용히 0행이 됩니다."""
+    write_parquet(tmp_settings.raw_dir / "steps.parquet", [{"recipe_name": "흰밥", "내용": "씻는다"}])
+    datasets = discover_datasets(tmp_settings.raw_dir)
+
+    profiles = [make_profile("steps", target_tables=["recipe_step"], group_by_columns=["recipe_name"])]
+    adjusted, adjustments = constraints.apply(profiles, datasets)
+
+    assert adjusted[0].target_tables == ["recipe", "recipe_step"]
+    assert any(item.rule == "recipe_fk" for item in adjustments)
+
+
+def test_companion_group_merges_complementary_targets(tmp_settings: Settings) -> None:
+    """재료표가 recipe/recipe_ingredient 를, 단계표가 recipe_step 을 맡아도 엔티티는 하나입니다.
+
+    한 번의 추출이 세 테이블을 다 만들어야 합니다. 따로 추출하면 단계표 쪽 recipe 가
+    source_type 이 달라 별도 레시피로 들어가거나, JOIN 이 어긋나 단계가 통째로 사라집니다.
+    """
+    write_parquet(
+        tmp_settings.raw_dir / "ko_ingredients.parquet",
+        [{"recipe_name": "흰밥", "원재료": "멥쌀"}, {"recipe_name": "누룽지", "원재료": "흰밥"}],
+    )
+    write_parquet(
+        tmp_settings.raw_dir / "ko_steps.parquet",
+        [{"recipe_name": "흰밥", "내용": "씻는다"}, {"recipe_name": "누룽지", "내용": "끓인다"}],
+    )
+    datasets = discover_datasets(tmp_settings.raw_dir)
+
+    meanings = [{"column": "recipe_name", "meaning": "레시피 이름", "target_field": "recipe.name"}]
+    profiles = [
+        make_profile(
+            "ko_ingredients",
+            target_tables=["recipe", "recipe_ingredient"],
+            group_by_columns=["recipe_name"],
+            column_meanings=meanings,
+        ),
+        make_profile("ko_steps", target_tables=["recipe_step"], group_by_columns=["recipe_name"]),
+    ]
+    adjusted, adjustments = constraints.apply(profiles, datasets)
+    by_name = {item.dataset: item for item in adjusted}
+
+    assert by_name["ko_ingredients"].loadable is True
+    assert by_name["ko_ingredients"].target_tables == ["recipe", "recipe_ingredient", "recipe_step"]
+    assert by_name["ko_steps"].loadable is False
+    assert by_name["ko_steps"].companion_datasets == ["ko_ingredients"]
+    assert any(item.rule == "companion_primary" for item in adjustments)
+
+
+def test_many_without_usable_group_key_is_excluded(tmp_settings: Settings) -> None:
+    """없는 컬럼을 걷어내다 그룹 키가 비면 조용히 넘기지 않고 제외합니다.
+
+    LLM 이 타깃 테이블 컬럼명(source_slot 등)을 그룹 키에 적어 전부 걸러진 적이 있습니다.
+    그대로 두면 한 행이 한 엔티티가 되어 요청이 폭증합니다.
+    """
+    write_parquet(
+        tmp_settings.raw_dir / "flat.parquet",
+        [{"product_id": "fk_1", "storage": "refrigerate"}, {"product_id": "fk_2", "storage": "freeze"}],
+    )
+    datasets = discover_datasets(tmp_settings.raw_dir)
+
+    profiles = [
+        make_profile(
+            "flat",
+            target_tables=["storage_guideline"],
+            rows_per_entity="many",
+            group_by_columns=["source_slot"],
+            entity_key_columns=["source_item_id"],
+        )
+    ]
+    adjusted, adjustments = constraints.apply(profiles, datasets)
+
+    assert adjusted[0].loadable is False
+    assert any(item.rule == "missing_group_key" for item in adjustments)

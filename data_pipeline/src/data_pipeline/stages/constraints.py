@@ -29,6 +29,17 @@ VALUE_SAMPLE_ROWS = 5_000
 # 두 데이터셋이 같은 엔티티를 나눠 가졌다고 볼 겹침 비율(작은 쪽 기준).
 COMPANION_MIN_OVERLAP = 0.8
 
+# recipe_id 외래키로 recipe 에 매달리는 테이블. recipe 없이 단독 적재할 수 없습니다.
+RECIPE_CHILD_TABLES: tuple[TargetTable, ...] = ("recipe_ingredient", "recipe_step")
+
+# 한 엔티티에서 함께 나오는 테이블 묶음. FK 관계가 기준입니다.
+# 짝을 하나로 합칠 때 이 안에 들어와야 합니다. 이름 컬럼이 우연히 겹친다고 해서
+# 보관 기준과 레시피를 한 엔티티로 묶으면 안 되기 때문입니다.
+TABLE_FAMILIES: tuple[frozenset[str], ...] = (
+    frozenset({"recipe", "recipe_ingredient", "recipe_step"}),
+    frozenset({"storage_guideline"}),
+)
+
 
 @dataclass(slots=True)
 class Adjustment:
@@ -210,13 +221,16 @@ def apply(
             Adjustment(name, "slot_not_a_key", f"그룹 키에서 슬롯 컬럼 {column!r} 제거 (품목 단위로 묶음)")
         )
 
-    # --- 4. recipe_ingredient 외래키 불변식 ---------------------------------
-    # recipe_ingredient 는 recipe_id 를 참조합니다. recipe 없이 단독으로 적재할 수 없습니다.
+    # --- 4. recipe 자식 테이블의 외래키 불변식 -------------------------------
+    # recipe_ingredient 와 recipe_step 은 둘 다 recipe_id 를 참조합니다.
+    # 적재 SQL 은 (source_type, source_recipe_id) 로 recipe 를 되짚어 가는데, 그 recipe 가
+    # 같은 source_type 으로 들어오지 않으면 JOIN 이 조용히 0행을 만듭니다. 에러도 안 납니다.
     for name, profile in result.items():
-        if "recipe_ingredient" in profile.target_tables and "recipe" not in profile.target_tables:
+        children = [table for table in RECIPE_CHILD_TABLES if table in profile.target_tables]
+        if children and "recipe" not in profile.target_tables:
             tables: list[TargetTable] = ["recipe", *profile.target_tables]
             result[name] = profile.model_copy(update={"target_tables": tables})
-            adjustments.append(Adjustment(name, "recipe_fk", "recipe_ingredient 가 있어 recipe 추가"))
+            adjustments.append(Adjustment(name, "recipe_fk", f"{', '.join(children)} 가 있어 recipe 추가"))
 
     # --- 5. 검증된 짝은 한 덩어리로 취급 -------------------------------------
     # 사용자 결정(2026-09-09): 재료표와 단계표처럼 한 레시피가 두 표에 나뉜 경우
@@ -245,6 +259,26 @@ def apply(
         )
         adjustments.append(Adjustment(name, "companion_pair", f"{partners} 와 짝이라 recipe/recipe_ingredient 로 적재"))
 
+    # --- 5-1. many 인데 그룹 키가 없으면 적재할 수 없음 ----------------------
+    # 위 1번이 없는 컬럼을 걷어내다 보면 그룹 키가 통째로 비는 경우가 생깁니다.
+    # 실제로 LLM 이 타깃 테이블 컬럼명(source_slot 등)을 그룹 키에 적어 전부 걸러졌습니다.
+    # 이 상태로 2단계에 넘기면 한 행이 한 엔티티가 되어 요청이 폭증합니다. 조용히 넘기지 않습니다.
+    for name, profile in result.items():
+        if not profile.loadable or profile.rows_per_entity != "many":
+            continue
+        if profile.group_by_columns or profile.entity_key_columns:
+            continue
+        result[name] = profile.model_copy(
+            update={
+                "loadable": False,
+                "target_tables": ["none"],
+                "skip_reason": "rows_per_entity 가 many 인데 이 데이터셋에 실제로 있는 그룹 키가 없습니다",
+            }
+        )
+        adjustments.append(
+            Adjustment(name, "missing_group_key", "many 인데 유효한 그룹 키가 없어 제외 (1단계 재실행 필요)")
+        )
+
     # --- 6. 짝 그룹의 추출 주체는 하나 --------------------------------------
     # 2단계는 loadable 인 데이터셋마다 따로 요청을 만들고, 짝의 행은 companion 으로 끌어옵니다.
     # 그래서 짝 양쪽이 loadable 이면 **같은 엔티티가 두 번 추출됩니다.** recipe 자연키가
@@ -252,8 +286,24 @@ def apply(
     # 30개 레시피가 60행이 됩니다. 어느 쪽에서 뽑아도 companion 병합 결과는 같으므로
     # 하나만 남깁니다. 남지 않은 쪽도 companion 자료로는 계속 쓰입니다.
     for group in _connected_groups(companions, result):
-        # 대응 필드가 많은 쪽(= 엔티티를 더 완전히 설명하는 쪽)을 고르고, 동률이면 이름 오름차순.
-        primary = min(group, key=lambda name: (-_mapped_field_count(result[name]), name))
+        # **이름 오름차순으로 고정**합니다. 대응 필드 수처럼 LLM 출력에 의존하는 기준을 쓰면
+        # 1단계를 다시 돌릴 때마다 주체가 바뀔 수 있습니다. recipe 자연키가
+        # (source_type, source_recipe_id) 이고 source_type 기본값이 데이터셋 이름이라,
+        # 주체가 바뀌면 같은 레시피가 다른 source_type 으로 한 번 더 적재됩니다.
+        primary = min(group)
+
+        # 타깃은 그룹 전체의 **합집합**입니다. 재료표가 recipe/recipe_ingredient 를,
+        # 단계표가 recipe_step 을 맡는 식으로 갈려 있어도 엔티티는 하나이므로
+        # 한 번의 추출이 세 테이블을 다 만들어야 합니다.
+        union: list[TargetTable] = []
+        for member in group:
+            for table in result[member].target_tables:
+                if table != "none" and table not in union:
+                    union.append(table)
+        if union != result[primary].target_tables:
+            result[primary] = result[primary].model_copy(update={"target_tables": union})
+            adjustments.append(Adjustment(primary, "companion_primary", f"짝의 타깃을 합쳐 {union} 로 추출"))
+
         for name in group:
             if name == primary:
                 continue
@@ -266,11 +316,6 @@ def apply(
 
     ordered = sorted(result.values(), key=lambda item: item.dataset)
     return ordered, adjustments
-
-
-def _mapped_field_count(profile: DatasetProfile) -> int:
-    """타깃 필드에 실제로 대응된 컬럼 수. 짝 중 누가 더 완전한지 가리는 기준입니다."""
-    return sum(1 for meaning in profile.column_meanings if meaning.target_field)
 
 
 def _connected_groups(
@@ -296,8 +341,12 @@ def _connected_groups(
         loadable = [name for name in sorted(component) if name in profiles and profiles[name].loadable]
         if len(loadable) < 2:
             continue
-        tables = [set(profiles[name].target_tables) - {"none"} for name in loadable]
-        if not set.intersection(*tables):
+        # 타깃 테이블이 **겹칠** 필요는 없습니다. 재료표와 단계표처럼 서로 다른 테이블을
+        # 맡고 있어도 엔티티가 같으면 한 번에 추출해야 하기 때문입니다.
+        # 다만 같은 계열이어야 합니다. 이름 컬럼이 우연히 겹친다고 보관 기준과 레시피를
+        # 한 엔티티로 묶으면 엉뚱한 추출이 됩니다.
+        union = {table for name in loadable for table in profiles[name].target_tables} - {"none"}
+        if not union or not any(union <= family for family in TABLE_FAMILIES):
             continue
         groups.append(loadable)
     return groups
