@@ -1,1 +1,1 @@
-"""OpenAI Batch API 파싱 단계 (요청 생성 -> 제출 -> 수거 -> 검증)."""
+"""OpenAI Batch API 실행기와 raw 원문 읽기."""

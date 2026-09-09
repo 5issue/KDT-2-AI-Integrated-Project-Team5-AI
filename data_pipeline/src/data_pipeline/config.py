@@ -30,8 +30,18 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
     batch_completion_window: str = "24h"
 
-    # recipe.source_type 에 들어갈 값. (source_type, source_recipe_id) 가 레시피 자연키입니다.
-    recipe_source_type: str = "LLM_PARSE"
+    # 1단계 프롬프트에 넣을 샘플 행 수.
+    profile_sample_rows: int = Field(default=5, ge=1, le=50)
+    # 2단계에서 데이터셋당 처리할 엔티티 상한. 비용을 조절하며 실험할 때 씁니다. 0 이면 무제한.
+    extract_max_entities: int = Field(default=0, ge=0)
+    # 3단계에서 한 요청에 묶을 재료명 개수. 마스터 목록 토큰을 여러 이름이 나눠 씁니다.
+    match_chunk_size: int = Field(default=25, ge=1, le=200)
+    # 이 확신도 미만의 매칭은 채택하지 않고 미매칭으로 보고합니다.
+    match_min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    # recipe.source_type 기본값. 비워두면 데이터셋 이름을 씁니다.
+    recipe_source_type: str = ""
+    # 용어 기준표 원본 경로. 비워두면 domain.TERMINOLOGY_GUIDE 를 씁니다.
+    terminology_path: Path | None = None
 
     batch_max_requests: int = Field(default=40_000, ge=1, le=50_000)
     copy_chunk_size: int = Field(default=5_000, ge=1)
@@ -42,10 +52,14 @@ class Settings(BaseSettings):
         """원본 데이터 디렉터리."""
         return PACKAGE_DIR / "data" / "raw"
 
+    def stage_dir(self, stage: str) -> Path:
+        """단계별 산출물 디렉터리. 단계마다 requests/ results/ 를 따로 둡니다."""
+        return PACKAGE_DIR / "data" / stage
+
     @property
-    def batch_dir(self) -> Path:
-        """Batch API 입출력 JSONL 을 보관하는 디렉터리."""
-        return PACKAGE_DIR / "data" / "batch"
+    def artifacts_dir(self) -> Path:
+        """단계별 중간 산출물(프로파일, 추출 레코드, 매칭 결과)을 모으는 곳."""
+        return PACKAGE_DIR / "data" / "artifacts"
 
     @property
     def package_samples(self) -> Path:

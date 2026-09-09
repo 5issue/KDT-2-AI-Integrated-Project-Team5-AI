@@ -1,8 +1,5 @@
--- staging 테이블 생성.
--- 목적: Batch API 파싱 결과를 asyncpg COPY 로 한 번에 밀어넣은 뒤,
---       집합 연산(INSERT ... SELECT)으로 본 테이블에 반영하기 위한 착륙장입니다.
--- UNLOGGED: WAL 을 남기지 않아 적재가 빠릅니다. 크래시 시 내용이 날아가지만
---           staging 은 언제든 다시 채울 수 있으므로 문제되지 않습니다.
+-- staging 테이블. 2단계 추출 결과와 3단계 매칭 결과가 여기로 COPY 됩니다.
+-- UNLOGGED: WAL 을 남기지 않아 적재가 빠릅니다. 언제든 다시 채울 수 있으므로 문제되지 않습니다.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -19,11 +16,11 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe (
     cooking_method TEXT,
     nutrition      JSONB  NOT NULL DEFAULT '{}'::jsonb,
     tags           TEXT[] NOT NULL DEFAULT '{}',
-    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (source_type, source_id)
 );
 
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe_ingredient (
+    source_type     TEXT    NOT NULL,
     source_id       TEXT    NOT NULL,
     line_no         INTEGER NOT NULL,
     raw_text        TEXT    NOT NULL,
@@ -32,28 +29,33 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_recipe_ingredient (
     quantity        NUMERIC(10, 3),
     unit            TEXT,
     is_required     BOOLEAN NOT NULL DEFAULT TRUE,
-    role            TEXT    NOT NULL DEFAULT 'PRIMARY',
     purpose         TEXT,
-    PRIMARY KEY (source_id, line_no)
+    PRIMARY KEY (source_type, source_id, line_no)
 );
 
--- 파싱된 재료명 -> 기존 ingredient 마스터의 ingredient_id 매핑.
--- ingredient 는 K-FIND 코드 체계로 큐레이션된 마스터라 파이프라인이 새 행을 만들지 않습니다.
--- 여기서 매칭만 하고, 못 찾은 것은 staging_unmatched_ingredient 로 보냅니다.
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_storage_guideline (
+    source_item_id       TEXT NOT NULL,
+    source_food_name     TEXT NOT NULL,
+    source_food_subtitle TEXT,
+    normalized_name      TEXT NOT NULL,
+    source_slot          TEXT NOT NULL,
+    storage_location     TEXT NOT NULL,
+    storage_context      TEXT NOT NULL,
+    duration_min         NUMERIC(10, 2),
+    duration_max         NUMERIC(10, 2),
+    duration_unit        TEXT,
+    duration_text        TEXT NOT NULL,
+    storage_tips         TEXT,
+    PRIMARY KEY (source_item_id, source_slot)
+);
+
+-- 3단계 결과. 정확 일치와 LLM 매칭이 method 로 구분됩니다.
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_match (
     normalized_name TEXT   PRIMARY KEY,
     ingredient_id   BIGINT NOT NULL,
     matched_name    TEXT   NOT NULL,
-    match_type      TEXT   NOT NULL
-);
-
--- 마스터에 없어서 사람이 검토해야 하는 재료.
-CREATE UNLOGGED TABLE IF NOT EXISTS staging_unmatched_ingredient (
-    normalized_name  TEXT PRIMARY KEY,
-    sample_raw_text  TEXT NOT NULL,
-    sample_name      TEXT NOT NULL,
-    occurrence_count INTEGER NOT NULL,
-    recipe_count     INTEGER NOT NULL
+    method          TEXT   NOT NULL,
+    confidence      DOUBLE PRECISION NOT NULL
 );
 
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (

@@ -1,164 +1,109 @@
-"""raw 원문 읽기 테스트 (parquet / JSONL). DB·API 없이 돕니다."""
+"""raw 원문 읽기 테스트. 컬럼 구성을 가정하지 않는지가 핵심입니다."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
+from tests_helpers import write_jsonl, write_parquet
 
 from data_pipeline.batch.raw_source import (
-    RawDocument,
-    discover_raw_source,
-    iter_raw_documents,
-    preview_raw_source,
+    discover_datasets,
+    iter_records,
+    render_dataset_brief,
+    sample_rows,
 )
 
-ROWS: list[dict[str, Any]] = [
-    {"source_id": "p-001", "text": "김치찌개\n재료: 김치 300g", "source_url": "https://example.com/1"},
-    {"source_id": "p-002", "text": "된장찌개\n재료: 된장 2큰술", "source_url": None},
+RECIPE_ROWS = [
+    {"recipe_name": "흰밥", "원재료": "멥쌀", "식재료 보관 상태": "서늘한 곳"},
+    {"recipe_name": "흰밥", "원재료": "물", "식재료 보관 상태": "정수"},
+]
+STORAGE_ROWS = [
+    {"product_id": "fk_1", "name_en": "Butter", "storage": "pantry", "tips_en": "실온 1-2일"},
 ]
 
 
-def write_parquet(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """딕셔너리 목록을 parquet 으로 씁니다."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(rows), path)
-    return path
+def test_reads_arbitrary_columns(tmp_path: Path) -> None:
+    """source_id/text 같은 고정 컬럼을 요구하지 않아야 합니다."""
+    write_parquet(tmp_path / "korean_recipe_ingredients.parquet", RECIPE_ROWS)
+
+    dataset = discover_datasets(tmp_path)[0]
+    assert set(dataset.columns) == {"recipe_name", "원재료", "식재료 보관 상태"}
+
+    records = list(iter_records(dataset))
+    assert [record.payload["원재료"] for record in records] == ["멥쌀", "물"]
+    assert records[0].provenance == "korean_recipe_ingredients#0"
 
 
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """딕셔너리 목록을 JSONL 로 씁니다."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
-        encoding="utf-8",
-    )
-    return path
+def test_same_columns_different_types_stay_separate(tmp_path: Path) -> None:
+    """컬럼명은 같고 타입만 다른 사본이 하나로 합쳐지면 안 됩니다.
+
+    실제 raw 에 foodkeeper_product(수치형)와 foodkeeper_xls_product(문자열)가 그렇습니다.
+    합쳐지면 같은 내용이 두 배로 들어갑니다.
+    """
+    write_parquet(tmp_path / "numeric.parquet", [{"ID": 1, "Name": "Butter"}])
+    write_parquet(tmp_path / "text.parquet", [{"ID": "1", "Name": "Butter"}])
+
+    datasets = discover_datasets(tmp_path)
+    assert {dataset.name for dataset in datasets} == {"numeric", "text"}
+    assert all(dataset.row_count == 1 for dataset in datasets)
 
 
-def test_reads_single_parquet_file(tmp_path: Path) -> None:
-    """parquet 파일 하나를 그대로 읽습니다."""
-    docs = list(iter_raw_documents(write_parquet(tmp_path / "recipes.parquet", ROWS)))
+def test_same_schema_files_are_merged(tmp_path: Path) -> None:
+    """날짜 파티션처럼 스키마가 완전히 같은 파일들은 한 데이터셋으로 묶입니다."""
+    write_parquet(tmp_path / "dt=2026-09-07" / "part-0.parquet", RECIPE_ROWS[:1])
+    write_parquet(tmp_path / "dt=2026-09-08" / "part-0.parquet", RECIPE_ROWS[1:])
 
-    assert [doc.source_id for doc in docs] == ["p-001", "p-002"]
-    assert docs[0].source_url == "https://example.com/1"
-    assert docs[1].source_url is None  # null 은 None 으로 옵니다
-
-
-def test_reads_parquet_directory_including_partitions(tmp_path: Path) -> None:
-    """날짜별로 나뉜 파티션 디렉터리도 하위까지 훑어 읽습니다."""
-    write_parquet(tmp_path / "dt=2026-09-07" / "part-0.parquet", ROWS[:1])
-    write_parquet(tmp_path / "dt=2026-09-08" / "part-0.parquet", ROWS[1:])
-
-    docs = list(iter_raw_documents(tmp_path))
-    assert {doc.source_id for doc in docs} == {"p-001", "p-002"}
+    datasets = discover_datasets(tmp_path)
+    assert len(datasets) == 1
+    assert datasets[0].row_count == 2
 
 
-def test_ignores_spark_marker_files(tmp_path: Path) -> None:
-    """_SUCCESS, .crc 같은 마커 파일 때문에 실패하지 않아야 합니다."""
-    write_parquet(tmp_path / "part-0.parquet", ROWS)
+def test_marker_files_are_ignored(tmp_path: Path) -> None:
+    """_SUCCESS, .crc 때문에 실패하지 않아야 합니다."""
+    write_parquet(tmp_path / "part-0.parquet", STORAGE_ROWS)
     (tmp_path / "_SUCCESS").write_text("", encoding="utf-8")
     (tmp_path / ".part-0.parquet.crc").write_bytes(b"\x00")
 
-    source = discover_raw_source(tmp_path)
-    assert len(source.parquet_files) == 1
-    assert len(list(iter_raw_documents(tmp_path))) == 2
+    assert len(discover_datasets(tmp_path)) == 1
 
 
-def test_extra_columns_are_ignored(tmp_path: Path) -> None:
-    """크롤러가 붙인 부가 컬럼이 있어도 그대로 읽힙니다."""
-    rows = [{**ROWS[0], "crawled_at": "2026-09-08", "score": 0.9}]
-    docs = list(iter_raw_documents(write_parquet(tmp_path / "extra.parquet", rows)))
+def test_jsonl_schema_is_inferred(tmp_path: Path) -> None:
+    """JSONL 은 스키마가 없어 앞쪽 줄의 키로 추론합니다."""
+    write_jsonl(tmp_path / "crawled.jsonl", [{"title": "김치찌개", "body": "..."}])
 
-    assert len(docs) == 1
-    assert docs[0].source_id == "p-001"
-
-
-def test_missing_column_error_lists_actual_columns(tmp_path: Path) -> None:
-    """컬럼명이 다르면 실제 컬럼 목록까지 알려줘야 고치기 쉽습니다."""
-    rows = [{"id": "p-001", "body": "본문"}]
-    path = write_parquet(tmp_path / "wrong.parquet", rows)
-
-    with pytest.raises(ValueError, match="필수 컬럼이 없습니다") as exc:
-        list(iter_raw_documents(path))
-    message = str(exc.value)
-    assert "source_id" in message
-    assert "'body'" in message or "body" in message
+    dataset = discover_datasets(tmp_path)[0]
+    assert dataset.fmt == "jsonl"
+    assert set(dataset.columns) == {"title", "body"}
 
 
-def test_null_required_value_is_rejected(tmp_path: Path) -> None:
-    """text 가 null 인 행이 조용히 빈 문서로 넘어가면 안 됩니다."""
-    rows = [{"source_id": "p-001", "text": None, "source_url": None}]
-    path = write_parquet(tmp_path / "null.parquet", rows)
+def test_brief_contains_schema_and_samples(tmp_path: Path) -> None:
+    """1단계 프롬프트 재료에 컬럼과 샘플이 모두 들어가야 합니다."""
+    write_parquet(tmp_path / "storage_guide.parquet", STORAGE_ROWS)
 
-    with pytest.raises(ValueError, match="비어 있습니다"):
-        list(iter_raw_documents(path))
-
-
-def test_batch_size_does_not_change_result(tmp_path: Path) -> None:
-    """스트리밍 배치 크기를 바꿔도 읽히는 문서는 같아야 합니다."""
-    rows = [{"source_id": f"p-{i:03d}", "text": f"본문 {i}", "source_url": None} for i in range(50)]
-    path = write_parquet(tmp_path / "many.parquet", rows)
-
-    small = [doc.source_id for doc in iter_raw_documents(path, batch_size=7)]
-    large = [doc.source_id for doc in iter_raw_documents(path, batch_size=1000)]
-    assert small == large == [row["source_id"] for row in rows]
+    brief = render_dataset_brief(discover_datasets(tmp_path)[0], limit=1)
+    assert "storage_guide" in brief
+    assert "name_en" in brief
+    assert "Butter" in brief
 
 
-def test_jsonl_still_works(tmp_path: Path) -> None:
-    """기준 포맷은 parquet 이지만 JSONL 도 계속 읽혀야 합니다."""
-    docs = list(iter_raw_documents(write_jsonl(tmp_path / "recipes.jsonl", ROWS)))
-    assert [doc.source_id for doc in docs] == ["p-001", "p-002"]
+def test_long_values_are_shortened(tmp_path: Path) -> None:
+    """레시피 본문이 통째로 프롬프트에 들어가면 토큰만 먹습니다."""
+    write_parquet(tmp_path / "big.parquet", [{"body": "가" * 2000}])
 
-
-def test_mixed_directory_reads_parquet_first(tmp_path: Path) -> None:
-    """한 디렉터리에 둘 다 있으면 parquet 을 먼저 읽고 JSONL 도 빠뜨리지 않습니다."""
-    write_parquet(tmp_path / "a.parquet", ROWS[:1])
-    write_jsonl(tmp_path / "b.jsonl", ROWS[1:])
-
-    assert [doc.source_id for doc in iter_raw_documents(tmp_path)] == ["p-001", "p-002"]
-
-
-def test_unsupported_extension_is_rejected(tmp_path: Path) -> None:
-    """csv 를 넘기면 조용히 무시하지 않고 알려줍니다."""
-    path = tmp_path / "recipes.csv"
-    path.write_text("source_id,text\n1,본문\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="지원하지 않는 확장자"):
-        list(iter_raw_documents(path))
-
-
-def test_empty_directory_is_rejected(tmp_path: Path) -> None:
-    """빈 디렉터리로 배치를 만들어 버리지 않게 막습니다."""
-    (tmp_path / "empty").mkdir()
-    with pytest.raises(FileNotFoundError, match="읽을 raw 파일"):
-        list(iter_raw_documents(tmp_path / "empty"))
+    row = sample_rows(discover_datasets(tmp_path)[0], limit=1)[0]
+    assert len(row["body"]) < 500
+    assert row["body"].endswith("…(생략)")
 
 
 def test_missing_path_is_rejected(tmp_path: Path) -> None:
     """경로 오타를 바로 알려줍니다."""
     with pytest.raises(FileNotFoundError, match="경로가 없습니다"):
-        list(iter_raw_documents(tmp_path / "nope"))
+        discover_datasets(tmp_path / "nope")
 
 
-def test_preview_reports_columns_rows_and_duplicates(tmp_path: Path) -> None:
-    """inspect 가 컬럼/행수/중복 id 를 보여줘야 변환 결과를 검증할 수 있습니다."""
-    rows = [*ROWS, {"source_id": "p-001", "text": "중복된 문서", "source_url": None}]
-    write_parquet(tmp_path / "dup.parquet", rows)
-
-    output = preview_raw_source(tmp_path, limit=2)
-    assert "parquet 1개" in output
-    assert "parquet 행수: 3" in output
-    assert "총 문서  : 3건 (고유 source_id 2개)" in output
-    assert "중복 id" in output and "p-001" in output
-
-
-def test_raw_document_strips_whitespace() -> None:
-    """source_id 앞뒤 공백은 다듬습니다. custom_id 와 FK 값이 되기 때문입니다."""
-    doc = RawDocument.from_mapping({"source_id": "  p-001 ", "text": "본문", "source_url": " "})
-    assert doc.source_id == "p-001"
-    assert doc.source_url is None
+def test_empty_directory_is_rejected(tmp_path: Path) -> None:
+    """빈 디렉터리로 파이프라인을 돌려 버리지 않게 막습니다."""
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError, match="읽을 raw 파일"):
+        discover_datasets(tmp_path / "empty")

@@ -7,28 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from data_pipeline.config import PACKAGE_DIR, Settings
-
-SAMPLES_DIR = PACKAGE_DIR / "samples"
-
-
-@pytest.fixture(scope="session")
-def samples_dir() -> Path:
-    """샘플 JSONL 디렉터리."""
-    return SAMPLES_DIR
-
-
-@pytest.fixture
-def tmp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
-    """batch 산출물을 tmp_path 로 보내는 설정. .env 값에 의존하지 않습니다."""
-    monkeypatch.setattr("data_pipeline.config.PACKAGE_DIR", tmp_path)
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    (tmp_path / "data" / "batch").mkdir(parents=True, exist_ok=True)
-    return settings
+from data_pipeline.config import Settings
 
 
 def database_url_configured() -> bool:
-    """DATABASE_URL 이 채워져 있는지 확인합니다. 값 자체는 읽어서 노출하지 않습니다."""
+    """DATABASE_URL 이 채워져 있는지 확인합니다. 값 자체는 노출하지 않습니다."""
     if os.environ.get("DATABASE_URL", "").strip():
         return True
     try:
@@ -53,3 +36,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         if own_tests in Path(str(item.path)).resolve().parents:
             item.add_marker(skip)
+
+
+@pytest.fixture
+def tmp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+    """모든 산출물을 tmp_path 로 보내는 설정. .env 값에 의존하지 않습니다."""
+    monkeypatch.setattr("data_pipeline.config.PACKAGE_DIR", tmp_path)
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    (tmp_path / "data" / "raw").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "sql").mkdir(parents=True, exist_ok=True)
+    return settings

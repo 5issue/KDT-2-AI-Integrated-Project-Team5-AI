@@ -1,11 +1,5 @@
 -- staging_recipe -> recipe upsert.
---
--- 자연키는 (source_type, source_recipe_id) 입니다. 실제 스키마에 이 조합의 유니크 인덱스
--- (recipe_source_unique_idx)가 이미 있어서 별도 마이그레이션이 필요 없습니다.
--- name 을 키로 쓰지 않으므로 같은 이름의 레시피가 여러 출처에서 들어와도 안전합니다.
---
--- tags 는 실제 스키마에서 text[] 입니다(문서의 TEXT 와 다름). 그대로 배열로 넣습니다.
---
+-- 자연키는 (source_type, source_recipe_id). recipe_source_unique_idx 가 이미 있습니다.
 -- 재적재 시 이미 채워둔 값을 null 로 덮어쓰지 않도록 COALESCE 로 보수적으로 갱신합니다.
 
 INSERT INTO recipe (
