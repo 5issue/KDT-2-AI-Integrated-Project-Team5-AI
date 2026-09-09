@@ -53,6 +53,18 @@ RECIPE_SYSTEM_TEMPLATE = """\
   마요네즈/간장/훈제육 같은 가공품은 원재료가 아니다.
 - purpose 와 tags 는 용어 기준의 용도/TPO 분류에서 고른다. 해당 없으면 비운다.
 - 조리 시간이나 영양정보가 원문에 없으면 지어내지 말고 null 로 둔다.
+- **단위(unit)도 한국어로 통일한다.** 이름만 옮기고 단위를 영어로 두면 한 테이블에
+  'tablespoons' 와 '큰술' 이 섞인다. 아래처럼 옮긴다.
+    tablespoon(s) -> 큰술 / teaspoon(s) -> 작은술 / cup(s) -> 컵 / pound(s) -> 파운드
+    ounce(s) -> 온스 / clove(s) -> 쪽 / stalk(s) -> 대 / can -> 캔 / pinch -> 꼬집
+    slice(s) -> 장 / sheet(s) -> 장 / bunch -> 단
+  g, kg, ml, L 처럼 국제단위는 그대로 둔다. 단위가 없으면 null 로 둔다.
+- **description 에 URL 이나 출처 표기를 넣지 않는다.** 요리가 어떤 음식인지 설명하는
+  두세 문장만 쓴다. 원문에 그런 설명이 없으면 null 로 둔다. 링크만 있는 경우도 null 이다.
+- **steps 의 instruction 에서 원문의 번호 접두사를 뗀다.** '1.', '2)', '단계 3' 같은
+  표기는 빼고 내용만 남긴다. 순서는 step_no 가 갖는다. 그대로 두면 화면에 번호가
+  두 번 나온다. 원문의 단계 구분(예: '준비하기', '조리하기')이 유용하면 내용 앞에
+  붙여도 되지만 숫자는 뺀다.
 """
 
 STORAGE_SYSTEM_TEMPLATE = """\

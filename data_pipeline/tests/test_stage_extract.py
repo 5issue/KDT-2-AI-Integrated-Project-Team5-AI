@@ -234,3 +234,17 @@ def test_collect_dispatches_schema_per_request(tmp_settings: Settings) -> None:
     records = extract.load_records("storage_guide", tmp_settings)
     assert records[0]["food_name_ko"] == "버터"
     assert records[0]["_entity_key"] == "fk_1"
+
+
+def test_recipe_prompt_states_normalization_rules(tmp_settings: Settings) -> None:
+    """소규모 실행에서 실제로 어긋났던 세 가지가 프롬프트에 명시돼 있어야 합니다.
+
+    - 단위가 'tablespoons' 와 '큰술' 로 섞여 나왔습니다.
+    - description 에 출처 URL 만 들어간 레시피가 5건 중 3건이었습니다.
+    - 조리 단계 instruction 이 '1. 1. 믹싱볼에...' 처럼 번호가 두 번 붙었습니다.
+    """
+    system = extract.RECIPE_SYSTEM_TEMPLATE
+
+    assert "단위(unit)도 한국어로 통일한다" in system
+    assert "description 에 URL 이나 출처 표기를 넣지 않는다" in system
+    assert "원문의 번호 접두사를 뗀다" in system

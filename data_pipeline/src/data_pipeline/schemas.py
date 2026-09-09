@@ -115,7 +115,10 @@ class ExtractedIngredientLine(StrictModel):
         description="수식어/브랜드/손질상태를 뺀 한국어 기본형. 예: 'unsalted butter' -> '버터', '다진 마늘' -> '마늘'",
     )
     quantity: float | None = Field(default=None, description="수량. 원문에 없으면 null")
-    unit: str | None = Field(default=None, description="단위(g, ml, 개, 큰술 등). 없으면 null")
+    unit: str | None = Field(
+        default=None,
+        description="단위. 한국어로 통일한다(큰술/작은술/컵/개/장/쪽). g, ml 같은 국제단위는 그대로. 없으면 null",
+    )
     is_required: bool = Field(description="없으면 요리가 성립하지 않는 필수 재료면 true")
     is_raw_material: bool = Field(
         description="용어 기준의 원재료(가공되지 않은 순수 원료)면 true, 가공품/성분이면 false",
@@ -134,7 +137,10 @@ class ExtractedRecipeStep(StrictModel):
     """
 
     step_no: int = Field(description="1부터 시작하는 표시 순서. 원천 번호가 아니라 정리된 순서다")
-    instruction: str | None = Field(default=None, description="단계 설명(한국어). 사진만 있으면 null")
+    instruction: str | None = Field(
+        default=None,
+        description="단계 설명(한국어). 원문의 번호 접두사(1., 2))는 떼고 내용만. 사진만 있으면 null",
+    )
     image_url: str | None = Field(default=None, description="단계 사진 URL. 원문에 있으면 그대로, 없으면 null")
 
 
@@ -144,7 +150,10 @@ class ExtractedRecipe(StrictModel):
     source_recipe_id: str = Field(description="원본 자연키. 프로파일의 entity_key_columns 값을 조합해 만든다")
     name: str = Field(description="레시피 이름(한국어)")
     name_original: str | None = Field(default=None, description="원문이 한국어가 아니면 원표기")
-    description: str | None = Field(default=None, description="두세 문장 요약. 없으면 null")
+    description: str | None = Field(
+        default=None,
+        description="어떤 음식인지 두세 문장. URL 이나 출처 표기는 넣지 않는다. 설명이 없으면 null",
+    )
     cuisine_type: str | None = Field(default=None, description="한식/양식/중식/일식/기타")
     difficulty: Difficulty | None = Field(default=None, description="조리 난이도")
     prep_time_min: int | None = Field(default=None, description="준비 시간(분). 원문에 없으면 null")
