@@ -30,7 +30,7 @@ import json
 import sys
 from pathlib import Path
 
-from data_pipeline.batch.client import DEAD_STATUSES, BatchRunner
+from data_pipeline.batch.client import DEAD_STATUSES, TERMINAL_STATUSES, BatchRunner
 from data_pipeline.batch.raw_source import preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
@@ -185,14 +185,20 @@ def command_collect(args: argparse.Namespace) -> int:
     # 실패/만료/취소는 기다려도 달라지지 않습니다. "아직 안 끝남" 과 섞어 보고하면
     # 폴링 스크립트가 죽은 배치를 몇 시간이고 다시 물어보게 됩니다(실제로 한 번 겪었습니다).
     dead = [job for job in jobs if job.status in DEAD_STATUSES]
-    if dead:
-        print(f"배치가 종료 상태입니다({dead[0].status}). 다시 기다려도 결과가 나오지 않습니다.", file=sys.stderr)
-        for job in dead:
-            print(f"  {job.batch_id}: {job.error or '사유 없음'}", file=sys.stderr)
+    running = [job for job in jobs if job.status not in TERMINAL_STATUSES]
+    usable = [job for job in jobs if job.output_file_id]
+
+    for job in dead:
+        print(f"  종료됨({job.status}) {job.batch_id}: {job.error or '사유 없음'}", file=sys.stderr)
+
+    # 파트를 나눠 돌리면 하나가 늦어도 나머지는 이미 결과가 있습니다. 그것까지 못 쓰게
+    # 막으면 진행이 통째로 멈춥니다. 받을 수 있는 것은 받고, 못 받은 파트를 알려 줍니다.
+    if not usable:
+        if running:
+            print("아직 완료된 파트가 없습니다.", file=sys.stderr)
+            return 1
+        print("결과를 가진 파트가 하나도 없습니다.", file=sys.stderr)
         return 2
-    if any(job.status != "completed" for job in jobs):
-        print("아직 완료되지 않은 배치가 있습니다.", file=sys.stderr)
-        return 1
     for path in runner.download(args.job):
         print(f"다운로드: {path.name}")
 
@@ -214,6 +220,12 @@ def command_collect(args: argparse.Namespace) -> int:
         print(f"  실패 {failure}", file=sys.stderr)
     if failures:
         print(f"  ... 총 {len(failures)}건 실패", file=sys.stderr)
+
+    if running:
+        print(f"\n아직 도는 파트 {len(running)}개. 끝나면 같은 명령으로 다시 수거하세요.", file=sys.stderr)
+        return 1
+    if dead:
+        return 2
     return 0
 
 
