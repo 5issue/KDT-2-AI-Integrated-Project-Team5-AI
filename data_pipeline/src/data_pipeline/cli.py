@@ -31,10 +31,16 @@ import sys
 from pathlib import Path
 
 from data_pipeline.batch.client import DEAD_STATUSES, TERMINAL_STATUSES, BatchRunner
-from data_pipeline.batch.raw_source import preview_raw_source
+from data_pipeline.batch.raw_source import discover_datasets, preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
-from data_pipeline.load.bulk_insert import collect_rows, run_load
+from data_pipeline.load import ingredient_master
+from data_pipeline.load.bulk_insert import (
+    collect_rows,
+    load_connection_scope,
+    run_load,
+    run_sql_file,
+)
 from data_pipeline.stages import (
     STAGE_EXTRACT,
     STAGE_PROFILE,
@@ -259,6 +265,42 @@ def command_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+async def sync_master_async(settings: Settings, *, apply: bool) -> int:
+    """공공 영양성분 데이터로 재료 마스터를 보강합니다."""
+    datasets = discover_datasets(settings.raw_dir)
+    rows = ingredient_master.build_master_rows(datasets)
+    if not rows:
+        print("영양성분 데이터셋을 찾지 못했습니다. raw 에 대표식품 컬럼이 있는 파일이 필요합니다.", file=sys.stderr)
+        return 1
+
+    print(ingredient_master.render(rows))
+    if not apply:
+        print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
+        return 0
+
+    records = ingredient_master.to_staging_tuples(rows)
+    async with load_connection_scope(settings) as conn:
+        await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
+        await conn.execute("TRUNCATE staging_ingredient_master")
+        before = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
+        for start in range(0, len(records), settings.copy_chunk_size):
+            await conn.copy_records_to_table(
+                "staging_ingredient_master",
+                records=records[start : start + settings.copy_chunk_size],
+                columns=["source_identity_key", "name", "normalized_name", "is_raw_material", "aliases"],
+            )
+        await run_sql_file(conn, settings.sql_dir / "010_upsert_ingredient_master.sql")
+        after = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
+        with_alias = int(await conn.fetchval("SELECT count(*) FROM ingredient WHERE aliases <> '{}'") or 0)
+    print(f"\n재료 마스터 {before} -> {after}행 (신규 {after - before}), 별칭 있는 행 {with_alias}개")
+    return 0
+
+
+def command_sync_master(args: argparse.Namespace) -> int:
+    """마스터 보강 진입점."""
+    return asyncio.run(sync_master_async(get_settings(), apply=args.apply))
+
+
 def command_load(args: argparse.Namespace) -> int:
     """중간 산출물을 staging 에 COPY 하고 타깃 테이블에 반영합니다."""
     settings = get_settings()
@@ -319,6 +361,10 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--wait", action="store_true", help="완료될 때까지 폴링")
     collect.add_argument("--poll", type=int, default=60, help="폴링 간격(초)")
     collect.set_defaults(func=command_collect)
+
+    master = sub.add_parser("sync-master", help="공공 영양성분 데이터로 재료 마스터 보강")
+    master.add_argument("--apply", action="store_true", help="실제로 DB 에 반영 (없으면 집계만)")
+    master.set_defaults(func=command_sync_master)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")

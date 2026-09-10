@@ -4,4 +4,5 @@ TRUNCATE staging_recipe,
          staging_recipe_ingredient,
          staging_storage_guideline,
          staging_ingredient_match,
+         staging_ingredient_master,
          staging_embedding;

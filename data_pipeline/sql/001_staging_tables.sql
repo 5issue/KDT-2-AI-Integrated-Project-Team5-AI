@@ -70,6 +70,15 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_match (
     confidence      DOUBLE PRECISION NOT NULL
 );
 
+-- 마스터 보강용. 공공 영양성분 데이터의 대표식품과 하위 분류 별칭이 들어옵니다.
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_master (
+    source_identity_key TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    normalized_name     TEXT NOT NULL,
+    is_raw_material     BOOLEAN NOT NULL,
+    aliases             TEXT[] NOT NULL DEFAULT '{}'
+);
+
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (
     target_table TEXT NOT NULL,
     target_key   TEXT NOT NULL,
