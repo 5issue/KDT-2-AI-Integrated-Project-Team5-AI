@@ -103,6 +103,7 @@ class StagingRows:
     skipped_ingredients: int = 0
     skipped_storage: int = 0
     skipped_steps: int = 0
+    skipped_recipes: int = 0
 
     def is_empty(self) -> bool:
         """적재할 것이 하나도 없는지."""
@@ -119,6 +120,7 @@ class LoadReport:
     skipped_ingredients: int = 0
     skipped_storage: int = 0
     skipped_steps: int = 0
+    skipped_recipes: int = 0
 
     def render(self) -> str:
         """사람이 읽을 요약."""
@@ -129,6 +131,8 @@ class LoadReport:
             lines.append(f"{'매칭 실패로 건너뛴 보관기준':<28}: {self.skipped_storage}행")
         if self.skipped_steps:
             lines.append(f"{'내용이 비어 건너뛴 조리단계':<28}: {self.skipped_steps}행")
+        if self.skipped_recipes:
+            lines.append(f"{'재료 매칭률 미달로 뺀 레시피':<28}: {self.skipped_recipes}건")
         lines.append(f"{'적용한 SQL':<28}: {', '.join(self.applied_sql) or '없음'}")
         lines.extend(f"{table:<28}: {count}행 (적재 후)" for table, count in sorted(self.row_counts.items()))
         return "\n".join(lines)
@@ -155,6 +159,7 @@ def build_staging_rows(
     match_meta: dict[str, dict[str, Any]] | None = None,
     *,
     source_type_override: str = "",
+    min_match_rate: float = 0.0,
 ) -> StagingRows:
     """중간 산출물을 COPY 용 튜플로 바꿉니다."""
     rows = StagingRows()
@@ -183,15 +188,46 @@ def build_staging_rows(
             if "rules" in payload:
                 _append_storage(rows, payload, matches)
             elif "ingredients" in payload:
-                _append_recipe(rows, payload, matches, source_type=source_type)
+                _append_recipe(rows, payload, matches, source_type=source_type, min_match_rate=min_match_rate)
     return rows
 
 
-def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str, int], *, source_type: str) -> None:
+def _match_rate(payload: dict[str, Any], matches: dict[str, int]) -> float:
+    """이 레시피의 재료 중 마스터에 붙은 비율. 재료가 없으면 0."""
+    keys = [ingredient_match_key(str(item.get("normalized_name") or "")) for item in payload.get("ingredients", [])]
+    keys = [key for key in keys if key]
+    if not keys:
+        return 0.0
+    return sum(1 for key in keys if key in matches) / len(keys)
+
+
+def _is_translated(payload: dict[str, Any]) -> bool:
+    """원문이 한국어가 아니라 번역된 레시피인가.
+
+    2단계가 원문이 한국어가 아닐 때만 `name_original` 을 남깁니다.
+    한국어 원본 레시피는 MVP 우선 적재 대상이라 매칭률 필터를 걸지 않습니다.
+    """
+    return bool(str(payload.get("name_original") or "").strip())
+
+
+def _append_recipe(
+    rows: StagingRows,
+    payload: dict[str, Any],
+    matches: dict[str, int],
+    *,
+    source_type: str,
+    min_match_rate: float = 0.0,
+) -> None:
     """ExtractedRecipe 한 건을 staging 행으로."""
     source_id = str(payload.get("source_recipe_id") or payload.get("_entity_key") or "").strip()
     name = _truncate(payload.get("name"), 255)
     if not source_id or not name:
+        return
+
+    # 번역 레시피만 매칭률로 거릅니다. 재료가 절반도 안 붙으면 "부족 재료" 계산이
+    # 무의미해 데모에 쓸 수 없습니다. 한국어 원본은 그대로 적재합니다.
+    if min_match_rate > 0 and _is_translated(payload) and _match_rate(payload, matches) < min_match_rate:
+        rows.skipped_recipes += 1
         return
 
     nutrition = {k: v for k, v in (payload.get("nutrition") or {}).items() if v is not None}
@@ -363,6 +399,7 @@ async def run_load(
         skipped_ingredients=rows.skipped_ingredients,
         skipped_storage=rows.skipped_storage,
         skipped_steps=rows.skipped_steps,
+        skipped_recipes=rows.skipped_recipes,
     )
 
     if settings.dry_run:
@@ -421,4 +458,5 @@ def collect_rows(settings: Settings | None = None) -> StagingRows:
         matches,
         meta,
         source_type_override=settings.recipe_source_type,
+        min_match_rate=settings.recipe_min_match_rate,
     )

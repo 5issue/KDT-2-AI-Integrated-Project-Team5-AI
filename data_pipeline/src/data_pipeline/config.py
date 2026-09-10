@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     match_chunk_size: int = Field(default=25, ge=1, le=200)
     # 이 확신도 미만의 매칭은 채택하지 않고 미매칭으로 보고합니다.
     match_min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    # 번역된 레시피(원문이 한국어가 아닌 것)를 적재할 최소 재료 매칭률.
+    # MVP 방침: 재료가 절반도 안 붙은 레시피는 "부족 재료" 계산이 무의미해 데모에 못 씁니다.
+    # 한국어 원본 레시피는 이 필터를 적용하지 않습니다(우선 적재 대상).
+    recipe_min_match_rate: float = Field(default=0.7, ge=0.0, le=1.0)
     # recipe.source_type 기본값. 비워두면 데이터셋 이름을 씁니다.
     recipe_source_type: str = ""
     # 용어 기준표 원본 경로. 비워두면 domain.TERMINOLOGY_GUIDE 를 씁니다.
