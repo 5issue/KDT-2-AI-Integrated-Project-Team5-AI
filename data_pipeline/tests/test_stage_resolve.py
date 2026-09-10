@@ -225,3 +225,106 @@ async def test_exact_match_against_real_master(tmp_settings: Settings) -> None:
 
     assert [item.normalized_name for item in matched] == ["마늘"]
     assert [item.normalized_name for item in remaining] == ["존재하지않는재료xyz"]
+
+
+def test_collect_recovers_answers_that_echo_display_name(tmp_settings: Settings) -> None:
+    """모델이 normalized_name 대신 display 표기로 답하면 그 재료는 매칭 기회를 잃습니다.
+
+    실제로 `리큐르` 를 물었는데 `오렌지 풍미 리큐르` 로 답해 20종이 버려졌습니다.
+    """
+    from tests_helpers import batch_output_line, write_batch_results
+
+    from data_pipeline.batch.client import BatchRunner
+    from data_pipeline.stages import STAGE_RESOLVE
+
+    runner = BatchRunner(STAGE_RESOLVE, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    payload = [{"normalized_name": "리큐르", "hint_display": "오렌지 풍미 리큐르", "hint_raw_text": "orange liqueur"}]
+    request = {
+        "custom_id": "match-0000",
+        "body": {
+            "messages": [
+                {"role": "system", "content": "..."},
+                {"role": "user", "content": "<data>\n" + json.dumps(payload, ensure_ascii=False) + "\n</data>"},
+            ]
+        },
+    }
+    (runner.requests_dir / "r1_part001_input.jsonl").write_text(
+        json.dumps(request, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    (runner.requests_dir / "r1_keys.json").write_text(
+        json.dumps({"match-0000": ["리큐르"]}, ensure_ascii=False), encoding="utf-8"
+    )
+    write_batch_results(
+        runner.results_dir,
+        "r1",
+        [
+            batch_output_line(
+                "match-0000",
+                {
+                    "matches": [
+                        {
+                            "source_name": "오렌지 풍미 리큐르",
+                            "ingredient_id": 42,
+                            "matched_name": "리큐르",
+                            "confidence": 0.9,
+                            "reason": "동일 재료",
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+
+    report = resolve.ResolveReport(total_names=1, unmatched=[{"normalized_name": "리큐르", "occurrence": 5}])
+    result = resolve.collect("r1", report=report, settings=tmp_settings)
+
+    assert [m.normalized_name for m in result.llm] == ["리큐르"]
+    assert result.unmatched == []
+
+
+def test_collect_is_idempotent(tmp_settings: Settings) -> None:
+    """collect 를 다시 돌려도 매칭 수가 부풀지 않아야 합니다.
+
+    실제로 두 번 돌렸더니 리포트가 52.8% 를 표시했는데 저장된 값은 40% 였습니다.
+    """
+    from tests_helpers import batch_output_line, write_batch_results
+
+    from data_pipeline.batch.client import BatchRunner
+    from data_pipeline.stages import STAGE_RESOLVE
+
+    runner = BatchRunner(STAGE_RESOLVE, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    (runner.requests_dir / "r1_keys.json").write_text(
+        json.dumps({"match-0000": ["마늘"]}, ensure_ascii=False), encoding="utf-8"
+    )
+    write_batch_results(
+        runner.results_dir,
+        "r1",
+        [
+            batch_output_line(
+                "match-0000",
+                {
+                    "matches": [
+                        {
+                            "source_name": "마늘",
+                            "ingredient_id": 7,
+                            "matched_name": "마늘",
+                            "confidence": 0.95,
+                            "reason": "동일",
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+
+    first = resolve.collect(
+        "r1",
+        report=resolve.ResolveReport(total_names=1, unmatched=[{"normalized_name": "마늘", "occurrence": 3}]),
+        settings=tmp_settings,
+    )
+    second = resolve.collect("r1", report=resolve.load_report(tmp_settings), settings=tmp_settings)
+
+    assert len(first.matched) == 1
+    assert len(second.matched) == 1, "다시 수거했더니 매칭이 중복으로 쌓였습니다"

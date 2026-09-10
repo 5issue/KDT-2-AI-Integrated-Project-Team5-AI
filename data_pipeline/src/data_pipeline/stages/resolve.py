@@ -44,6 +44,8 @@ MATCH_SYSTEM_TEMPLATE = """\
 - 표기만 다르고 같은 재료면 매칭한다. 예: '대파' 와 '파', 'unsalted butter' 와 '버터'.
 - 성격이 다르면 매칭하지 않는다. 예: '두부' 를 '대두' 로 잇지 않는다(가공 단계가 다르다).
 - confidence 는 정직하게 준다. 애매하면 0.5 이하로 준다.
+- **source_name 에는 요청의 `normalized_name` 을 글자 그대로 돌려준다.**
+  `display_name` 이나 원문 표기를 쓰면 어느 요청에 대한 답인지 알 수 없어 버려진다.
 
 [재료 마스터 목록] id | 이름 | 기본형
 {master}
@@ -243,9 +245,10 @@ def build_requests(
         key_map[custom_id] = [item.normalized_name for item in part]
         payload = [
             {
+                # source_name 으로 그대로 돌려받아야 하는 값입니다. 이름을 분명히 해 둡니다.
                 "normalized_name": item.normalized_name,
-                "display_name": item.display_name,
-                "sample_raw_text": item.sample_raw_text,
+                "hint_display": item.display_name,
+                "hint_raw_text": item.sample_raw_text,
             }
             for item in part
         ]
@@ -318,6 +321,37 @@ def load_matches(settings: Settings | None = None) -> dict[str, int]:
     return {name: int(item["ingredient_id"]) for name, item in payload["matched"].items()}
 
 
+def _build_aliases(runner: BatchRunner, job_name: str, requested: set[str]) -> dict[str, str]:
+    """요청에 함께 실어 보낸 표기들 -> 원래 매칭 키.
+
+    모델이 `normalized_name` 대신 `hint_display` 를 돌려주는 일이 실제로 있었습니다.
+    (`리큐르` 를 물었는데 `오렌지 풍미 리큐르` 로 답함) 그대로 두면 어느 요청에 대한
+    답인지 몰라 버려지고, 그 재료는 매칭 기회 자체를 잃습니다.
+    """
+    aliases: dict[str, str] = {}
+    for path in sorted(runner.requests_dir.glob(f"{job_name}_part*_input.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            body = json.loads(line).get("body", {})
+            messages = body.get("messages", [])
+            if len(messages) < 2:
+                continue
+            content = str(messages[1].get("content", ""))
+            if "<data>" not in content:
+                continue
+            block = content.split("<data>", 1)[1].split("</data>", 1)[0]
+            for item in json.loads(block):
+                key = str(item.get("normalized_name", ""))
+                if key not in requested:
+                    continue
+                for field_name in ("hint_display", "hint_raw_text", "display_name", "sample_raw_text"):
+                    alias = ingredient_match_key(str(item.get(field_name) or ""))
+                    if alias and alias not in requested:
+                        aliases.setdefault(alias, key)
+    return aliases
+
+
 def _expand_delegates(
     runner: BatchRunner,
     job_name: str,
@@ -371,6 +405,7 @@ def collect(
     runner = BatchRunner(STAGE_RESOLVE, settings)
     key_map = json.loads((runner.requests_dir / f"{job_name}_keys.json").read_text(encoding="utf-8"))
     requested = {name for names in key_map.values() for name in names}
+    aliases = _build_aliases(runner, job_name, requested)
     occurrences = {item["normalized_name"]: item.get("occurrence", 0) for item in report.unmatched}
 
     outcome = runner.parse(job_name, IngredientMatchBatch)
@@ -381,7 +416,9 @@ def collect(
         assert isinstance(parsed, IngredientMatchBatch)
         for match in parsed.matches:
             # LLM 이 공백을 넣거나 빼서 돌려줄 수 있으므로 보낼 때와 같은 키로 되돌립니다.
+            # normalized_name 대신 display 표기로 답하는 경우도 있어 별칭까지 봅니다.
             name = ingredient_match_key(match.source_name)
+            name = name if name in requested else aliases.get(name, name)
             if name not in requested or name in decided:
                 continue
             decided.add(name)
@@ -415,5 +452,17 @@ def collect(
     still_unmatched = _expand_delegates(runner, job_name, report, still_unmatched, occurrences)
 
     report.unmatched = sorted(still_unmatched, key=lambda item: (-item["occurrence"], item["normalized_name"]))
+    # collect 를 다시 돌리면 이전 결과가 리스트에 겹쳐 쌓입니다. 저장은 dict 라 값이
+    # 정확하지만 화면 숫자가 부풀려져 매칭률을 잘못 읽게 됩니다.
+    report.exact = _dedupe(report.exact)
+    report.llm = _dedupe(report.llm)
     save_report(report, settings)
     return report
+
+
+def _dedupe(items: list[MatchResult]) -> list[MatchResult]:
+    """이름당 하나만 남깁니다. 먼저 들어온 것을 우선합니다."""
+    seen: dict[str, MatchResult] = {}
+    for item in items:
+        seen.setdefault(item.normalized_name, item)
+    return list(seen.values())
