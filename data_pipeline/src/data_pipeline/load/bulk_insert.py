@@ -317,6 +317,7 @@ def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[st
         duration_text = str(rule.get("duration_text") or "").strip()
         if not duration_text:
             continue
+        minimum, maximum, unit = _duration_triplet(rule)
         rows.storage.append(
             (
                 source_item_id[:255],
@@ -326,13 +327,31 @@ def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[st
                 slot,
                 location,
                 context,
-                _decimal(rule.get("duration_min"), 2),
-                _decimal(rule.get("duration_max"), 2),
-                _truncate(rule.get("duration_unit"), 50),
+                minimum,
+                maximum,
+                unit,
                 duration_text,
                 rule.get("storage_tips"),
             )
         )
+
+
+def _duration_triplet(rule: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """duration 3종을 DB CHECK 에 맞춥니다. 셋 다 있거나 셋 다 없어야 합니다.
+
+    `ck_storage_guideline_duration_complete` 가 부분만 채운 행을 거부합니다.
+    실제로 원본 `unit_source` 가 'When Ripe' 처럼 단위가 아닌 문구인 경우가 있어
+    LLM 이 수치 없이 단위만 채웠고, 1,298개 중 23개가 여기 걸려 **적재 전체가
+    롤백**됐습니다. 한 행 때문에 전부 되돌아가므로 여기서 맞춰 둡니다.
+
+    버리는 것은 단위뿐입니다. 사람이 읽을 표기는 `duration_text` 에 남아 있습니다.
+    """
+    minimum = _decimal(rule.get("duration_min"), 2)
+    maximum = _decimal(rule.get("duration_max"), 2)
+    unit = _truncate(rule.get("duration_unit"), 50)
+    if minimum is None or maximum is None or unit is None:
+        return None, None, None
+    return minimum, maximum, unit
 
 
 @asynccontextmanager

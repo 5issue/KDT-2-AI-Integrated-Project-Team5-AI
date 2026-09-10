@@ -238,3 +238,43 @@ def test_korean_recipe_is_not_filtered(tmp_path: Path) -> None:
     rows = build_staging_rows(records, {}, min_match_rate=0.7)
     assert len(rows.recipes) == 1
     assert rows.skipped_recipes == 0
+
+
+def test_partial_duration_is_nulled_to_satisfy_check(tmp_path: Path) -> None:
+    """duration 은 셋 다 있거나 셋 다 없어야 합니다(ck_storage_guideline_duration_complete).
+
+    원본 unit_source 가 'When Ripe' 처럼 단위가 아닌 문구여서 수치 없이 단위만 채워진
+    행이 23개 있었고, 그 한 부류 때문에 적재 전체가 롤백됐습니다.
+    """
+    records = tmp_path / "records"
+    records.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_item_id": "fk_249",
+        "source_food_name": "Apricots",
+        "normalized_name": "살구",
+        "rules": [
+            {
+                "source_slot": "pantry",
+                "duration_min": None,
+                "duration_max": None,
+                "duration_unit": "When Ripe",
+                "duration_text": "익었을 때",
+            },
+            {
+                "source_slot": "freeze",
+                "duration_min": 6.0,
+                "duration_max": 9.0,
+                "duration_unit": "Months",
+                "duration_text": "6-9 개월",
+            },
+        ],
+    }
+    write_jsonl(records / "storage_guide.jsonl", [payload])
+
+    rows = build_staging_rows(records, {"살구": 5})
+    partial, complete = rows.storage[0], rows.storage[1]
+
+    # 컬럼 순서: ... duration_min, duration_max, duration_unit, duration_text
+    assert (partial[7], partial[8], partial[9]) == (None, None, None)
+    assert partial[10] == "익었을 때", "사람이 읽을 표기는 남아야 합니다"
+    assert (complete[8], complete[9]) == (Decimal("9.00"), "Months")
