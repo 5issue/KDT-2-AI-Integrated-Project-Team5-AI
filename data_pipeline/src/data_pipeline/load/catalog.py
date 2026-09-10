@@ -39,7 +39,15 @@ PRODUCT_COLUMNS = (
     "stock_quantity",
     "metadata",
 )
-PRODUCT_INGREDIENT_COLUMNS = ("source_type", "source_product_id", "normalized_name", "role", "quantity_g", "ratio")
+PRODUCT_INGREDIENT_COLUMNS = (
+    "source_type",
+    "source_product_id",
+    "normalized_name",
+    "ingredient_id",
+    "role",
+    "quantity_g",
+    "ratio",
+)
 
 # 이 컬럼들이 다 있어야 해당 데이터셋으로 봅니다.
 #
@@ -251,11 +259,63 @@ def _append_product_ingredients(
                 source_type,
                 source_id,
                 key,
+                None,  # raw 로 들어온 것은 3단계 매칭 결과로 해석합니다
                 _text(item.get("role")) or "PRIMARY",
                 _number(item.get("quantity_g"), 2),
                 _number(item.get("ratio"), 5),
             )
         )
+
+
+# 상품명 부분일치에 쓸 최소 길이. `물` 처럼 한 글자인 재료는 아무 상품명에나 걸립니다.
+MIN_SUBSTRING_LENGTH = 2
+
+
+def derive_product_ingredients(rows: CatalogRows, lookup: dict[str, int]) -> int:
+    """상품명과 카테고리로 구성 재료를 유추합니다.
+
+    raw 의 `ingredients` 가 비어 있어 `product_ingredient` 를 못 만들면
+    Product -> Ingredient -> Recipe -> 부족재료 -> Product 루프가 끊깁니다.
+    실제로 2,553건 전부 비어 있었습니다.
+
+    두 신호를 씁니다. 실측 커버리지는 88% 입니다.
+    1. 상품명에 들어 있는 마스터 재료명 중 **가장 긴 것** (87%)
+       `[피쉬쉘] 자숙 칵테일 새우살 200g` -> `새우`
+    2. 없으면 카테고리 잎 이름의 정확 일치 (29%)
+       `수산 > 해산물/조개류 > 새우` -> `새우`
+
+    한 상품에 재료 하나만 답니다. 밀키트나 양념육은 여러 재료로 이루어지지만,
+    상품명만으로는 구성 비율을 알 수 없어 억지로 늘리면 노이즈가 됩니다.
+    구성 재료가 실제로 필요한 상품은 raw 의 `ingredients` 로 받는 편이 낫습니다.
+
+    이미 `ingredients` 로 들어온 상품은 건드리지 않습니다.
+    """
+    if not lookup:
+        return 0
+
+    keys = sorted((key for key in lookup if len(key) >= MIN_SUBSTRING_LENGTH), key=len, reverse=True)
+    already = {(row[0], row[1]) for row in rows.product_ingredients}
+    source_index = PRODUCT_COLUMNS.index("source_type")
+    id_index = PRODUCT_COLUMNS.index("source_product_id")
+    name_index = PRODUCT_COLUMNS.index("name")
+    path_index = PRODUCT_COLUMNS.index("category_path")
+
+    derived = 0
+    for row in rows.products:
+        identity = (row[source_index], row[id_index])
+        if identity in already:
+            continue
+        haystack = ingredient_match_key(str(row[name_index]))
+        match = next((key for key in keys if key in haystack), None)
+        if match is None:
+            leaf = str(row[path_index] or "").split(" > ")[-1].strip()
+            candidate = ingredient_match_key(leaf)
+            match = candidate if candidate in lookup else None
+        if match is None:
+            continue
+        rows.product_ingredients.append((*identity, match, lookup[match], "PRIMARY", None, None))
+        derived += 1
+    return derived
 
 
 def render(rows: CatalogRows) -> str:
@@ -267,9 +327,13 @@ def render(rows: CatalogRows) -> str:
     ]
     if rows.skipped_products:
         lines.append(f"필수값이 없어 뺀 상품: {rows.skipped_products}행")
-    if rows.products and not rows.product_ingredients:
-        lines.append(
-            "\n주의: 구성 재료가 하나도 없습니다. product_ingredient 가 비면\n"
-            "  Product -> Ingredient -> Recipe -> 부족재료 -> Product 루프가 끊깁니다."
-        )
+    if rows.products:
+        covered = len({(row[0], row[1]) for row in rows.product_ingredients})
+        rate = covered / len(rows.products) * 100
+        lines.append(f"  구성 재료가 붙은 상품: {covered}/{len(rows.products)} ({rate:.0f}%)")
+        if not rows.product_ingredients:
+            lines.append(
+                "\n주의: 구성 재료가 하나도 없습니다. product_ingredient 가 비면\n"
+                "  Product -> Ingredient -> Recipe -> 부족재료 -> Product 루프가 끊깁니다."
+            )
     return "\n".join(lines)

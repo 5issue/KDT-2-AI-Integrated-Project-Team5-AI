@@ -110,6 +110,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_product_ingredient (
     source_type       TEXT NOT NULL,
     source_product_id TEXT NOT NULL,
     normalized_name   TEXT NOT NULL,
+    ingredient_id     BIGINT,             -- 상품명으로 유추한 경우 여기에 직접 담깁니다
     role              TEXT NOT NULL DEFAULT 'PRIMARY',
     quantity_g        NUMERIC(10, 2),
     ratio             NUMERIC(8, 5),
@@ -122,3 +123,9 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (
     embedding    VECTOR(1536) NOT NULL,
     PRIMARY KEY (target_table, target_key)
 );
+
+-- staging 스키마가 바뀌면 CREATE IF NOT EXISTS 로는 컬럼이 추가되지 않습니다.
+-- 이미 만들어진 테이블을 따라잡기 위한 보정입니다. staging 은 언제든 다시 채울 수 있으므로
+-- 컬럼을 더하는 것만으로 충분합니다.
+ALTER TABLE staging_product_ingredient ADD COLUMN IF NOT EXISTS ingredient_id BIGINT;
+ALTER TABLE staging_recipe ADD COLUMN IF NOT EXISTS image_url TEXT;

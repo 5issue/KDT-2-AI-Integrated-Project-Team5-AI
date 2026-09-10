@@ -308,7 +308,13 @@ async def load_catalog_async(settings: Settings, *, apply: bool) -> int:
         print("카테고리/상품 데이터셋을 찾지 못했습니다.", file=sys.stderr)
         return 1
 
+    # raw 에 구성 재료가 없으면 상품명과 카테고리로 유추합니다. 마스터를 읽어야 해서
+    # 여기서 붙입니다. 이미 들어온 구성 재료는 건드리지 않습니다.
+    lookup = await resolve.fetch_match_lookup(settings)
+    derived = catalog.derive_product_ingredients(rows, lookup)
     print(catalog.render(rows))
+    if derived:
+        print(f"  (상품명/카테고리로 유추한 것 {derived}건)")
     if not apply:
         print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
         return 0

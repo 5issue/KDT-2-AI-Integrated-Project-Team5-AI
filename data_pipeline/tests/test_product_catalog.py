@@ -116,7 +116,9 @@ def test_product_ingredients_are_normalized_to_match_key(tmp_path: Path) -> None
     )
     rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
 
-    assert [(row[2], row[3]) for row in rows.product_ingredients] == [("돼지고기", "PRIMARY"), ("양파", "PRIMARY")]
+    # 컬럼: source_type, source_product_id, normalized_name, ingredient_id, role, ...
+    assert [(row[2], row[4]) for row in rows.product_ingredients] == [("돼지고기", "PRIMARY"), ("양파", "PRIMARY")]
+    assert all(row[3] is None for row in rows.product_ingredients), "raw 로 온 것은 3단계가 해석합니다"
 
 
 def test_products_without_price_are_skipped(tmp_path: Path) -> None:
@@ -174,3 +176,55 @@ def test_duplicate_sku_keeps_the_first_and_nulls_the_rest(tmp_path: Path) -> Non
     skus = [row[10] for row in rows.products]
     assert skus == ["M0001", None, "M0002"]
     assert len(rows.products) == 3, "중복 sku 때문에 상품 행이 사라지면 안 됩니다"
+
+
+def test_derives_ingredient_from_product_name(tmp_path: Path) -> None:
+    """raw 의 ingredients 가 2,553건 전부 비어 있어 product_ingredient 를 못 만들었습니다.
+
+    상품명에 들어 있는 마스터 재료명 중 가장 긴 것을 씁니다.
+    """
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [product_row("1", "[피쉬쉘] 자숙 칵테일 새우살 200g (냉동)", category_path="수산 > 새우")],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+    derived = catalog.derive_product_ingredients(rows, {"새우": 7, "새우살": 9})
+
+    assert derived == 1
+    # 더 긴 `새우살` 이 이깁니다.
+    assert rows.product_ingredients[0][2] == "새우살"
+    assert rows.product_ingredients[0][3] == 9
+
+
+def test_falls_back_to_category_leaf(tmp_path: Path) -> None:
+    """상품명에서 못 찾으면 카테고리 잎 이름으로 봅니다."""
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [product_row("1", "[르 아뜰리에] 게랑드 토판", category_path="양념 > 소금")],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+    catalog.derive_product_ingredients(rows, {"소금": 3})
+
+    assert rows.product_ingredients[0][2] == "소금"
+
+
+def test_one_character_ingredients_do_not_match_everything(tmp_path: Path) -> None:
+    """`물` 같은 한 글자 재료는 아무 상품명에나 걸립니다."""
+    write_parquet(tmp_path / "product_raw.parquet", [product_row("1", "생수 2L")])
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+    catalog.derive_product_ingredients(rows, {"물": 1})
+
+    assert rows.product_ingredients == []
+
+
+def test_existing_ingredients_are_not_overwritten(tmp_path: Path) -> None:
+    """raw 로 들어온 구성 재료가 있으면 유추하지 않습니다."""
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [product_row("1", "양념 돼지불고기", ingredients=json.dumps([{"name": "돼지고기"}], ensure_ascii=False))],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+    derived = catalog.derive_product_ingredients(rows, {"불고기": 99})
+
+    assert derived == 0
+    assert [row[2] for row in rows.product_ingredients] == ["돼지고기"]

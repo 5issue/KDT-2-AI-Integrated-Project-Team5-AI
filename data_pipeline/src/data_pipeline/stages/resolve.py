@@ -167,6 +167,21 @@ async def fetch_master(settings: Settings | None = None) -> list[dict[str, Any]]
             return [dict(row) for row in rows]
 
 
+async def fetch_match_lookup(settings: Settings | None = None) -> dict[str, int]:
+    """마스터 전체를 매칭 키 -> ingredient_id 로. 이름·기본형·별칭을 모두 담습니다.
+
+    상품명에서 재료를 유추할 때 씁니다. 같은 키가 여럿이면 낮은 id 를 씁니다
+    (상위 항목이 먼저 들어와 있어 더 일반적인 재료가 잡힙니다).
+    """
+    lookup: dict[str, int] = {}
+    for row in await fetch_master(settings):
+        for candidate in (row.get("normalized_name"), row.get("name"), *(row.get("aliases") or [])):
+            key = ingredient_match_key(str(candidate or ""))
+            if key:
+                lookup.setdefault(key, int(row["ingredient_id"]))
+    return lookup
+
+
 async def exact_match(
     names: Sequence[NameRequest], settings: Settings | None = None
 ) -> tuple[list[MatchResult], list[NameRequest]]:

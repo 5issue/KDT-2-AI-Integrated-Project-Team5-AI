@@ -9,14 +9,13 @@
 -- 이름은 덮어쓰지 않습니다. 팀이 손으로 다듬은 표기를 공공데이터 표기로 되돌리면
 -- 곤란하기 때문입니다. 새로 만드는 행에만 쓰고, 기존 행은 aliases 만 합칩니다.
 
+-- ingredient_id 는 시퀀스에 맡깁니다. 예전에 MAX+ROW_NUMBER 로 직접 지정했더니
+-- 시퀀스가 736 에 멈춘 채 행이 1018 까지 늘어, 다음 삽입이 기존 id 와 충돌할 뻔했습니다.
+-- (storage_guideline 은 시퀀스가 없어 그쪽만 MAX+ROW_NUMBER 를 씁니다.)
 INSERT INTO ingredient (
-    ingredient_id, name, normalized_name, is_raw_material, aliases, source_identity_key
+    name, normalized_name, is_raw_material, aliases, source_identity_key
 )
-SELECT COALESCE(
-           (SELECT MAX(ingredient_id) FROM ingredient),
-           0
-       ) + ROW_NUMBER() OVER (ORDER BY sim.source_identity_key),
-       LEFT(sim.name, 255),
+SELECT LEFT(sim.name, 255),
        LEFT(sim.normalized_name, 255),
        sim.is_raw_material,
        sim.aliases,
@@ -43,3 +42,10 @@ FROM (
 ) AS merged
 WHERE i.ingredient_id = merged.ingredient_id
   AND i.aliases IS DISTINCT FROM merged.aliases;
+
+-- 과거 실행이 id 를 직접 지정해 시퀀스가 뒤처져 있으면 여기서 맞춥니다.
+-- 이 줄이 없으면 다음에 시퀀스로 넣는 행이 기존 id 와 충돌합니다.
+SELECT setval(
+    pg_get_serial_sequence('ingredient', 'ingredient_id'),
+    GREATEST((SELECT COALESCE(MAX(ingredient_id), 1) FROM ingredient), 1)
+);
