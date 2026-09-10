@@ -105,12 +105,15 @@ def test_datasets_without_required_columns_are_skipped(tmp_path: Path) -> None:
 
 def test_staging_tuples_match_copy_columns(tmp_path: Path) -> None:
     """COPY 컬럼 순서와 튜플 순서가 어긋나면 값이 엉뚱한 컬럼으로 들어갑니다."""
-    write_nutrition(tmp_path / "p.json", [record("P", "19", "19801", "버터", 식품소분류명="가공버터")])
+    write_nutrition(
+        tmp_path / "p.json",
+        [record("P", "19", "19801", "버터", 식품대분류명="유가공품류", 식품소분류명="가공버터")],
+    )
     rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
-    # 컬럼: source_identity_key, name, normalized_name, is_raw_material, aliases, is_pantry
+    # 컬럼: source_identity_key, name, normalized_name, is_raw_material, aliases, is_pantry, category_path
     assert ingredient_master.to_staging_tuples(rows) == [
-        ("K-FIND-P:19:19801:버터", "버터", "버터", False, ["가공버터"], False)
+        ("K-FIND-P:19:19801:버터", "버터", "버터", False, ["가공버터"], False, "가공식품 > 유가공품류")
     ]
 
 

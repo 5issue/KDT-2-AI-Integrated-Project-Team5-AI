@@ -42,6 +42,22 @@ ALIAS_COLUMNS = ("식품중분류명", "식품소분류명", "식품세분류명
 
 REQUIRED_COLUMNS = ("데이터구분코드", "식품대분류코드", "대표식품코드", "대표식품명")
 
+# 식품대분류 -> 용어 기준표의 최상위 분류.
+#
+# 분류 **이름**은 데이터가 갖고 있습니다(`식품대분류명`). 여기서 정하는 것은
+# 그 위에 어떤 대분류를 두느냐뿐이고, `ai_context/용어 기준표.md` 의
+# 농산 / 축산 / 수산 체계를 따릅니다. 가공식품(P)은 축이 달라 한 갈래로 묶습니다.
+#
+# 코드가 R 과 P 에서 다른 뜻이라 데이터구분까지 함께 봐야 합니다
+# (R:01 은 곡류, P:01 은 과자류·빵류).
+INGREDIENT_TOP_LEVEL: dict[tuple[str, str], str] = {
+    **{("R", code): "농산" for code in ("01", "02", "03", "04", "05", "06", "07", "08")},
+    **{("R", code): "축산" for code in ("09", "10", "13")},
+    **{("R", code): "수산" for code in ("11", "12")},
+    **{("R", code): "기타" for code in ("14", "15", "18", "20")},
+}
+PROCESSED_TOP_LEVEL = "가공식품"
+
 # 집에 늘 있다고 보고 "부족 재료" 계산에서 빼는 재료.
 #
 # 이건 **큐레이션 목록입니다.** 공공데이터로는 유도할 수 없습니다. 식품대분류 코드가
@@ -107,6 +123,7 @@ class MasterRow:
     is_raw_material: bool
     aliases: list[str] = field(default_factory=list)
     is_pantry: bool = False
+    category_path: str = ""
 
 
 def _clean(value: Any) -> str:
@@ -127,6 +144,34 @@ def identity_key(kind: str, group: str, code: str, name: str) -> str:
     return f"{prefix}:{group}:{code}:{name}"
 
 
+def category_path(kind: str, group: str, group_name: str) -> str:
+    """재료가 속할 카테고리 경로. `농산 > 채소류` 처럼 두 단계입니다.
+
+    MVP 방침이 `depth <= 2` 라 더 깊이 가지 않습니다.
+    분류 이름을 못 찾으면 빈 문자열을 돌려주고, 그 재료는 카테고리 없이 둡니다.
+    """
+    if not group_name:
+        return ""
+    top = PROCESSED_TOP_LEVEL if kind == PROCESSED_CODE else INGREDIENT_TOP_LEVEL.get((kind, group), "")
+    return f"{top} > {group_name}" if top else ""
+
+
+def build_category_rows(rows: list[MasterRow]) -> list[tuple[Any, ...]]:
+    """마스터 행에서 INGREDIENT 카테고리를 뽑습니다. staging_category 모양입니다."""
+    paths: dict[str, tuple[str, str, int]] = {}
+    for row in rows:
+        if not row.category_path:
+            continue
+        top, leaf = row.category_path.split(" > ", 1)
+        paths.setdefault(top, ("", top, 0))
+        paths.setdefault(row.category_path, (top, leaf, 1))
+
+    return [
+        (path, parent, "INGREDIENT", name, depth, '{"source": "K-FIND"}')
+        for path, (parent, name, depth) in sorted(paths.items())
+    ]
+
+
 def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
     """영양성분 데이터셋들에서 마스터 행을 만듭니다.
 
@@ -134,6 +179,7 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
     재료 마스터에 넣지 않습니다.
     """
     aliases: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
+    group_names: dict[tuple[str, str], str] = {}
 
     for dataset in datasets:
         if not all(column in dataset.columns for column in REQUIRED_COLUMNS):
@@ -149,6 +195,7 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
             if not (group and code and name):
                 continue
 
+            group_names.setdefault((kind, group), _clean(payload.get("식품대분류명")))
             bucket = aliases[(kind, group, code, name)]
             for column in ALIAS_COLUMNS:
                 alias = _clean(payload.get(column))
@@ -163,6 +210,7 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
             normalized_name=name,
             is_raw_material=(kind == RAW_MATERIAL_CODE),
             aliases=sorted(bucket),
+            category_path=category_path(kind, group, group_names.get((kind, group), "")),
         )
         for (kind, group, code, name), bucket in aliases.items()
     ]
@@ -173,6 +221,7 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
             normalized_name=name,
             is_raw_material=is_raw,
             aliases=sorted(alias_names),
+            category_path="",
         )
         for name, is_raw, alias_names in CURATED_BASICS
     )
@@ -188,7 +237,15 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
 def to_staging_tuples(rows: list[MasterRow]) -> list[tuple[Any, ...]]:
     """COPY 로 밀어넣을 튜플."""
     return [
-        (row.source_identity_key, row.name, row.normalized_name, row.is_raw_material, row.aliases, row.is_pantry)
+        (
+            row.source_identity_key,
+            row.name,
+            row.normalized_name,
+            row.is_raw_material,
+            row.aliases,
+            row.is_pantry,
+            row.category_path or None,
+        )
         for row in rows
     ]
 

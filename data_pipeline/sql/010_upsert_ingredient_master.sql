@@ -26,6 +26,17 @@ WHERE NOT EXISTS (
     SELECT 1 FROM ingredient i WHERE i.source_identity_key = sim.source_identity_key
 );
 
+-- 재료를 카테고리에 붙입니다. 006 이 만든 category 의 metadata.path 로 되짚습니다.
+-- 식품대분류(K-FIND 코드)가 그대로 분류가 되므로 따로 판단할 것이 없습니다.
+UPDATE ingredient i
+SET ingredient_category_id = cat.category_id
+FROM staging_ingredient_master sim
+JOIN category cat ON cat.metadata ->> 'path' = sim.category_path
+                 AND cat.category_type = 'INGREDIENT'
+WHERE i.source_identity_key = sim.source_identity_key
+  AND sim.category_path IS NOT NULL
+  AND i.ingredient_category_id IS DISTINCT FROM cat.category_id;
+
 -- 상비재료 표시는 큐레이션 목록이 정본이라 기존 행에도 반영합니다.
 UPDATE ingredient i
 SET is_pantry = sim.is_pantry

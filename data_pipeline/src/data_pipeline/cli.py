@@ -288,18 +288,40 @@ async def sync_master_async(settings: Settings, *, apply: bool) -> int:
     records = ingredient_master.to_staging_tuples(rows)
     async with load_connection_scope(settings) as conn:
         await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
-        await conn.execute("TRUNCATE staging_ingredient_master")
+        await conn.execute("TRUNCATE staging_ingredient_master, staging_category")
+
+        # 재료 분류(K-FIND 식품대분류)를 카테고리로 먼저 만들고 재료를 붙입니다.
+        categories = ingredient_master.build_category_rows(rows)
+        if categories:
+            await conn.copy_records_to_table(
+                "staging_category",
+                records=categories,
+                columns=["path", "parent_path", "category_type", "name", "depth", "metadata"],
+            )
         before = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
         for start in range(0, len(records), settings.copy_chunk_size):
             await conn.copy_records_to_table(
                 "staging_ingredient_master",
                 records=records[start : start + settings.copy_chunk_size],
-                columns=["source_identity_key", "name", "normalized_name", "is_raw_material", "aliases", "is_pantry"],
+                columns=[
+                    "source_identity_key",
+                    "name",
+                    "normalized_name",
+                    "is_raw_material",
+                    "aliases",
+                    "is_pantry",
+                    "category_path",
+                ],
             )
+        await run_sql_file(conn, settings.sql_dir / "006_insert_category.sql")
         await run_sql_file(conn, settings.sql_dir / "010_upsert_ingredient_master.sql")
         after = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
         with_alias = int(await conn.fetchval("SELECT count(*) FROM ingredient WHERE aliases <> '{}'") or 0)
+        linked = int(
+            await conn.fetchval("SELECT count(*) FROM ingredient WHERE ingredient_category_id IS NOT NULL") or 0
+        )
     print(f"\n재료 마스터 {before} -> {after}행 (신규 {after - before}), 별칭 있는 행 {with_alias}개")
+    print(f"재료 분류 연결: {linked}행")
     return 0
 
 

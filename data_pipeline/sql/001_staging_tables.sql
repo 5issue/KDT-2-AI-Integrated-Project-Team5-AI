@@ -77,7 +77,8 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_master (
     normalized_name     TEXT NOT NULL,
     is_raw_material     BOOLEAN NOT NULL,
     aliases             TEXT[] NOT NULL DEFAULT '{}',
-    is_pantry           BOOLEAN NOT NULL DEFAULT FALSE
+    is_pantry           BOOLEAN NOT NULL DEFAULT FALSE,
+    category_path       TEXT
 );
 
 -- 카테고리. parent_id 는 raw 에 없으므로 경로 문자열로 받아 적재 때 해석합니다.
@@ -131,3 +132,4 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (
 ALTER TABLE staging_product_ingredient ADD COLUMN IF NOT EXISTS ingredient_id BIGINT;
 ALTER TABLE staging_recipe ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE staging_ingredient_master ADD COLUMN IF NOT EXISTS is_pantry BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE staging_ingredient_master ADD COLUMN IF NOT EXISTS category_path TEXT;
