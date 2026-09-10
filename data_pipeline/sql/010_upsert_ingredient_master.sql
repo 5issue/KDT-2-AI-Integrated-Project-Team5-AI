@@ -13,17 +13,25 @@
 -- 시퀀스가 736 에 멈춘 채 행이 1018 까지 늘어, 다음 삽입이 기존 id 와 충돌할 뻔했습니다.
 -- (storage_guideline 은 시퀀스가 없어 그쪽만 MAX+ROW_NUMBER 를 씁니다.)
 INSERT INTO ingredient (
-    name, normalized_name, is_raw_material, aliases, source_identity_key
+    name, normalized_name, is_raw_material, aliases, is_pantry, source_identity_key
 )
 SELECT LEFT(sim.name, 255),
        LEFT(sim.normalized_name, 255),
        sim.is_raw_material,
        sim.aliases,
+       sim.is_pantry,
        sim.source_identity_key
 FROM staging_ingredient_master sim
 WHERE NOT EXISTS (
     SELECT 1 FROM ingredient i WHERE i.source_identity_key = sim.source_identity_key
 );
+
+-- 상비재료 표시는 큐레이션 목록이 정본이라 기존 행에도 반영합니다.
+UPDATE ingredient i
+SET is_pantry = sim.is_pantry
+FROM staging_ingredient_master sim
+WHERE i.source_identity_key = sim.source_identity_key
+  AND i.is_pantry IS DISTINCT FROM sim.is_pantry;
 
 -- 기존 행에는 별칭만 더합니다. 중복은 제거하고, 이미 있는 별칭은 그대로 둡니다.
 UPDATE ingredient i

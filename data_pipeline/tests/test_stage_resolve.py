@@ -328,3 +328,27 @@ def test_collect_is_idempotent(tmp_settings: Settings) -> None:
 
     assert len(first.matched) == 1
     assert len(second.matched) == 1, "다시 수거했더니 매칭이 중복으로 쌓였습니다"
+
+
+def test_count_llm_matches_reads_saved_report(tmp_settings: Settings) -> None:
+    """resolve 재실행이 기존 LLM 결과를 덮어씁니다. 몇 종이 사라지는지 알려야 합니다.
+
+    실제로 720종이 468종으로 떨어졌는데 화면에 아무 말이 없었습니다.
+    """
+    tmp_settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    resolve.matches_path(tmp_settings).write_text(
+        json.dumps(
+            {
+                "matched": {
+                    "마늘": {"ingredient_id": 1, "matched_name": "마늘", "method": "exact", "confidence": 1.0},
+                    "계란": {"ingredient_id": 2, "matched_name": "달걀", "method": "llm", "confidence": 0.9},
+                    "양파": {"ingredient_id": 3, "matched_name": "양파", "method": "llm", "confidence": 0.8},
+                },
+                "unmatched": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert resolve.count_llm_matches(tmp_settings) == 2

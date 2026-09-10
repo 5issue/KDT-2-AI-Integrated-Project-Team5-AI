@@ -31,10 +31,15 @@ def record(kind: str, group: str, code: str, name: str, **extra: object) -> dict
     return row
 
 
+def from_data(rows: list[ingredient_master.MasterRow]) -> list[ingredient_master.MasterRow]:
+    """큐레이션 기본 재료를 빼고 데이터에서 나온 것만. 항상 함께 붙어 나옵니다."""
+    return [row for row in rows if not row.source_identity_key.startswith("TEAM-BASIC:")]
+
+
 def test_raw_material_keeps_existing_key_format(tmp_path: Path) -> None:
     """기존 736행과 같은 키라야 새 행을 만들지 않고 별칭만 더합니다."""
     write_nutrition(tmp_path / "r.json", [record("R", "01", "01018", "국수")])
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     assert rows[0].source_identity_key == "K-FIND:01:01018:국수"
     assert rows[0].is_raw_material is True
@@ -43,7 +48,7 @@ def test_raw_material_keeps_existing_key_format(tmp_path: Path) -> None:
 def test_processed_food_key_is_separated(tmp_path: Path) -> None:
     """대표식품코드가 원재료와 10건 겹칩니다. 접두사로 갈라야 덮어쓰지 않습니다."""
     write_nutrition(tmp_path / "p.json", [record("P", "19", "19801", "버터")])
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     assert rows[0].source_identity_key == "K-FIND-P:19:19801:버터"
     assert rows[0].is_raw_material is False
@@ -58,7 +63,7 @@ def test_sub_classifications_become_aliases(tmp_path: Path) -> None:
             record("R", "12", "12001", "달걀", 식품중분류명="유정란", 식품소분류명="난황", 식품세분류명="삶은것"),
         ],
     )
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     assert len(rows) == 1, "같은 대표식품은 한 행으로 접혀야 합니다"
     assert rows[0].aliases == ["난백", "난황", "삶은것", "생것", "유정란"]
@@ -70,7 +75,7 @@ def test_alias_same_as_name_is_dropped(tmp_path: Path) -> None:
         tmp_path / "r.json",
         [record("R", "01", "01018", "국수", 식품중분류명="국 수", 식품소분류명="소면")],
     )
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     # `국 수` 는 공백만 다르므로 별칭에서 빠지고 `소면` 만 남습니다.
     assert rows[0].aliases == ["소면"]
@@ -82,7 +87,7 @@ def test_dishes_are_not_ingredients(tmp_path: Path) -> None:
         tmp_path / "mix.json",
         [record("R", "01", "01018", "국수"), record("D", "02", "02120", "피자")],
     )
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     assert [row.name for row in rows] == ["국수"]
 
@@ -93,7 +98,7 @@ def test_datasets_without_required_columns_are_skipped(tmp_path: Path) -> None:
     (tmp_path / "other.json").write_text(
         json.dumps([{"recipe_name": "흰밥", "원재료": "멥쌀"}], ensure_ascii=False), encoding="utf-8"
     )
-    rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
 
     assert [row.name for row in rows] == ["국수"]
 
@@ -101,8 +106,32 @@ def test_datasets_without_required_columns_are_skipped(tmp_path: Path) -> None:
 def test_staging_tuples_match_copy_columns(tmp_path: Path) -> None:
     """COPY 컬럼 순서와 튜플 순서가 어긋나면 값이 엉뚱한 컬럼으로 들어갑니다."""
     write_nutrition(tmp_path / "p.json", [record("P", "19", "19801", "버터", 식품소분류명="가공버터")])
+    rows = from_data(ingredient_master.build_master_rows(discover_datasets(tmp_path)))
+
+    # 컬럼: source_identity_key, name, normalized_name, is_raw_material, aliases, is_pantry
+    assert ingredient_master.to_staging_tuples(rows) == [
+        ("K-FIND-P:19:19801:버터", "버터", "버터", False, ["가공버터"], False)
+    ]
+
+
+def test_curated_basics_are_always_added(tmp_path: Path) -> None:
+    """공공데이터에 없는 기본 재료(`물`, `베이킹파우더`)가 빠지면 그 재료줄이 통째로 사라집니다."""
+    write_nutrition(tmp_path / "r.json", [record("R", "01", "01018", "국수")])
     rows = ingredient_master.build_master_rows(discover_datasets(tmp_path))
 
-    assert ingredient_master.to_staging_tuples(rows) == [
-        ("K-FIND-P:19:19801:버터", "버터", "버터", False, ["가공버터"])
-    ]
+    basics = {row.name: row for row in rows if row.source_identity_key.startswith("TEAM-BASIC:")}
+    assert "물" in basics and "베이킹파우더" in basics
+    assert basics["물"].is_pantry is True, "상비재료는 부족 재료 계산에서 빠져야 합니다"
+    assert "생수" in basics["물"].aliases
+
+
+def test_pantry_flag_follows_the_curated_list(tmp_path: Path) -> None:
+    """상비재료 표시는 공공데이터로 유도할 수 없어 큐레이션 목록이 정본입니다."""
+    write_nutrition(
+        tmp_path / "p.json",
+        [record("P", "13", "13600", "소금"), record("P", "19", "19801", "버터")],
+    )
+    rows = {row.name: row for row in ingredient_master.build_master_rows(discover_datasets(tmp_path))}
+
+    assert rows["소금"].is_pantry is True
+    assert rows["버터"].is_pantry is False

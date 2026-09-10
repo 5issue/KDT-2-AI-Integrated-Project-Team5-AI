@@ -126,6 +126,13 @@ async def resolve_async(job_name: str, settings: Settings) -> int:
         print("2단계 산출물에 재료명이 없습니다.", file=sys.stderr)
         return 1
 
+    # resolve 는 리포트를 처음부터 다시 만듭니다. 마스터가 바뀌면 옛 LLM 답이
+    # 다른 후보 목록을 보고 낸 것이라 그게 맞지만, 조용히 사라지면 매칭률이
+    # 갑자기 떨어진 이유를 알 수 없습니다.
+    previous = resolve.count_llm_matches(settings)
+    if previous:
+        print(f"주의: 기존 LLM 매칭 {previous}종을 버리고 다시 만듭니다. 배치를 새로 돌려야 합니다.")
+
     exact, remaining = await resolve.exact_match(names, settings)
 
     # 같은 영문 재료의 한국어 변형끼리 결과를 나눠 씁니다. `eggs` 가 `달걀` 로 붙으면
@@ -287,7 +294,7 @@ async def sync_master_async(settings: Settings, *, apply: bool) -> int:
             await conn.copy_records_to_table(
                 "staging_ingredient_master",
                 records=records[start : start + settings.copy_chunk_size],
-                columns=["source_identity_key", "name", "normalized_name", "is_raw_material", "aliases"],
+                columns=["source_identity_key", "name", "normalized_name", "is_raw_material", "aliases", "is_pantry"],
             )
         await run_sql_file(conn, settings.sql_dir / "010_upsert_ingredient_master.sql")
         after = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)

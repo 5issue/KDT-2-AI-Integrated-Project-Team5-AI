@@ -42,6 +42,60 @@ ALIAS_COLUMNS = ("식품중분류명", "식품소분류명", "식품세분류명
 
 REQUIRED_COLUMNS = ("데이터구분코드", "식품대분류코드", "대표식품코드", "대표식품명")
 
+# 집에 늘 있다고 보고 "부족 재료" 계산에서 빼는 재료.
+#
+# 이건 **큐레이션 목록입니다.** 공공데이터로는 유도할 수 없습니다. 식품대분류 코드가
+# 원재료(R)와 가공식품(P)에서 서로 다른 의미라 분류로 가릴 수도 없습니다.
+# (K-FIND:07 은 버섯류인데 K-FIND-P:13 은 소금이 있는 군입니다)
+#
+# 근거: 레시피 재료 등장 빈도 상위이면서 장바구니에 담을 대상이 아닌 것들입니다.
+# 이 목록에 없어도 적재에는 지장이 없고, "부족 재료" 화면에 더 나올 뿐입니다.
+PANTRY_NAMES = (
+    "소금",
+    "설탕",
+    "간장",
+    "고추장",
+    "된장",
+    "식초",
+    "후추",
+    "참기름",
+    "들기름",
+    "물",
+    "식용유",
+    "올리브유",
+    "마요네즈",
+    "케첩",
+    "전분",
+    "밀가루",
+    "베이킹파우더",
+    "베이킹소다",
+    "물엿",
+    "꿀",
+    "미림",
+    "맛술",
+    "고춧가루",
+    "깨",
+    "참깨",
+)
+
+# 마스터에 없지만 레시피에 자주 나오는 기본 재료. 없으면 그 재료줄이 통째로 빠집니다.
+#
+# 이것도 **큐레이션입니다.** 공공 영양성분 데이터 어디에도 없어서 직접 넣습니다.
+# 자연키 접두사를 K-FIND 와 갈라 두어 나중에 골라내거나 지울 수 있게 했습니다.
+# (name, is_raw_material, 별칭들)
+CURATED_BASICS: tuple[tuple[str, bool, tuple[str, ...]], ...] = (
+    ("물", True, ("정제수", "생수", "정수")),
+    ("식용유", False, ("식물성기름", "식물성유지", "카놀라유", "포도씨유")),
+    ("베이킹파우더", False, ()),
+    ("베이킹소다", False, ("탄산수소나트륨",)),
+    ("바닐라추출물", False, ("바닐라", "바닐라익스트랙", "바닐라에센스")),
+    ("크림치즈", False, ()),
+    ("사워크림", False, ()),
+    ("생크림", False, ("헤비크림", "휘핑크림")),
+    ("발사믹식초", False, ()),
+    ("우스터소스", False, ()),
+)
+
 
 @dataclass(slots=True)
 class MasterRow:
@@ -52,6 +106,7 @@ class MasterRow:
     normalized_name: str
     is_raw_material: bool
     aliases: list[str] = field(default_factory=list)
+    is_pantry: bool = False
 
 
 def _clean(value: Any) -> str:
@@ -111,13 +166,31 @@ def build_master_rows(datasets: list[RawDataset]) -> list[MasterRow]:
         )
         for (kind, group, code, name), bucket in aliases.items()
     ]
+    rows.extend(
+        MasterRow(
+            source_identity_key=f"TEAM-BASIC:{name}",
+            name=name,
+            normalized_name=name,
+            is_raw_material=is_raw,
+            aliases=sorted(alias_names),
+        )
+        for name, is_raw, alias_names in CURATED_BASICS
+    )
+
+    pantry = {ingredient_match_key(name) for name in PANTRY_NAMES}
+    for row in rows:
+        row.is_pantry = ingredient_match_key(row.name) in pantry
+
     rows.sort(key=lambda item: item.source_identity_key)
     return rows
 
 
 def to_staging_tuples(rows: list[MasterRow]) -> list[tuple[Any, ...]]:
     """COPY 로 밀어넣을 튜플."""
-    return [(row.source_identity_key, row.name, row.normalized_name, row.is_raw_material, row.aliases) for row in rows]
+    return [
+        (row.source_identity_key, row.name, row.normalized_name, row.is_raw_material, row.aliases, row.is_pantry)
+        for row in rows
+    ]
 
 
 def render(rows: list[MasterRow]) -> str:
@@ -125,7 +198,9 @@ def render(rows: list[MasterRow]) -> str:
     raw = sum(1 for row in rows if row.is_raw_material)
     with_alias = sum(1 for row in rows if row.aliases)
     alias_total = sum(len(row.aliases) for row in rows)
+    pantry = sum(1 for row in rows if row.is_pantry)
     return (
         f"마스터 후보 {len(rows)}종 (원재료 {raw} / 가공식품 {len(rows) - raw})\n"
-        f"  별칭이 있는 재료 {with_alias}종, 별칭 총 {alias_total}개"
+        f"  별칭이 있는 재료 {with_alias}종, 별칭 총 {alias_total}개\n"
+        f"  상비재료(is_pantry) {pantry}종"
     )

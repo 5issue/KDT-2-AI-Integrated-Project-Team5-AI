@@ -16,6 +16,7 @@ raw 데이터 요청 규격대로 팀이 만들어 줍니다). 컬럼 의미를 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -128,6 +129,35 @@ def _jsonb(value: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
 
+# 상품명에서 중량을 읽을 때 쓰는 표기. 앞에 오는 수치와 짝지어 봅니다.
+_MASS_UNITS = {"kg": 1000, "킬로": 1000, "g": 1, "그램": 1}
+_VOLUME_UNITS = ("l", "리터", "ml", "밀리")
+_WEIGHT_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|킬로|g|그램|ml|밀리|l|리터)\b", re.IGNORECASE)
+
+
+def _weight_grams(value: Any, product_name: str) -> Decimal | None:
+    """중량을 그램으로 맞춥니다.
+
+    raw 변환이 단위를 빼고 숫자만 실어 보내서 `유기농황설탕 1kg` 이 `weight_g = 1` 로
+    들어왔습니다(235건). 상품명에 단위가 남아 있으므로 거기서 읽어 보정합니다.
+
+    부피 단위(L/ml)만 있는 상품은 무게를 알 수 없습니다. 밀도를 1 로 가정해 넣으면
+    기름이나 시럽에서 크게 틀리므로 **null 로 둡니다.** 틀린 값보다 없는 값이 낫습니다.
+    """
+    raw = _number(value, 2)
+    match = _WEIGHT_PATTERN.search(product_name or "")
+    if match is None:
+        return raw
+
+    amount = Decimal(match.group(1).replace(",", "."))
+    unit = match.group(2).lower()
+    if unit in _MASS_UNITS:
+        return Decimal(str(round(float(amount * _MASS_UNITS[unit]), 2)))
+    if unit in _VOLUME_UNITS:
+        return None
+    return raw
+
+
 def _category_path(parent_path: str | None, name: str) -> str:
     """루트부터 자기까지의 경로. 부모를 찾는 키가 됩니다."""
     parent = (parent_path or "").strip()
@@ -221,7 +251,7 @@ def _append_products(rows: CatalogRows, dataset: RawDataset) -> None:
                 _text(payload.get("category_path")),
                 _text(payload.get("storage_type")),
                 _text(payload.get("origin_country")),
-                _number(payload.get("weight_g"), 2),
+                _weight_grams(payload.get("weight_g"), name),
                 _integer(payload.get("unit_count")),
                 _text(payload.get("sku")),
                 _integer(payload.get("stock_quantity")),
@@ -308,9 +338,13 @@ def derive_product_ingredients(rows: CatalogRows, lookup: dict[str, int]) -> int
         haystack = ingredient_match_key(str(row[name_index]))
         match = next((key for key in keys if key in haystack), None)
         if match is None:
-            leaf = str(row[path_index] or "").split(" > ")[-1].strip()
-            candidate = ingredient_match_key(leaf)
-            match = candidate if candidate in lookup else None
+            # 카테고리 잎도 정확 일치부터 보고, 없으면 부분일치를 봅니다.
+            # `파스타면` 안에 `파스타` 가 들어 있는 식입니다.
+            leaf = ingredient_match_key(str(row[path_index] or "").split(" > ")[-1])
+            if leaf in lookup:
+                match = leaf
+            elif leaf:
+                match = next((key for key in keys if key in leaf), None)
         if match is None:
             continue
         rows.product_ingredients.append((*identity, match, lookup[match], "PRIMARY", None, None))

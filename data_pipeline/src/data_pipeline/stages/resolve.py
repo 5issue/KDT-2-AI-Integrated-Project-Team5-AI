@@ -307,6 +307,15 @@ def save_report(report: ResolveReport, settings: Settings | None = None) -> Path
     return path
 
 
+def count_llm_matches(settings: Settings | None = None) -> int:
+    """저장된 리포트에 LLM 이 채운 매칭이 몇 종인지. 없으면 0."""
+    path = matches_path(settings)
+    if not path.exists():
+        return 0
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return sum(1 for item in payload.get("matched", {}).values() if item.get("method") == "llm")
+
+
 def load_report(settings: Settings | None = None) -> ResolveReport:
     """저장된 3단계 산출물을 리포트로 되읽습니다. collect 가 여기에 LLM 결과를 얹습니다."""
     path = matches_path(settings)
