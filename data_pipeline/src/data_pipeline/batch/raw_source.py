@@ -12,6 +12,7 @@ raw 데이터는 CSV / PDF / 크롤링 텍스트 등 출처가 제각각인 것�
 
 from __future__ import annotations
 
+import csv
 import json
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +23,11 @@ import pyarrow.dataset as ds
 
 PARQUET_SUFFIXES = frozenset({".parquet", ".pq"})
 JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
+JSON_SUFFIXES = frozenset({".json"})
+CSV_SUFFIXES = frozenset({".csv", ".tsv"})
+
+# 공공데이터 JSON 이 레코드 배열을 담아 두는 키들. 먼저 찾은 것을 씁니다.
+JSON_RECORD_KEYS = ("records", "data", "rows", "items", "result")
 
 # parquet 을 한 번에 몇 행씩 읽어 올지.
 DEFAULT_BATCH_SIZE = 1024
@@ -95,6 +101,50 @@ def _parquet_columns(files: Sequence[Path]) -> dict[str, str]:
     return {name: str(typ) for name, typ in zip(dataset.schema.names, dataset.schema.types, strict=True)}
 
 
+def _json_records(path: Path) -> list[dict[str, Any]]:
+    """JSON 한 파일에서 레코드 목록을 꺼냅니다.
+
+    공공데이터 표준 JSON 은 `{"fields": [...], "records": [...]}` 처럼 레코드가 한 겹
+    안에 들어 있습니다. 최상위가 배열인 평범한 형태도 함께 받습니다.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = next(
+            (payload[key] for key in JSON_RECORD_KEYS if isinstance(payload.get(key), list)),
+            [],
+        )
+        if not rows:
+            raise ValueError(
+                f"{path.name}: 레코드 배열을 찾지 못했습니다. 최상위 키 {sorted(payload)[:8]} "
+                f"중에 {JSON_RECORD_KEYS} 가 없습니다."
+            )
+    else:
+        raise ValueError(f"{path.name}: JSON 최상위가 배열이나 객체가 아닙니다.")
+
+    records = [row for row in rows if isinstance(row, dict)]
+    if not records:
+        raise ValueError(f"{path.name}: 객체로 된 레코드가 없습니다.")
+    return records
+
+
+def _csv_records(path: Path) -> list[dict[str, Any]]:
+    """CSV/TSV 를 dict 목록으로. 공공데이터는 BOM 이 붙어 오는 일이 잦아 utf-8-sig 로 읽습니다."""
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle, delimiter=delimiter)]
+
+
+def _columns_from_records(records: Sequence[dict[str, Any]], *, sample: int = 50) -> dict[str, str]:
+    """앞쪽 몇 건의 키를 모아 컬럼 목록을 만듭니다."""
+    columns: dict[str, str] = {}
+    for row in records[:sample]:
+        for key, value in row.items():
+            columns.setdefault(key, type(value).__name__)
+    return columns
+
+
 def _jsonl_columns(path: Path, *, sample: int = 50) -> dict[str, str]:
     """JSONL 은 스키마가 없어서 앞쪽 몇 줄의 키를 모아 추론합니다."""
     columns: dict[str, str] = {}
@@ -120,9 +170,11 @@ def discover_datasets(path: Path) -> list[RawDataset]:
     files = _visible_files(path)
     parquet_files = [file for file in files if file.suffix.lower() in PARQUET_SUFFIXES]
     jsonl_files = [file for file in files if file.suffix.lower() in JSONL_SUFFIXES]
+    json_files = [file for file in files if file.suffix.lower() in JSON_SUFFIXES]
+    csv_files = [file for file in files if file.suffix.lower() in CSV_SUFFIXES]
 
-    if not parquet_files and not jsonl_files:
-        raise FileNotFoundError(f"읽을 raw 파일을 찾지 못했습니다: {path} (parquet 또는 JSONL)")
+    if not (parquet_files or jsonl_files or json_files or csv_files):
+        raise FileNotFoundError(f"읽을 raw 파일을 찾지 못했습니다: {path} (parquet / JSONL / JSON / CSV)")
 
     root = path if path.is_dir() else path.parent
     datasets: list[RawDataset] = []
@@ -163,6 +215,30 @@ def discover_datasets(path: Path) -> list[RawDataset]:
             )
         )
 
+    for file in json_files:
+        records = _json_records(file)
+        datasets.append(
+            RawDataset(
+                name=file.stem,
+                files=(file,),
+                fmt="json",
+                columns=_columns_from_records(records),
+                row_count=len(records),
+            )
+        )
+
+    for file in csv_files:
+        records = _csv_records(file)
+        datasets.append(
+            RawDataset(
+                name=file.stem,
+                files=(file,),
+                fmt="csv",
+                columns=_columns_from_records(records),
+                row_count=len(records),
+            )
+        )
+
     datasets.sort(key=lambda item: item.name)
     return datasets
 
@@ -174,6 +250,14 @@ def iter_records(dataset: RawDataset, *, batch_size: int = DEFAULT_BATCH_SIZE) -
         arrow = ds.dataset([str(file) for file in dataset.files], format="parquet")
         for batch in arrow.to_batches(batch_size=batch_size):
             for payload in batch.to_pylist():
+                yield RawRecord(dataset=dataset.name, row_index=row_index, payload=payload)
+                row_index += 1
+        return
+
+    if dataset.fmt in ("json", "csv"):
+        reader = _json_records if dataset.fmt == "json" else _csv_records
+        for file in dataset.files:
+            for payload in reader(file):
                 yield RawRecord(dataset=dataset.name, row_index=row_index, payload=payload)
                 row_index += 1
         return
