@@ -1,0 +1,5 @@
+{"question": "냉장고에 김치랑 돼지고기 있는데 뭐 해먹지", "expected_route": "recipe"}
+{"question": "두부조림 만들려면 뭐 사야 해", "expected_route": "product"}
+{"question": "대파는 어떻게 보관해야 오래가", "expected_route": "ingredient"}
+{"question": "간단하게 15분 안에 되는 한식 알려줘", "expected_route": "recipe"}
+{"question": "국산 참기름 가격 얼마야", "expected_route": "product"}

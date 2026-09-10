@@ -1,0 +1,31 @@
+[project]
+name = "serving"
+version = "0.1.0"
+description = "FastAPI + asyncpg 비동기 서빙 서버"
+requires-python = "==3.11.*"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "fastapi>=0.121.2",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.13.1",
+    "uvicorn[standard]>=0.38.0",
+]
+
+[project.scripts]
+serving = "serving.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/serving"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "db: 실제 Neon DB 연결이 필요한 테스트 (DATABASE_URL 없으면 skip)",
+    "llm: 실제 OpenAI API 호출이 필요한 테스트 (기본 skip)",
+]

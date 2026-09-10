@@ -32,13 +32,10 @@ jobs:
       - name: Pyright regression check
         run: uv run pyright
 
-      # - name: TODO: <각 폴더> tests or import check
-      #   run: |
-      #     if find backend -path "*/tests/test_*.py" -print -quit | grep -q .; then
-      #       uv run pytest backend
-      #     else
-      #       uv run python -c "import backend; print('backend import ok')"
-      #     fi
+      - name: Pytest (DB 없이 도는 테스트만)
+        # DATABASE_URL 을 주지 않으므로 @pytest.mark.db 테스트는 자동으로 skip 됩니다.
+        # Neon 브랜치를 CI 에 붙이려면 secrets 에 DATABASE_URL 을 넣고 env 로 내려주세요.
+        run: uv run pytest -q
 
   # docker-check: # TODO: docker 파일 추가 시 주석 해제
   #   name: Docker checks
