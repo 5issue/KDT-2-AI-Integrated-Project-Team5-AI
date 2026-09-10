@@ -79,6 +79,43 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_master (
     aliases             TEXT[] NOT NULL DEFAULT '{}'
 );
 
+-- 카테고리. parent_id 는 raw 에 없으므로 경로 문자열로 받아 적재 때 해석합니다.
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_category (
+    path          TEXT PRIMARY KEY,   -- 루트부터 자기까지. 부모를 찾는 키가 됩니다
+    parent_path   TEXT NOT NULL DEFAULT '',
+    category_type TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    depth         INTEGER NOT NULL,
+    metadata      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_product (
+    source_type       TEXT NOT NULL,
+    source_product_id TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    price             NUMERIC(12, 2) NOT NULL,
+    product_type      TEXT NOT NULL,
+    category_path     TEXT,
+    storage_type      TEXT,
+    origin_country    TEXT,
+    weight_g          NUMERIC(10, 2),
+    unit_count        INTEGER,
+    sku               TEXT,
+    stock_quantity    INTEGER,
+    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (source_type, source_product_id)
+);
+
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_product_ingredient (
+    source_type       TEXT NOT NULL,
+    source_product_id TEXT NOT NULL,
+    normalized_name   TEXT NOT NULL,
+    role              TEXT NOT NULL DEFAULT 'PRIMARY',
+    quantity_g        NUMERIC(10, 2),
+    ratio             NUMERIC(8, 5),
+    PRIMARY KEY (source_type, source_product_id, normalized_name)
+);
+
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (
     target_table TEXT NOT NULL,
     target_key   TEXT NOT NULL,

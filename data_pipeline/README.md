@@ -154,7 +154,7 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 | `sql/003_insert_recipe_ingredient.sql` | 매칭 결과로 FK 를 채워 `recipe_ingredient` upsert |
 | `sql/004_insert_storage_guideline.sql` | `storage_guideline` upsert |
 | `sql/005_insert_recipe_step.sql` | 조리 단계를 `recipe_step` 으로 upsert (줄어든 뒤쪽 단계는 삭제) |
-| `sql/006_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
+| `sql/020_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
 | `sql/099_truncate_staging.sql` | staging 비우기 |
 
 001~004 는 **한 트랜잭션**입니다. 004 에서 실패하면 002 가 넣은 레시피도 남지 않습니다.

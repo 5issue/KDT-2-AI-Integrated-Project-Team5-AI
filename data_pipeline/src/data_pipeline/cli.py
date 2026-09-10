@@ -34,7 +34,7 @@ from data_pipeline.batch.client import DEAD_STATUSES, TERMINAL_STATUSES, BatchRu
 from data_pipeline.batch.raw_source import discover_datasets, preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
-from data_pipeline.load import ingredient_master
+from data_pipeline.load import catalog, ingredient_master
 from data_pipeline.load.bulk_insert import (
     collect_rows,
     load_connection_scope,
@@ -301,6 +301,46 @@ def command_sync_master(args: argparse.Namespace) -> int:
     return asyncio.run(sync_master_async(get_settings(), apply=args.apply))
 
 
+async def load_catalog_async(settings: Settings, *, apply: bool) -> int:
+    """상품 카탈로그를 적재합니다. LLM 단계를 거치지 않습니다."""
+    rows = catalog.build_catalog_rows(discover_datasets(settings.raw_dir))
+    if rows.is_empty():
+        print("카테고리/상품 데이터셋을 찾지 못했습니다.", file=sys.stderr)
+        return 1
+
+    print(catalog.render(rows))
+    if not apply:
+        print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
+        return 0
+
+    plan = (
+        ("staging_category", catalog.CATEGORY_COLUMNS, rows.categories),
+        ("staging_product", catalog.PRODUCT_COLUMNS, rows.products),
+        ("staging_product_ingredient", catalog.PRODUCT_INGREDIENT_COLUMNS, rows.product_ingredients),
+    )
+    async with load_connection_scope(settings) as conn:
+        await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
+        await conn.execute("TRUNCATE staging_category, staging_product, staging_product_ingredient")
+        for table, columns, records in plan:
+            for start in range(0, len(records), settings.copy_chunk_size):
+                await conn.copy_records_to_table(
+                    table, records=records[start : start + settings.copy_chunk_size], columns=list(columns)
+                )
+        for name in ("006_insert_category.sql", "007_insert_product.sql", "008_insert_product_ingredient.sql"):
+            await run_sql_file(conn, settings.sql_dir / name)
+        counts = {
+            table: int(await conn.fetchval(f"SELECT count(*) FROM {table}") or 0)
+            for table in ("category", "product", "product_ingredient")
+        }
+    print("\n적재 후:", ", ".join(f"{k} {v}행" for k, v in counts.items()))
+    return 0
+
+
+def command_load_catalog(args: argparse.Namespace) -> int:
+    """카탈로그 적재 진입점."""
+    return asyncio.run(load_catalog_async(get_settings(), apply=args.apply))
+
+
 def command_load(args: argparse.Namespace) -> int:
     """중간 산출물을 staging 에 COPY 하고 타깃 테이블에 반영합니다."""
     settings = get_settings()
@@ -365,6 +405,10 @@ def build_parser() -> argparse.ArgumentParser:
     master = sub.add_parser("sync-master", help="공공 영양성분 데이터로 재료 마스터 보강")
     master.add_argument("--apply", action="store_true", help="실제로 DB 에 반영 (없으면 집계만)")
     master.set_defaults(func=command_sync_master)
+
+    cat = sub.add_parser("load-catalog", help="category / product / product_ingredient 적재")
+    cat.add_argument("--apply", action="store_true", help="실제로 DB 에 반영 (없으면 집계만)")
+    cat.set_defaults(func=command_load_catalog)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")
