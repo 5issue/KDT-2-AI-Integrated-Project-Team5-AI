@@ -318,6 +318,48 @@ def load_matches(settings: Settings | None = None) -> dict[str, int]:
     return {name: int(item["ingredient_id"]) for name, item in payload["matched"].items()}
 
 
+def _expand_delegates(
+    runner: BatchRunner,
+    job_name: str,
+    report: ResolveReport,
+    still_unmatched: list[dict[str, Any]],
+    occurrences: dict[str, int],
+) -> list[dict[str, Any]]:
+    """대표 -> 변형 매핑을 읽어 결과를 나눠 줍니다. 매핑 파일이 없으면 그대로 둡니다."""
+    path = runner.requests_dir / f"{job_name}_delegates.json"
+    if not path.exists():
+        return still_unmatched
+
+    delegate: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))
+    by_head = {item.normalized_name: item for item in report.llm}
+    failed = {item["normalized_name"] for item in still_unmatched}
+
+    for variant, head in sorted(delegate.items()):
+        if variant == head or variant in by_head:
+            continue
+        matched = by_head.get(head)
+        if matched is not None:
+            report.llm.append(
+                MatchResult(
+                    normalized_name=variant,
+                    ingredient_id=matched.ingredient_id,
+                    matched_name=matched.matched_name,
+                    method="cluster",
+                    confidence=matched.confidence,
+                )
+            )
+        elif head in failed and variant not in failed:
+            still_unmatched.append(
+                {
+                    "normalized_name": variant,
+                    "occurrence": occurrences.get(variant, 0),
+                    "confidence": 0.0,
+                    "reason": f"대표 {head} 가 매칭되지 않음",
+                }
+            )
+    return still_unmatched
+
+
 def collect(
     job_name: str,
     *,
@@ -367,6 +409,10 @@ def collect(
         still_unmatched.append(
             {"normalized_name": name, "occurrence": occurrences.get(name, 0), "confidence": 0.0, "reason": "응답 누락"}
         )
+
+    # 대표로 물어본 결과를 같은 클러스터의 변형들에 되돌려줍니다.
+    # 대표만 붙고 변형이 빠지면 그 레시피들의 재료가 통째로 사라집니다.
+    still_unmatched = _expand_delegates(runner, job_name, report, still_unmatched, occurrences)
 
     report.unmatched = sorted(still_unmatched, key=lambda item: (-item["occurrence"], item["normalized_name"]))
     save_report(report, settings)
