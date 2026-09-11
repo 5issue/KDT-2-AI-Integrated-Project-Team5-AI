@@ -16,12 +16,12 @@ LangGraph + pgvector 기반 RAG 실험 환경입니다.
 
 지금 상태와 그때의 차이는 이렇습니다.
 
-| | 지금 | 필요한 것 |
-| --- | --- | --- |
-| 진입점 | `experiments/<owner>/` 스크립트 + CLI | 서빙이 부를 수 있는 함수 하나 |
-| 의존성 주입 | 실험이 직접 조립 | 서빙이 자기 풀·클라이언트를 넘길 수 있게 |
-| DB 연결 | `rag_lab/.env` | 호출자가 넘긴 것을 쓰도록 |
-| 검색 SQL | `retrieval.py` 안 | 그대로 두어도 되고, 카탈로그로 빼도 됨 |
+|             | 지금                                  | 필요한 것                                |
+| ----------- | ------------------------------------- | ---------------------------------------- |
+| 진입점      | `experiments/<owner>/` 스크립트 + CLI | 서빙이 부를 수 있는 함수 하나            |
+| 의존성 주입 | 실험이 직접 조립                      | 서빙이 자기 풀·클라이언트를 넘길 수 있게 |
+| DB 연결     | `rag_lab/.env`                        | 호출자가 넘긴 것을 쓰도록                |
+| 검색 SQL    | `retrieval.py` 안                     | 그대로 두어도 되고, 카탈로그로 빼도 됨   |
 
 의존성을 전부 밖에서 주입받는 구조는 이미 되어 있으니(`rag_lab.testing` 참고),
 남은 것은 서빙이 부를 공개 함수를 정하고 `__init__.py` 로 내보내는 정도입니다.
@@ -92,11 +92,11 @@ uv run rag-lab experiment --name topk5 --cases rag_lab/experiments/_template/que
 
 ## 검색 파라미터
 
-| 값 | 의미 |
-| --- | --- |
-| `TOP_K` | 벡터 검색으로 가져올 후보 수 |
+| 값                | 의미                                              |
+| ----------------- | ------------------------------------------------- |
+| `TOP_K`           | 벡터 검색으로 가져올 후보 수                      |
 | `SCORE_THRESHOLD` | 이 점수 아래는 근거로 쓰지 않음 (코사인 기준 0~1) |
-| `DISTANCE_METRIC` | `cosine` / `l2` / `inner_product` |
+| `DISTANCE_METRIC` | `cosine` / `l2` / `inner_product`                 |
 
 거리는 지표마다 범위가 달라서 `retrieval.distance_to_score` 가 0~1 에 가깝게 맞춰 줍니다.
 cosine 은 `1 - 거리`, l2 는 `1 / (1 + 거리)`, inner_product 는 부호만 뒤집습니다.
@@ -108,9 +108,9 @@ cosine 은 `1 - 거리`, l2 는 `1 / (1 + 거리)`, inner_product 는 부호만 
 uv run pytest rag_lab/tests -q
 ```
 
-| 파일 | DB/API 필요 | 하는 일 |
-| --- | --- | --- |
-| `tests/test_retrieval.py` | 아니오 | 벡터 리터럴, 거리-점수 변환 |
-| `tests/test_graph.py` | 아니오 | 라우팅 규칙, 그래프 전체 흐름, 프롬프트 격리, 근거 없을 때 LLM 미호출 |
-| `tests/test_experiment.py` | 아니오 | 채점 로직, 결과 기록, 자격증명 미포함 |
-| `tests/test_db_connection.py` | 예 | pgvector 설치, embedding 차원, 검색 SQL 실행 |
+| 파일                          | DB/API 필요 | 하는 일                                                               |
+| ----------------------------- | ----------- | --------------------------------------------------------------------- |
+| `tests/test_retrieval.py`     | 아니오      | 벡터 리터럴, 거리-점수 변환                                           |
+| `tests/test_graph.py`         | 아니오      | 라우팅 규칙, 그래프 전체 흐름, 프롬프트 격리, 근거 없을 때 LLM 미호출 |
+| `tests/test_experiment.py`    | 아니오      | 채점 로직, 결과 기록, 자격증명 미포함                                 |
+| `tests/test_db_connection.py` | 예          | pgvector 설치, embedding 차원, 검색 SQL 실행                          |
