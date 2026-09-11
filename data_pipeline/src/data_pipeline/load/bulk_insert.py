@@ -29,7 +29,12 @@ import asyncpg
 
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import engine_scope
-from data_pipeline.domain import derive_storage_columns, ingredient_match_key, normalize_duration_unit
+from data_pipeline.domain import (
+    derive_storage_columns,
+    ingredient_match_key,
+    normalize_cooking_method,
+    normalize_duration_unit,
+)
 
 STAGING_RECIPE_COLUMNS = (
     "source_type",
@@ -242,7 +247,7 @@ def _append_recipe(
             payload.get("prep_time_min"),
             payload.get("cook_time_min"),
             _decimal(payload.get("servings"), 2),
-            _truncate(payload.get("cooking_method"), 50),
+            normalize_cooking_method(_truncate(payload.get("cooking_method"), 50)),
             json.dumps(nutrition, ensure_ascii=False),
             [tag.strip() for tag in payload.get("tags", []) if str(tag).strip()],
             _truncate(payload.get("image_url"), 2000),

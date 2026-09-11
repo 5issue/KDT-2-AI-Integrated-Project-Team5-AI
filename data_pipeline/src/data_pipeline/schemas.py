@@ -159,6 +159,8 @@ class ExtractedRecipe(StrictModel):
     prep_time_min: int | None = Field(default=None, description="준비 시간(분). 원문에 없으면 null")
     cook_time_min: int | None = Field(default=None, description="조리 시간(분). 원문에 없으면 null")
     servings: float | None = Field(default=None, description="기준 인분 수")
+    # 원문 표현 그대로 받습니다. 열거값으로 모으는 일은 적재기(`normalize_cooking_method`)가
+    # 합니다. 프롬프트에 열거형을 못박아도 LLM 은 `오븐 굽기` 처럼 한 칸에 둘씩 적어 왔습니다.
     cooking_method: str | None = Field(default=None, description="대표 조리법. 예: 볶음, 조림, 구이, 끓이기")
     tags: list[str] = Field(description="용어 기준의 용도/TPO 태그. 없으면 빈 배열")
     nutrition: ExtractedNutrition | None = Field(default=None, description="영양정보. 원문에 없으면 null")
