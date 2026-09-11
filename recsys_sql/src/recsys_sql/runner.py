@@ -1,4 +1,8 @@
-"""카탈로그 쿼리 실행과 실행계획 점검."""
+"""카탈로그 쿼리 실행과 실행계획 점검.
+
+`validate_params` 는 `catalog` 로 옮겼습니다. 서빙이 SQLAlchemy 없이 파라미터만
+검증할 수 있어야 하기 때문입니다. 기존 import 경로를 위해 여기서 다시 내보냅니다.
+"""
 
 from __future__ import annotations
 
@@ -11,36 +15,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from recsys_sql.catalog import CatalogError, SqlQuery
+from recsys_sql.catalog import SqlQuery, validate_params
 from recsys_sql.config import Settings, get_settings
 
-_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
-    "int": (int,),
-    "float": (int, float),
-    "str": (str,),
-    "bool": (bool,),
-    "date": (str,),
-    "list[int]": (list, tuple),
-    "list[str]": (list, tuple),
-}
-
-
-def validate_params(query: SqlQuery, params: dict[str, Any]) -> dict[str, Any]:
-    """선언된 파라미터가 다 왔는지, 타입이 맞는지 확인합니다."""
-    if missing := sorted(set(query.params) - set(params)):
-        raise CatalogError(f"{query.name}: 파라미터가 빠졌습니다: {missing}")
-    if extra := sorted(set(params) - set(query.params)):
-        raise CatalogError(f"{query.name}: 선언되지 않은 파라미터입니다: {extra}")
-
-    for name, type_name in query.params.items():
-        value = params[name]
-        expected = _PYTHON_TYPES[type_name]
-        # bool 은 int 의 서브클래스라 int 자리에 들어가는 것을 따로 막습니다.
-        if type_name == "int" and isinstance(value, bool):
-            raise CatalogError(f"{query.name}.{name}: int 자리에 bool 이 들어왔습니다.")
-        if not isinstance(value, expected):
-            raise CatalogError(f"{query.name}.{name}: {type_name} 을 기대했지만 {type(value).__name__} 입니다.")
-    return params
+__all__ = ["ExplainReport", "QueryResult", "explain_query", "run_query", "validate_params"]
 
 
 @dataclass(slots=True)

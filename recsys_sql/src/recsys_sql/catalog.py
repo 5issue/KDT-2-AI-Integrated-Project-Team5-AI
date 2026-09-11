@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from recsys_sql.config import Settings, get_settings
 
@@ -78,6 +79,37 @@ def _parse_params(raw: str) -> dict[str, str]:
         if type_name not in _ALLOWED_PARAM_TYPES:
             raise CatalogError(f"지원하지 않는 파라미터 타입입니다: {type_name!r} ({sorted(_ALLOWED_PARAM_TYPES)})")
         params[name] = type_name
+    return params
+
+
+# 파라미터 타입 이름 -> 받아 줄 파이썬 타입.
+# SQLAlchemy 를 끌어오지 않고도 검증할 수 있어야 해서 여기 둡니다. 서빙은 asyncpg 만 씁니다.
+_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
+    "int": (int,),
+    "float": (int, float),
+    "str": (str,),
+    "bool": (bool,),
+    "date": (str,),
+    "list[int]": (list, tuple),
+    "list[str]": (list, tuple),
+}
+
+
+def validate_params(query: SqlQuery, params: dict[str, Any]) -> dict[str, Any]:
+    """선언된 파라미터가 다 왔는지, 타입이 맞는지 확인합니다."""
+    if missing := sorted(set(query.params) - set(params)):
+        raise CatalogError(f"{query.name}: 파라미터가 빠졌습니다: {missing}")
+    if extra := sorted(set(params) - set(query.params)):
+        raise CatalogError(f"{query.name}: 선언되지 않은 파라미터입니다: {extra}")
+
+    for name, type_name in query.params.items():
+        value = params[name]
+        expected = _PYTHON_TYPES[type_name]
+        # bool 은 int 의 서브클래스라 int 자리에 들어가는 것을 따로 막습니다.
+        if type_name == "int" and isinstance(value, bool):
+            raise CatalogError(f"{query.name}.{name}: int 자리에 bool 이 들어왔습니다.")
+        if not isinstance(value, expected):
+            raise CatalogError(f"{query.name}.{name}: {type_name} 을 기대했지만 {type(value).__name__} 입니다.")
     return params
 
 

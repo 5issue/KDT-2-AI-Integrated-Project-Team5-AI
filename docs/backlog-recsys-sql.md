@@ -1,0 +1,100 @@
+# recsys_sql 남은 일
+
+담당: openLeeWorld · 기준일 2026-09-11
+
+최종 목표는 **`serving` 의 repository layer** 입니다. API 를 호출하면 관련 SQL 이
+그대로 돌고, 폴더마다 다른 것은 `.env` 뿐인 상태.
+
+연결 구조는 끝났습니다(`recsys_sql.repository`). 남은 것은 카탈로그를 채우고
+받쳐 주는 데이터를 만드는 일입니다.
+
+---
+
+## 1. 스키마가 없어서 못 하는 것 (먼저 결정 필요)
+
+### 1-1. `product.image_url` 이 없습니다
+
+`api_spec.md` 14·15·20절이 상품 이미지를 요구하는데 컬럼도, 크롤 metadata 도 없습니다
+(`metadata` 에는 `brand`, `crawled_at`, `source_record_type`, `source_url` 뿐).
+`product_detail` 응답에서 뺐습니다.
+
+- 원본 크롤에 이미지 주소가 있는지 확인
+- 있으면 `database/` 에 컬럼 추가 + `data_pipeline/load/catalog.py` 에서 채우기
+- 없으면 FE 와 합의해서 응답 규격에서 빼기
+
+`recipe.image_url` 은 있습니다(1,086 중 1,004행).
+
+### 1-2. `user_fridge` 에 단일 식별자가 없습니다
+
+`api_spec.md` 20·23절의 `fridge_item_id` 가 스키마에 없습니다. PK 가
+(user_id, product_id) 복합키입니다. 지금은 `my_fridge_items` 가 `product_id` 를
+수정·삭제 키로 내보냅니다.
+
+같은 상품을 유통기한이 다르게 두 번 넣을 수 있어야 한다면 대리키가 필요합니다.
+PR #10 이 PK 를 건드리므로 그것과 함께 정하는 편이 낫습니다.
+
+### 1-3. `cooking_method` 를 spec 은 영어로 적었습니다
+
+`api_spec.md` 16·17절이 `"BOIL"` 입니다. 지금 DB 는 `끓이기` 입니다(보관 열거값을
+한국어로 통일한 결정과 맞춘 것). FE 와 한쪽으로 정해야 합니다.
+
+---
+
+## 2. 데이터가 없어서 못 하는 것
+
+### 2-1. `product_popularity` / `user_product_affinity` 가 0행입니다
+
+주문·조회 로그가 없어 인기도 점수를 만들 원천이 없습니다. 그래서
+`bubble_products` 는 **버블 안에서의 재료 쓰임새**(후보 레시피 중 몇 개가 이 재료를
+쓰는가)로 정렬합니다.
+
+로그가 생기면 `ai_context/data_erd_sql_design.md` 16절의 가중 합으로 바꿉니다.
+신규 사용자는 인기도 0.8 / 이력 0.2, 충성 고객은 반대.
+
+`reorder_candidates` 는 `user_product_affinity` 없이는 아예 빈 결과입니다.
+
+### 2-2. `recipe_product` 가 0행입니다
+
+"이 레시피의 이 재료 자리에는 이 상품" 이라는 **큐레이션** 값이라 자동으로 채우면
+의미가 없어집니다. 그래서 `product_recipes` 는 ERD 18절(재료 경유)을 본선으로 쓰고,
+`recipe_product` 는 채워지면 우선순위가 먼저 오도록 LEFT JOIN 만 걸어 뒀습니다.
+
+기획에서 "이 레시피엔 이 상품을 밀자" 가 정해지면 그때 몇 건만 넣으면 됩니다.
+
+### 2-3. `app_user` / `user_fridge` 가 0행입니다
+
+마이냉장고 쿼리 4종은 시드 트랜잭션 위에서만 검증됩니다. 데모 계정 몇 개를
+넣어 두면 실제 화면을 확인할 수 있습니다.
+
+---
+
+## 3. 카탈로그에 아직 없는 것
+
+| 필요한 곳 | 비고 |
+| --- | --- |
+| `GET /recipes/{id}/missing-products` | `_template/missing_ingredient_products` 를 openLeeWorld 폴더로 옮기고 응답 모양을 api_spec 에 맞추기 |
+| 냉장고 CRUD (POST/PATCH/DELETE) | 쓰기라 카탈로그(읽기 전용) 밖. 서빙이 직접 쓰거나, 쓰기 카탈로그를 따로 두는 설계가 필요 |
+| 검색 | api_spec 에 없지만 프로젝트 범위에 있음. `rag_lab` 과 겹치는 영역 |
+
+## 4. 버블
+
+- **`전자레인지·에어프라이어 간편식`** — 조리법 정규화가 끝나 이제 가능합니다.
+  다만 후보가 8+2=10건으로 `min_candidates` 에 딱 걸칩니다. 데이터가 조금만 줄면
+  화면에서 내려갑니다. 권하지 않습니다.
+- **`요리 초보도 실패 없는`** — `difficulty` 가 25%만 채워져 보류. 지금은 단계 수 기반
+  `FEW_STEPS` 로 대체하고 있습니다.
+- **`혼자 먹기 딱 좋은 한 그릇`** — `dish_type` 이 스키마에 없어 보류.
+- 새 `rule_type` 을 쓰려면 **`bubble_recipe_candidate` 뷰(alembic 0008)를 고쳐야
+  합니다.** `0005` 의 CHECK 에는 `seasonal`, `popularity`, `text_search` 도 있지만
+  해석이 없습니다. 해석 없는 rule_type 은 후보 0건이 되어 `min_candidates` 에서 걸립니다.
+
+## 5. 운영
+
+- **CI 에서 DB 테스트가 돕니다.** 지금은 `.env` 가 없어 44개가 조용히 skip 됩니다.
+  GitHub Actions 에 `DATABASE_URL` 시크릿을 넣고 DB 잡을 따로 두는 인프라 변경이라
+  합의가 필요합니다.
+- **skip 은 조용합니다.** `.env` 를 안 채운 채 "통과" 를 보면 DB 쿼리가 한 줄도 안 돈
+  것일 수 있습니다. 실제로 버블 테스트 5개가 그렇게 죽어 있었습니다
+  (픽스처 이름 오타 + `as_dicts()` 오용). `-rs` 로 skip 사유를 확인하세요.
+- **`FORBID_SEQ_SCAN_ON`** — `SEQ_SCAN_ROW_LIMIT`(기본 5만행)를 넘을 때만 실패합니다.
+  데이터가 커지면 이 값을 낮춰 실제 규모에 맞추세요.

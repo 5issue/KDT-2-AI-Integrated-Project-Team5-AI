@@ -49,11 +49,6 @@ class Settings(BaseSettings):
         """local 이 아니면 문서 페이지를 닫습니다. 스키마 노출을 줄입니다."""
         return "/docs" if self.environment == "local" else None
 
-    @property
-    def sql_dir(self) -> Path:
-        """엔드포인트가 쓰는 .sql 파일 디렉터리."""
-        return PACKAGE_DIR / "sql"
-
     def require_database_url(self) -> str:
         """DB URL 을 꺼내되, 비어 있으면 값 노출 없이 실패시킵니다."""
         if self.database_url is None or not self.database_url.get_secret_value().strip():
