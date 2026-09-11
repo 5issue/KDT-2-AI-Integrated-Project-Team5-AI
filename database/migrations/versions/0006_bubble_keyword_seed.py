@@ -24,7 +24,8 @@ branch_labels = None
 depends_on = None
 
 # (keyword_id, label, description, rule_type, rule_spec, min_candidates, display_order)
-# 뒤 주석은 2026-09-10 적재분 기준 후보 수.
+# 뒤 주석은 2026-09-11 적재분을 `bubble_recipe_candidate` 뷰(alembic 0008)로 다시 센 값이다.
+# 처음 적은 값은 뷰가 생기기 전 별도 조회로 잰 것이라 규칙 해석이 달랐다.
 SEEDS = (
     (
         "LOW_INGREDIENT",
@@ -34,7 +35,7 @@ SEEDS = (
         {"op": "lte", "value": 5, "exclude_pantry": True},
         10,
         1,
-    ),  # 301건
+    ),  # 679건
     (
         "FEW_STEPS",
         "손 덜 가는 간단 요리",
@@ -52,7 +53,7 @@ SEEDS = (
         {"op": "ratio_gte", "value": 0.6, "category_names": ["채소류", "버섯류", "과일류"], "exclude_pantry": True},
         10,
         3,
-    ),  # 296건
+    ),  # 259건
     (
         "MEAT",
         "고기 든든하게",
@@ -62,7 +63,7 @@ SEEDS = (
         {"op": "contains", "category_names": ["육류"], "exclude_pantry": True},
         10,
         4,
-    ),  # 458건
+    ),  # 159건
     (
         "QUICK_15MIN",
         "15분 안에 끝나는 요리",

@@ -27,6 +27,9 @@ _BIND_PARAM = re.compile(r"(?<![:\w]):([a-zA-Z_]\w*)")
 
 _ALLOWED_PARAM_TYPES = frozenset({"int", "float", "str", "bool", "date", "list[int]", "list[str]"})
 
+# 헤더 줄의 `-- name:` 같은 표기는 바인딩이 아닙니다.
+_META_KEYS = frozenset({"name", "owner", "description", "params", "tags"})
+
 # 카탈로그 SQL 은 읽기 전용이어야 합니다. 쓰기 구문이 들어오면 검증에서 막습니다.
 _WRITE_KEYWORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER|CREATE|GRANT|REVOKE|COPY)\b",
@@ -113,6 +116,16 @@ def load_query(path: Path) -> SqlQuery:
 
     if match := _WRITE_KEYWORDS.search(_strip_comments(text)):
         raise CatalogError(f"{path.name}: 카탈로그 쿼리는 읽기 전용이어야 합니다 ({match.group(0)} 발견).")
+
+    # SQLAlchemy 의 `text()` 는 주석 안까지 훑어 `:이름` 을 바인딩으로 잡습니다.
+    # 위 검사는 주석을 지우고 보기 때문에, 설명에 `:w1` 같은 표기를 적어 두면
+    # 여기서는 통과하고 실행 시점에 "값이 없다" 로 터집니다. 실제로 한 번 밟았습니다.
+    body_only = {name for name in _BIND_PARAM.findall(text) if name not in _META_KEYS}
+    if in_comment := body_only - used - declared:
+        raise CatalogError(
+            f"{path.name}: 주석에 바인딩처럼 보이는 표기가 있습니다: {sorted(in_comment)}. "
+            "설명에는 콜론 대신 다른 표기를 쓰세요."
+        )
 
     return query
 
