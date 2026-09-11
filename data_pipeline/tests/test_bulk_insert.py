@@ -154,8 +154,8 @@ def test_storage_columns_are_derived_from_slot(tmp_settings: Settings) -> None:
     derived = {(row[slot_index], row[location_index], row[context_index]) for row in rows.storage}
 
     assert derived == {
-        ("pantry", "PANTRY", "NOT_APPLICABLE"),
-        ("dop_refrigerate", "REFRIGERATOR", "FROM_PURCHASE"),
+        ("pantry", "상온", "일반"),
+        ("dop_refrigerate", "냉장", "구매후"),
     }
 
 
@@ -277,4 +277,4 @@ def test_partial_duration_is_nulled_to_satisfy_check(tmp_path: Path) -> None:
     # 컬럼 순서: ... duration_min, duration_max, duration_unit, duration_text
     assert (partial[7], partial[8], partial[9]) == (None, None, None)
     assert partial[10] == "익었을 때", "사람이 읽을 표기는 남아야 합니다"
-    assert (complete[8], complete[9]) == (Decimal("9.00"), "Months")
+    assert (complete[8], complete[9]) == (Decimal("9.00"), "개월"), "단위는 한국어 한 벌로 모읍니다"

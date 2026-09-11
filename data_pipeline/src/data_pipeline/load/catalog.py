@@ -62,6 +62,21 @@ PRODUCT_REQUIRED = ("source_type", "source_product_id", "name", "price", "produc
 # raw 가 문자열로 실어 보내는 빈 값들.
 NULLISH = frozenset({"", "none", "null", "nan", "-"})
 
+# 원본(Kurly) 보관 유형 -> 서비스 표기.
+#
+# 화면에는 어차피 한국어로 나갑니다. 영어 상수로 적재해 두면 서빙에서 한 번, 프런트에서
+# 한 번 되돌려야 하고, 그 대응표가 두 벌이 되면 언젠가 갈라집니다. 들어올 때 한 번만
+# 바꿔 두는 편이 낫습니다. `docs/product-ingredient-storage-normalization-guide.md`
+# 4.3 절의 대응과 같습니다.
+#
+# 모르는 값은 지어내지 않고 원문 그대로 둡니다. 현재 raw 2,553행에는 아래 3종과
+# 빈 값(1,551행)뿐입니다.
+PRODUCT_STORAGE_TYPES: dict[str, str] = {
+    "COLD": "냉장",
+    "FROZEN": "냉동",
+    "AMBIENT_TEMPERATURE": "상온",
+}
+
 
 @dataclass(slots=True)
 class CatalogRows:
@@ -99,6 +114,14 @@ def _integer(value: Any) -> int | None:
     """INTEGER 컬럼용."""
     number = _number(value, 0)
     return int(number) if number is not None else None
+
+
+def _storage_type(value: Any) -> str | None:
+    """상품 보관 유형을 서비스 표기(한국어)로 맞춥니다."""
+    text = _text(value)
+    if text is None:
+        return None
+    return PRODUCT_STORAGE_TYPES.get(text.upper(), text)
 
 
 def _finite(value: Any) -> Any:
@@ -249,7 +272,7 @@ def _append_products(rows: CatalogRows, dataset: RawDataset) -> None:
                 price,
                 _text(payload.get("product_type")) or "RAW_MATERIAL",
                 _text(payload.get("category_path")),
-                _text(payload.get("storage_type")),
+                _storage_type(payload.get("storage_type")),
                 _text(payload.get("origin_country")),
                 _weight_grams(payload.get("weight_g"), name),
                 _integer(payload.get("unit_count")),

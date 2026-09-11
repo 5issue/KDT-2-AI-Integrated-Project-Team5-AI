@@ -24,8 +24,8 @@ DB_SLOTS = {
     "freeze",
     "dop_freeze",
 }
-DB_LOCATIONS = {"REFRIGERATOR", "FREEZER", "PANTRY"}
-DB_CONTEXTS = {"FROM_PURCHASE", "AFTER_OPENING", "AFTER_THAWING", "NOT_APPLICABLE"}
+DB_LOCATIONS = {"냉장", "냉동", "상온"}
+DB_CONTEXTS = {"일반", "구매후", "개봉후", "해동후"}
 
 
 def test_slots_match_db_check_constraint() -> None:
@@ -44,15 +44,15 @@ def test_derived_values_are_within_db_check_constraints() -> None:
 def test_dop_slots_mean_from_purchase() -> None:
     """DOP 는 Date Of Purchase 입니다. 구매일 기준으로 파생되어야 합니다."""
     for slot in STORAGE_SLOTS:
-        expected = "FROM_PURCHASE" if slot.startswith("dop_") else None
+        expected = "구매후" if slot.startswith("dop_") else None
         if expected:
             assert derive_storage_columns(slot)[1] == expected, slot
 
 
 def test_after_opening_and_thawing_are_mapped() -> None:
     """개봉 후 / 해동 후 슬롯이 맥락으로 옮겨져야 합니다."""
-    assert derive_storage_columns("pantry_after_opening") == ("PANTRY", "AFTER_OPENING")
-    assert derive_storage_columns("refrigerate_after_thawing") == ("REFRIGERATOR", "AFTER_THAWING")
+    assert derive_storage_columns("pantry_after_opening") == ("상온", "개봉후")
+    assert derive_storage_columns("refrigerate_after_thawing") == ("냉장", "해동후")
 
 
 def test_unknown_slot_is_rejected() -> None:
@@ -111,3 +111,24 @@ def test_match_key_is_shared_by_resolve_and_load() -> None:
         source = inspect.getsource(module)
         assert "ingredient_match_key(" in source, f"{module.__name__} 이 공용 키 함수를 쓰지 않습니다"
         assert ".strip().lower()" not in source, f"{module.__name__} 에 옛 정규화가 남아 있습니다"
+
+
+def test_duration_unit_singular_and_plural_collapse() -> None:
+    """`Year` 3건과 `Years` 100건이 실제로 섞여 들어왔습니다. 같은 뜻이면 한 값이어야 합니다."""
+    from data_pipeline.domain import normalize_duration_unit
+
+    assert normalize_duration_unit("Year") == normalize_duration_unit("Years") == "년"
+    assert normalize_duration_unit("Days") == "일"
+    assert normalize_duration_unit("MONTHS") == "개월"
+    assert normalize_duration_unit("Hours") == "시간"
+    assert normalize_duration_unit("Weeks") == "주"
+
+
+def test_duration_unit_keeps_unknown_and_empty_values() -> None:
+    """모르는 단위를 임의로 바꾸지 않습니다. 빈 값은 null 로 모읍니다."""
+    from data_pipeline.domain import normalize_duration_unit
+
+    assert normalize_duration_unit("개월") == "개월"
+    assert normalize_duration_unit("Servings") == "Servings"
+    assert normalize_duration_unit("   ") is None
+    assert normalize_duration_unit(None) is None

@@ -90,8 +90,8 @@ storage_guideline
     pantry, dop_pantry, pantry_after_opening,
     refrigerate, dop_refrigerate, refrigerate_after_opening, refrigerate_after_thawing,
     freeze, dop_freeze
-  storage_location text 필수: REFRIGERATOR | FREEZER | PANTRY
-  storage_context text 필수: FROM_PURCHASE | AFTER_OPENING | AFTER_THAWING | NOT_APPLICABLE
+  storage_location text 필수: 냉장 | 냉동 | 상온 (source_slot 에서 파생. LLM 이 고르지 않는다)
+  storage_context text 필수: 일반 | 구매후 | 개봉후 | 해동후 (마찬가지로 파생)
   duration_min / duration_max numeric(10,2) / duration_unit text / duration_text text 필수
   storage_tips text / ingredient_id bigint 필수 (기존 마스터 참조)
   * DOP = Date Of Purchase (구매일 기준)
@@ -102,21 +102,59 @@ ingredient (읽기 전용 마스터, 한국어)
 """
 
 # source_slot -> (storage_location, storage_context)
-# DB 의 CHECK 제약과 1:1 로 대응하는 조회표입니다. 텍스트 패턴 매칭이 아니라 9개짜리 열거형
-# 변환이라 파이썬에 두었습니다. LLM 은 source_slot 만 고르고, 파생 두 컬럼은 여기서 채웁니다.
+#
+# FoodKeeper 의 slot 이름(영어 9종)은 원문이라 그대로 두고, 화면에 나가는 두 컬럼만
+# 여기서 한국어로 바꿉니다. 텍스트 패턴 매칭이 아니라 9개짜리 열거형 변환이라
+# 파이썬에 두었습니다. LLM 은 source_slot 만 고르고, 파생 두 컬럼은 여기서 채웁니다.
+#
+# 이 대응을 DB CHECK 로 못박지 않는 이유가 있습니다. 못박으면 FoodKeeper 가 slot 을
+# 하나 늘릴 때마다 마이그레이션이 필요하고, FoodKeeper 가 아닌 원천(제조사 표기 등)을
+# 나중에 붙일 때도 걸립니다. 원천 형태에 DB 스키마를 묶지 않고, 변환은 적재기가 책임집니다.
+# DB 에는 "셋 중 하나" 정도의 값 제약만 두는 편이 오래 갑니다.
 SLOT_DERIVATION: dict[str, tuple[str, str]] = {
-    "pantry": ("PANTRY", "NOT_APPLICABLE"),
-    "dop_pantry": ("PANTRY", "FROM_PURCHASE"),
-    "pantry_after_opening": ("PANTRY", "AFTER_OPENING"),
-    "refrigerate": ("REFRIGERATOR", "NOT_APPLICABLE"),
-    "dop_refrigerate": ("REFRIGERATOR", "FROM_PURCHASE"),
-    "refrigerate_after_opening": ("REFRIGERATOR", "AFTER_OPENING"),
-    "refrigerate_after_thawing": ("REFRIGERATOR", "AFTER_THAWING"),
-    "freeze": ("FREEZER", "NOT_APPLICABLE"),
-    "dop_freeze": ("FREEZER", "FROM_PURCHASE"),
+    "pantry": ("상온", "일반"),
+    "dop_pantry": ("상온", "구매후"),
+    "pantry_after_opening": ("상온", "개봉후"),
+    "refrigerate": ("냉장", "일반"),
+    "dop_refrigerate": ("냉장", "구매후"),
+    "refrigerate_after_opening": ("냉장", "개봉후"),
+    "refrigerate_after_thawing": ("냉장", "해동후"),
+    "freeze": ("냉동", "일반"),
+    "dop_freeze": ("냉동", "구매후"),
 }
 
 STORAGE_SLOTS = tuple(SLOT_DERIVATION)
+
+STORAGE_LOCATIONS = ("냉장", "냉동", "상온")
+STORAGE_CONTEXTS = ("일반", "구매후", "개봉후", "해동후")
+
+# 2단계가 원문에서 읽어 온 기간 단위 -> 서비스 표기.
+#
+# LLM 이 레시피마다 따로 판단하다 보니 `Years` 100건에 `Year` 3건이 섞여 들어왔습니다.
+# 같은 뜻이 두 값으로 갈리면 화면에서도 쿼리에서도 둘 다 신경 써야 합니다.
+# 단수/복수를 여기서 한 칸으로 모읍니다. 이미 한국어로 온 값은 그대로 통과시킵니다.
+DURATION_UNITS: dict[str, str] = {
+    "hour": "시간",
+    "hours": "시간",
+    "day": "일",
+    "days": "일",
+    "week": "주",
+    "weeks": "주",
+    "month": "개월",
+    "months": "개월",
+    "year": "년",
+    "years": "년",
+}
+
+
+def normalize_duration_unit(unit: str | None) -> str | None:
+    """기간 단위를 서비스 표기로 맞춥니다. 모르는 값은 원문 그대로 둡니다."""
+    if unit is None:
+        return None
+    text = unit.strip()
+    if not text:
+        return None
+    return DURATION_UNITS.get(text.lower(), text)
 
 
 def ingredient_match_key(name: str) -> str:

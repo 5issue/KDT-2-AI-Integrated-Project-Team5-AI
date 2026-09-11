@@ -182,6 +182,8 @@ class ExtractedStorageRule(StrictModel):
     source_slot: StorageSlot = Field(description="보관 슬롯. DOP 는 구매일 기준을 뜻한다")
     duration_min: float | None = Field(default=None, description="최소 보관 기간. 수치가 없으면 null")
     duration_max: float | None = Field(default=None, description="최대 보관 기간. 수치가 없으면 null")
+    # 원문 표기 그대로 받고, 한국어 표기로 모으는 일은 적재기(`normalize_duration_unit`)가 합니다.
+    # 여기서 한국어를 요구하면 LLM 이 번역까지 하다가 `1년`처럼 수치를 섞어 넣습니다.
     duration_unit: str | None = Field(default=None, description="기간 단위(Days, Weeks, Months 등). 없으면 null")
     duration_text: str = Field(
         description="사람이 읽을 기간 표기. 수치가 없으면 원문 문구를 그대로 살린다. 비울 수 없다",

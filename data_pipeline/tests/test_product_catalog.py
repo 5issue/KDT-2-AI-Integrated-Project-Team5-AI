@@ -228,3 +228,29 @@ def test_existing_ingredients_are_not_overwritten(tmp_path: Path) -> None:
 
     assert derived == 0
     assert [row[2] for row in rows.product_ingredients] == ["돼지고기"]
+
+
+def test_storage_type_is_loaded_in_korean(tmp_path: Path) -> None:
+    """보관 유형은 한국어로 적재합니다. 화면에 그대로 나가는 값이라 여기서 한 번만 바꿉니다."""
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [
+            product_row("1", "냉동새우", storage_type="FROZEN"),
+            product_row("2", "우유", storage_type="COLD"),
+            product_row("3", "황설탕", storage_type="AMBIENT_TEMPERATURE"),
+            product_row("4", "미상", storage_type="None"),
+        ],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    index = catalog.PRODUCT_COLUMNS.index("storage_type")
+    assert [row[index] for row in rows.products] == ["냉동", "냉장", "상온", None]
+
+
+def test_unknown_storage_type_is_kept_as_is(tmp_path: Path) -> None:
+    """모르는 값을 임의로 셋 중 하나에 끼워 넣지 않습니다. 원문이 남아야 눈에 띕니다."""
+    write_parquet(tmp_path / "product_raw.parquet", [product_row("1", "가", storage_type="DEEP_FROZEN")])
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    index = catalog.PRODUCT_COLUMNS.index("storage_type")
+    assert rows.products[0][index] == "DEEP_FROZEN"

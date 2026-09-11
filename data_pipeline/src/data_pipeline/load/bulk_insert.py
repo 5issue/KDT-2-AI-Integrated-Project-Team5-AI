@@ -29,7 +29,7 @@ import asyncpg
 
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import engine_scope
-from data_pipeline.domain import derive_storage_columns, ingredient_match_key
+from data_pipeline.domain import derive_storage_columns, ingredient_match_key, normalize_duration_unit
 
 STAGING_RECIPE_COLUMNS = (
     "source_type",
@@ -345,10 +345,12 @@ def _duration_triplet(rule: dict[str, Any]) -> tuple[Decimal | None, Decimal | N
     롤백**됐습니다. 한 행 때문에 전부 되돌아가므로 여기서 맞춰 둡니다.
 
     버리는 것은 단위뿐입니다. 사람이 읽을 표기는 `duration_text` 에 남아 있습니다.
+
+    단위 표기는 `normalize_duration_unit` 으로 한국어 한 벌로 모읍니다.
     """
     minimum = _decimal(rule.get("duration_min"), 2)
     maximum = _decimal(rule.get("duration_max"), 2)
-    unit = _truncate(rule.get("duration_unit"), 50)
+    unit = normalize_duration_unit(_truncate(rule.get("duration_unit"), 50))
     if minimum is None or maximum is None or unit is None:
         return None, None, None
     return minimum, maximum, unit
