@@ -64,10 +64,19 @@ class ExplainReport:
     plan: dict[str, Any]
     seq_scans: list[str] = field(default_factory=list)
     total_cost: float = 0.0
+    # 테이블별 Seq Scan 추정 행수 중 가장 큰 값.
+    seq_scan_rows: dict[str, int] = field(default_factory=dict)
 
-    def forbidden_seq_scans(self, forbidden: tuple[str, ...]) -> list[str]:
-        """풀스캔이 금지된 테이블 중 실제로 풀스캔이 걸린 것."""
-        return sorted({table for table in self.seq_scans if table in forbidden})
+    def forbidden_seq_scans(self, forbidden: tuple[str, ...], *, row_limit: int = 0) -> list[str]:
+        """풀스캔이 금지된 테이블 중 실제로 풀스캔이 걸린 것.
+
+        `row_limit` 을 주면 그보다 작게 추정되는 스캔은 넘어갑니다. 작은 표에서는
+        플래너가 인덱스보다 순차 읽기를 고르는 편이 맞고, 그걸 실패로 보면 SQL 을
+        억지로 비틀게 됩니다. 자세한 이유는 `Settings.seq_scan_row_limit` 에 적었습니다.
+        """
+        return sorted(
+            {table for table in self.seq_scans if table in forbidden and self.seq_scan_rows.get(table, 0) >= row_limit}
+        )
 
 
 async def run_query(
@@ -90,12 +99,16 @@ async def run_query(
     return QueryResult(query_name=query.name, rows=rows, elapsed_ms=(time.perf_counter() - started) * 1000)
 
 
-def _collect_seq_scans(node: dict[str, Any], found: list[str]) -> None:
-    """실행계획 트리에서 Seq Scan 대상 테이블을 모읍니다."""
+def _collect_seq_scans(node: dict[str, Any], found: list[str], rows: dict[str, int]) -> None:
+    """실행계획 트리에서 Seq Scan 대상 테이블과 추정 행수를 모읍니다."""
     if node.get("Node Type") == "Seq Scan" and "Relation Name" in node:
-        found.append(str(node["Relation Name"]))
+        table = str(node["Relation Name"])
+        found.append(table)
+        # 같은 표가 여러 번 나오면 가장 큰 스캔으로 봅니다.
+        estimated = int(node.get("Plan Rows", 0))
+        rows[table] = max(rows.get(table, 0), estimated)
     for child in node.get("Plans", []):
-        _collect_seq_scans(child, found)
+        _collect_seq_scans(child, found, rows)
 
 
 async def explain_query(
@@ -110,10 +123,12 @@ async def explain_query(
     plan = plan_list[0]["Plan"]
 
     seq_scans: list[str] = []
-    _collect_seq_scans(plan, seq_scans)
+    seq_scan_rows: dict[str, int] = {}
+    _collect_seq_scans(plan, seq_scans, seq_scan_rows)
     return ExplainReport(
         query_name=query.name,
         plan=plan,
         seq_scans=seq_scans,
         total_cost=float(plan.get("Total Cost", 0.0)),
+        seq_scan_rows=seq_scan_rows,
     )

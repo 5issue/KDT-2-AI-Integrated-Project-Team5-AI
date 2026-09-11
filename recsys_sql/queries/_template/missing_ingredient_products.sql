@@ -6,9 +6,14 @@
 -- 우선순위: 레시피 지정 상품(recipe_product.recommendation_priority) > 최근 인기도 > 낮은 가격.
 -- 품절이거나 비활성인 상품은 후보에서 뺍니다.
 
+-- 냉장고는 상품을 담으므로 재료는 상품의 PRIMARY 구성 재료로 풉니다.
+-- `fridge_recipe_match` 와 같은 정의를 씁니다. 두 쿼리가 보유 재료를 다르게 보면
+-- "부족하다고 했는데 목록에는 없는" 재료가 생깁니다.
 WITH fridge AS (
-    SELECT DISTINCT uf.ingredient_id
+    SELECT DISTINCT pi.ingredient_id
     FROM user_fridge uf
+    JOIN product_ingredient pi ON pi.product_id = uf.product_id
+                              AND pi.role = 'PRIMARY'
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
 ),

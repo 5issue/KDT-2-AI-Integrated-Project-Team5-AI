@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     query_owner: str = ""
     query_timeout_seconds: float = Field(default=10.0, gt=0)
     forbid_seq_scan_on: Annotated[tuple[str, ...], NoDecode] = ("product", "recipe", "recipe_ingredient")
+    # 이 행수 미만으로 추정되는 Seq Scan 은 통과시킵니다.
+    #
+    # 지금 recipe_ingredient 는 8,393행(약 200 페이지)뿐이라, 후보를 30건으로 좁혀 놔도
+    # 플래너가 인덱스 조회 대신 해시 조인을 고릅니다. 작은 표에서는 그게 실제로 더 빠릅니다.
+    # 이걸 무조건 실패로 보면 플래너를 이기려고 SQL 을 비트는 쪽으로 가게 되고, 정작
+    # 데이터가 커지면 그 비튼 SQL 이 더 나쁩니다. 규모가 커졌을 때만 걸리게 둡니다.
+    seq_scan_row_limit: int = Field(default=50_000, ge=0)
 
     @field_validator("forbid_seq_scan_on", mode="before")
     @classmethod

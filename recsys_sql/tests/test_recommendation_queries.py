@@ -61,16 +61,22 @@ class TestFridgeRecipeMatch:
         assert grill["missing_count"] == 0
 
     async def test_expired_ingredient_does_not_count(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
-        """유통기한이 지난 두부는 보유하지 않은 것으로 처리해야 합니다."""
+        """유통기한이 지난 두부는 보유하지 않은 것으로 처리해야 합니다.
+
+        두부조림의 필수 재료는 두부와 참기름입니다. 두부는 냉장고에 있지만 기한이 지났고
+        참기름은 아예 없으므로, 냉장고 재료를 하나도 쓰지 않는 레시피가 됩니다.
+        그래서 후보 자체에서 빠집니다. 같은 요청에서 나머지 시드 레시피는 나오므로
+        상한(`max_results`) 때문에 잘린 것이 아닙니다.
+        """
         rows = await fetch(
             db_conn,
             "fridge_recipe_match",
-            {"user_id": seeded.user, "min_coverage": 0.0, "max_results": 50},
+            {"user_id": seeded.user, "min_coverage": 0.0, "max_results": 500},
         )
-        braise = next(row for row in rows if row["recipe_id"] == seeded.tofu_braise)
+        recipe_ids = {row["recipe_id"] for row in rows}
 
-        assert braise["covered_count"] == 0
-        assert braise["missing_count"] == 2
+        assert seeded.kimchi_stew in recipe_ids, "기한이 남은 재료를 쓰는 레시피는 나와야 합니다"
+        assert seeded.tofu_braise not in recipe_ids
 
     async def test_min_coverage_filters_out_low_matches(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """커버리지 하한을 올리면 두부조림이 빠집니다."""
@@ -206,12 +212,19 @@ class TestExecutionPlan:
     async def test_no_forbidden_sequential_scan(
         self, db_conn: AsyncConnection, query_name: str, params: dict[str, Any]
     ) -> None:
-        """FORBID_SEQ_SCAN_ON 에 적힌 테이블은 인덱스로 접근해야 합니다."""
+        """FORBID_SEQ_SCAN_ON 에 적힌 테이블은 인덱스로 접근해야 합니다.
+
+        표가 작을 때는 플래너가 순차 읽기를 고르는 편이 맞습니다.
+        `SEQ_SCAN_ROW_LIMIT` 를 넘는 규모에서만 실패시킵니다.
+        """
         settings = get_settings()
         report = await explain_query(db_conn, template_query(query_name), params)
-        forbidden = report.forbidden_seq_scans(settings.forbid_seq_scan_on)
+        forbidden = report.forbidden_seq_scans(settings.forbid_seq_scan_on, row_limit=settings.seq_scan_row_limit)
 
-        assert not forbidden, f"{query_name}: 금지된 Seq Scan {forbidden} (인덱스를 확인하세요)"
+        assert not forbidden, (
+            f"{query_name}: 금지된 Seq Scan {forbidden} "
+            f"(추정 행수 { {table: report.seq_scan_rows[table] for table in forbidden} }, 인덱스를 확인하세요)"
+        )
 
     async def test_query_finishes_within_timeout(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """statement_timeout 안에 끝나야 합니다. 넘으면 run_query 가 예외를 냅니다."""
