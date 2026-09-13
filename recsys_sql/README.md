@@ -17,13 +17,15 @@
 복사를 없앴습니다. **`serving` 은 `.sql` 파일을 하나도 갖지 않습니다.**
 
 ```python
-from serving.queries import build_query          # serving 쪽 화이트리스트를 거쳐
+from serving.queries import build_query  # serving 쪽 화이트리스트를 거쳐
+
 sql, args = build_query("product_detail", {"product_id": 101})
-rows = await conn.fetch(sql, *args)              # serving 자기 asyncpg 풀로 실행
+rows = await conn.fetch(sql, *args)  # serving 자기 asyncpg 풀로 실행
 ```
 
 ```python
-from recsys_sql import prepare                   # 직접 쓸 때
+from recsys_sql import prepare  # 직접 쓸 때
+
 sql, args = prepare("product_detail", {"product_id": 101})
 ```
 
