@@ -105,7 +105,7 @@ def validate_params(query: SqlQuery, params: dict[str, Any]) -> dict[str, Any]:
     for name, type_name in query.params.items():
         value = params[name]
         expected = _PYTHON_TYPES[type_name]
-        # bool 은 int 의 서브클래스라 int 자리에 들어가는 것을 따로 막습니다.
+        # 파이썬에서 bool 은 int 의 서브클래스라 int 자리에 들어가는 것을 따로 막습니다.
         if type_name == "int" and isinstance(value, bool):
             raise CatalogError(f"{query.name}.{name}: int 자리에 bool 이 들어왔습니다.")
         if not isinstance(value, expected):
