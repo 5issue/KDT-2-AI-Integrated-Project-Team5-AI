@@ -60,8 +60,16 @@ OpenAI 호환이면 한 줄이면 추가됩니다.
 LLM_PROVIDER=openrouter
 LLM_MODEL=anthropic/claude-sonnet-4      # OpenRouter 는 접두사가 필요합니다
 LLM_EMBEDDING_PROVIDER=openai            # 임베딩만 다른 곳으로
-LLM_EMBEDDING_API_KEY=
+LLM_EMBEDDING_API_KEY=                   # 필수입니다. 아래 참고
 ```
+
+**공급자나 주소를 따로 지정하면 키도 따로 받습니다.** 채팅 키를 물려주면 그 키가 다른
+회사 엔드포인트로 그대로 나갑니다. 한 번 나간 키는 회수할 수 없어서, 편의보다 이쪽을
+먼저 뒀습니다. 아무것도 지정하지 않았을 때만 채팅 설정을 물려받습니다(같은 서버니까요).
+
+**`BASE_URL` 은 공인 호스트면 https 만 받습니다.** 그 주소로 API 키와 사용자 질문이 함께
+나가는데, 평문이면 경로 중간에서 그대로 읽힙니다. 평문 http 는 루프백·사설망·단일
+이름(도커/쿠버네티스 서비스명)에서만 허용합니다. 개발기와 컨테이너 사이는 그대로 됩니다.
 
 self-hosted(TEI 로 `BAAI/bge-m3` 등)는 `custom` 입니다.
 

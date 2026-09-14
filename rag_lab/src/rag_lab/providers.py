@@ -32,7 +32,9 @@ self-hosted 엔드포인트를 붙일 때 씁니다.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +101,56 @@ def get_provider(name: str) -> Provider:
         raise ProviderError(f"모르는 공급자입니다: {name!r} (가능한 값: {', '.join(PROVIDER_NAMES)})") from exc
 
 
+def _is_local_host(host: str) -> bool:
+    """평문 HTTP 를 허용해도 되는 호스트인지.
+
+    세 가지만 봅니다.
+    - 루프백 (localhost, 127.0.0.1, ::1)
+    - 사설 대역 IP (10./172.16./192.168.)
+    - 점이 없는 단일 이름 (도커 컴포즈 서비스명, 쿠버네티스 서비스명)
+
+    공인 도메인은 전부 여기서 빠집니다.
+    """
+    if not host:
+        return False
+    if host in {"localhost", "::1"} or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        # 이름이면 점이 없을 때만 내부로 봅니다. `tei`, `vllm` 같은 서비스명입니다.
+        return "." not in host
+    return address.is_loopback or address.is_private
+
+
+def _check_transport(url: str) -> None:
+    """평문으로 자격증명을 보내지 않도록 막습니다.
+
+    `_build_client` 가 이 주소로 API 키와 사용자 질문을 함께 보냅니다. 공인 호스트에
+    `http://` 로 보내면 경로 중간에서 그대로 읽힙니다(CWE-319). 되돌릴 수 없는 사고라
+    설정 단계에서 막습니다.
+
+    사내망이나 컨테이너 사이는 평문이 정상이라, 루프백·사설망·단일 이름은 통과시킵니다.
+    """
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return
+    if parts.scheme != "http":
+        raise ProviderError(f"지원하지 않는 스킴입니다: {parts.scheme or '(없음)'} (http 또는 https)")
+    if _is_local_host(parts.hostname or ""):
+        return
+    raise ProviderError(
+        f"평문 http 로 외부 호스트에 붙을 수 없습니다: {parts.hostname}. "
+        "API 키가 그대로 실려 나갑니다. https 를 쓰거나, 내부망 주소로 지정하세요."
+    )
+
+
 def resolve_base_url(provider: Provider, override: str | None) -> str | None:
     """붙을 주소를 정합니다. `custom` 은 주소를 반드시 받아야 합니다."""
     if override and override.strip():
-        return override.strip()
+        url = override.strip()
+        _check_transport(url)
+        return url
     if provider.name == "custom":
         raise ProviderError("LLM_PROVIDER=custom 이면 LLM_BASE_URL 을 채워야 합니다.")
     return provider.base_url

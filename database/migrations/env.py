@@ -3,8 +3,9 @@
 접속 문자열은 저장소에 두지 않는다. `.env` 에서 읽으며, 찾는 순서는 아래와 같다.
 
     1. 이미 설정된 프로세스 환경변수
-    2. 저장소 루트의 `.env`
-    3. `data_pipeline/.env`
+    2. `database/.env` (이 폴더 전용. README 의 설치 안내가 만드는 파일)
+    3. 저장소 루트의 `.env`
+    4. `data_pipeline/.env`
 
 이 저장소는 루트 `.env` 를 두지 않고 폴더별 `.env` 만 쓴다(루트 `.env.example` 참고).
 그래서 루트만 보면 아무 데서도 값을 찾지 못한다. 3번이 그 경우를 받는다.
@@ -33,7 +34,11 @@ if config.config_file_name is not None:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # 먼저 읽은 쪽이 이긴다. load_dotenv 는 이미 있는 값을 덮어쓰지 않는다.
-for candidate in (REPO_ROOT / ".env", REPO_ROOT / "data_pipeline" / ".env"):
+for candidate in (
+    REPO_ROOT / "database" / ".env",
+    REPO_ROOT / ".env",
+    REPO_ROOT / "data_pipeline" / ".env",
+):
     if candidate.exists():
         load_dotenv(candidate)
 

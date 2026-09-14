@@ -99,14 +99,33 @@ class Settings(BaseSettings):
         """LLM 키를 꺼내되, 비어 있으면 값 노출 없이 실패시킵니다."""
         return self._require_secret(self.llm_api_key, "LLM_API_KEY")
 
-    def require_embedding_api_key(self) -> str:
-        """임베딩용 키. 따로 없으면 채팅 쪽 키를 씁니다.
+    @property
+    def embedding_inherits_chat(self) -> bool:
+        """임베딩이 채팅 설정을 그대로 물려받는 상태인지.
 
-        임베딩만 다른 공급자로 돌릴 때는 키도 달라야 해서 별도 항목을 둡니다.
+        공급자든 주소든 하나라도 따로 지정했으면 물려받지 않습니다. 같은 공급자
+        이름이어도 주소가 다르면 다른 서버라, 이름만 보고 판단하면 안 됩니다.
+        """
+        return not (self.llm_embedding_provider.strip() or self.llm_embedding_base_url.strip())
+
+    def require_embedding_api_key(self) -> str:
+        """임베딩용 키.
+
+        **임베딩을 따로 지정했으면 키도 따로 받습니다.** 채팅 키를 물려주면 그 키가
+        다른 회사 엔드포인트로 그대로 나갑니다(예: OpenAI 키를 self-hosted 주소로).
+        한 번 나간 키는 회수할 수 없습니다. 편의보다 이쪽이 먼저입니다.
+
+        아무것도 따로 지정하지 않았을 때만 채팅 키를 씁니다. 그때는 같은 서버입니다.
         """
         if self.llm_embedding_api_key is not None and self.llm_embedding_api_key.get_secret_value().strip():
             return self.llm_embedding_api_key.get_secret_value()
-        return self._require_secret(self.llm_api_key, "LLM_API_KEY (또는 LLM_EMBEDDING_API_KEY)")
+        if not self.embedding_inherits_chat:
+            raise RuntimeError(
+                "LLM_EMBEDDING_API_KEY 가 비어 있습니다. "
+                "임베딩 공급자나 주소를 따로 지정했으면 키도 따로 넣어야 합니다. "
+                "채팅 키를 다른 엔드포인트로 보내지 않습니다."
+            )
+        return self._require_secret(self.llm_api_key, "LLM_API_KEY")
 
     @staticmethod
     def _require_secret(value: SecretStr | None, key: str) -> str:

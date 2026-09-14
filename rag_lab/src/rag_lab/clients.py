@@ -61,9 +61,13 @@ class LlmEmbeddingClient:
         self._client = client or _build_client(
             api_key=self._settings.require_embedding_api_key(),
             provider=self.provider,
+            # 채팅 주소를 물려받는 것은 아무것도 따로 지정하지 않았을 때뿐입니다.
+            # 임베딩만 다른 곳으로 보내려는데 채팅 주소가 딸려 오면, 요청과 키가
+            # 엉뚱한 서버로 갑니다.
             base_url=resolve_base_url(
                 self.provider,
-                self._settings.llm_embedding_base_url or self._settings.llm_base_url,
+                self._settings.llm_embedding_base_url
+                or (self._settings.llm_base_url if self._settings.embedding_inherits_chat else ""),
             ),
         )
 
