@@ -36,6 +36,62 @@ uv run rag-lab route "대파 어떻게 보관해"   # DB/API 없이 라우팅만
 uv run rag-lab ask "김치로 뭐 해먹지"
 ```
 
+## 공급자 갈아끼우기
+
+모델 비교가 목적인 폴더라 공급자도 `.env` 한 줄로 바뀌어야 합니다.
+`OPENAI_*` 대신 `LLM_*` 을 씁니다.
+
+```bash
+LLM_PROVIDER=openai            # openai | openrouter | anthropic | custom
+LLM_API_KEY=
+LLM_MODEL=gpt-4.1-mini
+LLM_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+OpenAI, OpenRouter, Together, Groq, vLLM 은 전부 OpenAI 호환 API 라 `base_url` 만
+다릅니다. 그래서 공급자를 `(base_url, 헤더, 임베딩 지원 여부)` 로만 적어 두면
+클라이언트 하나로 전부 붙습니다. 목록은 `src/rag_lab/providers.py` 에 있고,
+OpenAI 호환이면 한 줄이면 추가됩니다.
+
+**임베딩은 채팅과 다른 곳에서 받을 수 있습니다.** OpenRouter 와 Anthropic 은 임베딩
+엔드포인트가 없어서, 채팅만 거기서 받고 임베딩은 따로 보내는 조합이 흔합니다.
+
+```bash
+LLM_PROVIDER=openrouter
+LLM_MODEL=anthropic/claude-sonnet-4      # OpenRouter 는 접두사가 필요합니다
+LLM_EMBEDDING_PROVIDER=openai            # 임베딩만 다른 곳으로
+LLM_EMBEDDING_API_KEY=
+```
+
+self-hosted(TEI 로 `BAAI/bge-m3` 등)는 `custom` 입니다.
+
+```bash
+LLM_EMBEDDING_PROVIDER=custom
+LLM_EMBEDDING_BASE_URL=http://localhost:8080/v1
+LLM_EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=1024                       # 아래 주의 참고
+```
+
+조립 시점에 막는 것 두 가지입니다. 실험을 한참 돌린 뒤 404 를 보면 늦습니다.
+
+- 임베딩을 줄 수 없는 공급자로 임베딩 클라이언트를 만들면 바로 실패
+- `custom` 인데 `BASE_URL` 이 비어 있으면 바로 실패 (조용히 OpenAI 로 가지 않습니다)
+
+**`EMBEDDING_DIM` 을 바꾸려면 DB 도 함께 바꿔야 합니다.** `recipe`/`product`/`ingredient`
+의 `embedding` 이 `VECTOR(1536)` 입니다. `BAAI/bge-m3` 는 1024 라 컬럼 마이그레이션이
+필요하고, 기존 임베딩도 전부 다시 만들어야 합니다. 클라이언트가 응답 차원을 확인해서
+설정과 다르면 그 자리에서 실패시킵니다.
+
+실험 결과에는 공급자도 함께 기록됩니다. 같은 모델명이라도 어디를 거쳤는지에 따라
+결과가 달라져서, 그 값이 없으면 지난 실험과 비교할 수 없습니다.
+
+예전 이름(`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`)도 계속
+읽습니다. 로컬 `.env` 가 조용히 깨지지 않게 두는 것이고, 새로 쓰는 값은 `LLM_*` 입니다.
+
+`data_pipeline` 은 OpenAI Batch API 에 묶여 있어 이 추상화를 쓰지 않습니다.
+배치 제출·폴링·수거가 OpenAI 고유 엔드포인트(`/v1/batches`)라 공급자를 바꾸려면
+파이프라인 자체를 다시 써야 합니다.
+
 ## 그래프 구조
 
 ```
