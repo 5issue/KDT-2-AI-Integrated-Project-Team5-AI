@@ -55,12 +55,12 @@ uv run serving run          # http://127.0.0.1:8000 (자동 리로드)
 
 ## 엔드포인트
 
-| 메서드 | 경로 | 설명 |
-| --- | --- | --- |
-| GET | `/health` | liveness. DB 를 건드리지 않습니다. |
-| GET | `/health/db` | readiness. 풀에서 커넥션을 빌려 왕복 한 번. 실패 시 503 |
-| GET | `/users/{user_id}/recipe-recommendations` | 냉장고 재료 기반 레시피 추천 |
-| GET | `/users/{user_id}/reorder-candidates` | 재구매 후보 |
+| 메서드 | 경로                                      | 설명                                                    |
+| ------ | ----------------------------------------- | ------------------------------------------------------- |
+| GET    | `/health`                                 | liveness. DB 를 건드리지 않습니다.                      |
+| GET    | `/health/db`                              | readiness. 풀에서 커넥션을 빌려 왕복 한 번. 실패 시 503 |
+| GET    | `/users/{user_id}/recipe-recommendations` | 냉장고 재료 기반 레시피 추천                            |
+| GET    | `/users/{user_id}/reorder-candidates`     | 재구매 후보                                             |
 
 `ai_context/api_spec.md` 의 나머지 엔드포인트는 아직 라우터가 없습니다. 받칠 SQL 은
 카탈로그에 이미 있습니다 — `recsys_sql/README.md` 의 대응표를 보세요.
@@ -99,11 +99,11 @@ liveness 와 readiness 를 나눈 이유는, DB 가 잠깐 흔들릴 때 컨테�
 uv run pytest serving/tests -q
 ```
 
-| 파일 | DB 필요 | 하는 일 |
-| --- | --- | --- |
-| `tests/test_dsn.py` | 아니오 | DSN 변환, pooler 감지, 마스킹 |
-| `tests/test_app.py` | 아니오 | 라우팅, 503 처리, 입력 검증, 카탈로그 계약, .sql 복사본 금지 |
-| `tests/test_endpoints_db.py` | 예 | 실제 Neon 에서 카탈로그 SQL 실행 + 응답 스키마 |
+| 파일                         | DB 필요 | 하는 일                                                      |
+| ---------------------------- | ------- | ------------------------------------------------------------ |
+| `tests/test_dsn.py`          | 아니오  | DSN 변환, pooler 감지, 마스킹                                |
+| `tests/test_app.py`          | 아니오  | 라우팅, 503 처리, 입력 검증, 카탈로그 계약, .sql 복사본 금지 |
+| `tests/test_endpoints_db.py` | 예      | 실제 Neon 에서 카탈로그 SQL 실행 + 응답 스키마               |
 
 # fastapi 배포
 
