@@ -170,3 +170,10 @@ uv run pytest rag_lab/tests -q
 | `tests/test_graph.py`         | 아니오      | 라우팅 규칙, 그래프 전체 흐름, 프롬프트 격리, 근거 없을 때 LLM 미호출 |
 | `tests/test_experiment.py`    | 아니오      | 채점 로직, 결과 기록, 자격증명 미포함                                 |
 | `tests/test_db_connection.py` | 예          | pgvector 설치, embedding 차원, 검색 SQL 실행                          |
+
+## TODO 리스트?
+
+langfuse(시간없으면 langsmith로 빠르게 대체, monitoring폴더를 파고 거기서 유연하게 교체하게끔 구성하면 좋겠음) 기반 monitoring, token usage 추적 등
+ragas 기반 골든 데이터셋으로 평가
+
+rag 실험 환경 고도화 방안 적용 -> 실험 후 최종 적용 기준 마련

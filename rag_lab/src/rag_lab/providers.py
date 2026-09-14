@@ -75,6 +75,7 @@ PROVIDERS: dict[str, Provider] = {
         note="임베딩 API 가 없습니다. 임베딩은 다른 공급자로 지정하세요",
     ),
     "custom": Provider(
+        # ollama, vllm, tei 등 self-hosted 엔드포인트를 붙일 때 씁니다.
         name="custom",
         # LLM_BASE_URL / LLM_EMBEDDING_BASE_URL 에서 받습니다.
         base_url=None,

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.catalog import SqlQuery, load_catalog
@@ -234,3 +235,33 @@ class TestExecutionPlan:
             {"user_id": seeded.user, "min_coverage": 0.1, "max_results": 10},
         )
         assert result.elapsed_ms < get_settings().query_timeout_seconds * 1000
+
+
+class TestProductIngredientRole:
+    """보유 판정과 상품 추천이 같은 role 을 봐야 합니다."""
+
+    async def test_secondary_ingredient_product_is_not_recommended(
+        self, db_conn: AsyncConnection, seeded: SeedIds
+    ) -> None:
+        """SECONDARY 로만 걸린 상품을 추천하면, 담아도 재료가 계속 부족합니다.
+
+        냉장고 쪽은 PRIMARY 만 보유로 인정합니다. 추천 쪽이 role 을 안 보면
+        "사라고 해서 샀는데 여전히 부족" 한 상태가 반복됩니다.
+        """
+        await db_conn.execute(
+            text(
+                "INSERT INTO product_ingredient (product_id, ingredient_id, role) "
+                "VALUES (:product_id, :ingredient_id, 'SECONDARY')"
+            ),
+            {"product_id": seeded.kimchi_a, "ingredient_id": seeded.sesame_oil},
+        )
+
+        rows = await fetch(
+            db_conn,
+            "missing_ingredient_products",
+            {"user_id": seeded.user, "recipe_id": seeded.tofu_braise, "max_per_ingredient": 10},
+        )
+        sesame_products = {row["product_id"] for row in rows if row["ingredient_id"] == seeded.sesame_oil}
+
+        assert seeded.kimchi_a not in sesame_products, "SECONDARY 로 걸린 상품이 추천되었습니다."
+        assert sesame_products, "PRIMARY 상품까지 같이 빠지면 안 됩니다."
