@@ -246,7 +246,8 @@ def command_collect(args: argparse.Namespace) -> int:
         print(f"다운로드: {path.name}")
 
     if args.stage == "profile":
-        profiles, failures, adjustments = profile.collect(args.job, settings=settings)
+        raw_path = Path(args.raw) if getattr(args, "raw", None) else None
+        profiles, failures, adjustments = profile.collect(args.job, settings=settings, raw_path=raw_path)
         print(f"\n{profile.render_profiles(profiles)}")
         print(f"\n{constraints.render(adjustments)}")
         print(f"\n프로파일 {len(profiles)}개 저장: {profile.profiles_path(settings).name}")
@@ -435,6 +436,9 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--job", required=True)
     collect.add_argument("--wait", action="store_true", help="완료될 때까지 폴링")
     collect.add_argument("--poll", type=int, default=60, help="폴링 간격(초)")
+    # profile/extract 와 같은 raw 경로를 받아야 합니다. collect 만 기본 경로로 다시
+    # 훑으면, --raw 로 돌린 프로파일의 companion 연결이 제약 레이어에서 통째로 지워집니다.
+    collect.add_argument("--raw", help="raw 경로. 생략하면 data_pipeline/data/raw")
     collect.set_defaults(func=command_collect)
 
     master = sub.add_parser("sync-master", help="공공 영양성분 데이터로 재료 마스터 보강")

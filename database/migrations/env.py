@@ -50,10 +50,13 @@ if allowed_prefix:
         raise RuntimeError(f"허용되지 않은 대상이다: {host} (기대 접두사 {allowed_prefix})")
 
 # 이 저장소는 psycopg 3 을 쓴다. SQLAlchemy 기본값인 psycopg2 로 가지 않도록 드라이버를 지정한다.
-if database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-elif database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+#
+# 드라이버가 이미 붙어 있는 DSN 도 받는다. alembic 은 동기 엔진을 쓰는데, 폴더별 `.env` 는
+# `postgresql+asyncpg://` 로 적혀 있는 경우가 많다(data_pipeline 은 async 엔진을 쓴다).
+# 그대로 넘기면 동기 경로에서 커넥션을 열 때 죽는다. 여기서 psycopg 로 바꿔 준다.
+_scheme, _, _rest = database_url.partition("://")
+if _rest and _scheme.split("+", 1)[0] in {"postgresql", "postgres"}:
+    database_url = f"postgresql+psycopg://{_rest}"
 
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
