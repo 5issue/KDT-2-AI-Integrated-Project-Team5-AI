@@ -123,10 +123,14 @@ def _json_records(path: Path) -> list[dict[str, Any]]:
     else:
         raise ValueError(f"{path.name}: JSON 최상위가 배열이나 객체가 아닙니다.")
 
-    records = [row for row in rows if isinstance(row, dict)]
-    if not records:
+    if not rows:
         raise ValueError(f"{path.name}: 객체로 된 레코드가 없습니다.")
-    return records
+    # 객체가 아닌 항목을 조용히 버리면 원본 몇 줄이 사라졌는지 아무도 모릅니다.
+    # 적재 건수가 안 맞을 때 원인을 여기까지 되짚기가 어려워서, 인덱스를 붙여 알립니다.
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path.name}: {index}번째 레코드가 JSON 객체가 아닙니다({type(row).__name__}).")
+    return rows
 
 
 def _csv_records(path: Path) -> list[dict[str, Any]]:

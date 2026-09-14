@@ -69,8 +69,13 @@ NULLISH = frozenset({"", "none", "null", "nan", "-"})
 # 바꿔 두는 편이 낫습니다. `docs/product-ingredient-storage-normalization-guide.md`
 # 4.3 절의 대응과 같습니다.
 #
-# 모르는 값은 지어내지 않고 원문 그대로 둡니다. 현재 raw 2,553행에는 아래 3종과
-# 빈 값(1,551행)뿐입니다.
+# 모르는 값은 지어내지 않고 **비웁니다.** 현재 raw 2,553행에는 아래 3종과
+# 빈 값(1,551행)뿐이지만, 원본이 늘면서 새 표기가 들어올 수 있습니다.
+#
+# 원문 그대로 통과시키던 때가 있었는데, 그 뒤 alembic 0007 이 `ck_product_storage_type`
+# 으로 셋 중 하나만 받도록 했습니다. 그대로 두면 새 표기 한 건에 적재 전체가 롤백됩니다.
+# 임의로 셋 중 하나에 끼워 넣는 것도 안 됩니다. 틀린 보관법은 없는 것보다 나쁩니다.
+# 버려진 값은 적재 리포트에 남아 눈에 띕니다.
 PRODUCT_STORAGE_TYPES: dict[str, str] = {
     "COLD": "냉장",
     "FROZEN": "냉동",
@@ -86,6 +91,8 @@ class CatalogRows:
     products: list[tuple[Any, ...]] = field(default_factory=list)
     product_ingredients: list[tuple[Any, ...]] = field(default_factory=list)
     skipped_products: int = 0
+    # 셋 중 어디에도 안 맞아 비운 보관 유형. 원본에 새 표기가 들어오면 여기 쌓입니다.
+    unknown_storage_types: dict[str, int] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         """적재할 것이 하나도 없는지."""
@@ -116,12 +123,17 @@ def _integer(value: Any) -> int | None:
     return int(number) if number is not None else None
 
 
-def _storage_type(value: Any) -> str | None:
-    """상품 보관 유형을 서비스 표기(한국어)로 맞춥니다."""
+def _storage_type(value: Any, rows: CatalogRows | None = None) -> str | None:
+    """상품 보관 유형을 서비스 표기(한국어)로 맞춥니다. 모르는 값은 비웁니다."""
     text = _text(value)
     if text is None:
         return None
-    return PRODUCT_STORAGE_TYPES.get(text.upper(), text)
+    if text in PRODUCT_STORAGE_TYPES.values():
+        return text
+    mapped = PRODUCT_STORAGE_TYPES.get(text.upper())
+    if mapped is None and rows is not None:
+        rows.unknown_storage_types[text] = rows.unknown_storage_types.get(text, 0) + 1
+    return mapped
 
 
 def _finite(value: Any) -> Any:
@@ -272,7 +284,7 @@ def _append_products(rows: CatalogRows, dataset: RawDataset) -> None:
                 price,
                 _text(payload.get("product_type")) or "RAW_MATERIAL",
                 _text(payload.get("category_path")),
-                _storage_type(payload.get("storage_type")),
+                _storage_type(payload.get("storage_type"), rows),
                 _text(payload.get("origin_country")),
                 _weight_grams(payload.get("weight_g"), name),
                 _integer(payload.get("unit_count")),

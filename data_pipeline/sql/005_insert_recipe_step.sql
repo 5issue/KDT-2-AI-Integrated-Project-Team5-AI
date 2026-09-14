@@ -3,13 +3,20 @@
 --
 -- 단계가 줄어든 레시피를 재적재하면 예전 뒤쪽 단계가 남습니다(PK 가 (recipe_id, step_no) 라
 -- upsert 만으로는 안 지워짐). 그래서 이번에 온 레시피에 한해 초과 단계를 먼저 지웁니다.
--- 단계가 아예 없는 레시피는 staging 에 행이 없으므로 건드리지 않습니다.
+--
+-- 기준을 staging_recipe_step 이 아니라 **staging_recipe** 로 잡습니다. 단계 테이블만 보면
+-- 이번에 단계가 0개로 온 레시피는 아예 행이 없어서 옛 단계가 통째로 살아남습니다.
+-- "이번 적재에 포함된 레시피" 는 staging_recipe 가 알고 있으므로 거기서 출발합니다.
+-- 단계가 0개면 max_step 이 NULL 이고, COALESCE 로 0 을 만들어 전부 지웁니다.
 
 WITH incoming AS (
-    SELECT r.recipe_id, MAX(srs.step_no) AS max_step
-    FROM staging_recipe_step srs
-    JOIN recipe r ON r.source_type = srs.source_type
-                 AND r.source_recipe_id = srs.source_id
+    SELECT r.recipe_id,
+           COALESCE(MAX(srs.step_no), 0) AS max_step
+    FROM staging_recipe sr
+    JOIN recipe r ON r.source_type = sr.source_type
+                 AND r.source_recipe_id = sr.source_id
+    LEFT JOIN staging_recipe_step srs ON srs.source_type = sr.source_type
+                                     AND srs.source_id = sr.source_id
     GROUP BY r.recipe_id
 )
 DELETE FROM recipe_step rs

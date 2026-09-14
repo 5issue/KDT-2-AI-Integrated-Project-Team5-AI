@@ -443,7 +443,8 @@ async def run_load(
         await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
         await assert_prerequisites(conn)
         await conn.execute(
-            "TRUNCATE staging_recipe, staging_recipe_ingredient, staging_storage_guideline, staging_ingredient_match"
+            "TRUNCATE staging_recipe, staging_recipe_step, staging_recipe_ingredient, "
+            "staging_storage_guideline, staging_ingredient_match"
         )
         report.applied_sql.append(SQL_STEPS[0])
 

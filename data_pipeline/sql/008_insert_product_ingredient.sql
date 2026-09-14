@@ -19,6 +19,16 @@ LEFT JOIN staging_ingredient_match m ON m.normalized_name = spi.normalized_name
 JOIN product p ON p.source_type = spi.source_type
               AND p.source_product_id = spi.source_product_id
 WHERE COALESCE(spi.ingredient_id, m.ingredient_id) IS NOT NULL
+-- DISTINCT ON 은 ORDER BY 가 없으면 어느 행이 남을지 보장하지 않습니다.
+-- 서로 다른 normalized_name 이 같은 ingredient_id 로 매칭되는 일이 있어서
+-- (예: `계란`/`달걀`), 정렬을 안 두면 재적재마다 role 이나 quantity_g 가 달라집니다.
+-- PRIMARY 를 먼저, 그다음 수치가 채워진 행, 마지막으로 이름 순으로 고정합니다.
+ORDER BY p.product_id,
+         COALESCE(spi.ingredient_id, m.ingredient_id),
+         (spi.role = 'PRIMARY') DESC,
+         spi.quantity_g DESC NULLS LAST,
+         spi.ratio DESC NULLS LAST,
+         spi.normalized_name
 ON CONFLICT (product_id, ingredient_id) DO UPDATE
 SET quantity_g = COALESCE(EXCLUDED.quantity_g, product_ingredient.quantity_g),
     role       = EXCLUDED.role,

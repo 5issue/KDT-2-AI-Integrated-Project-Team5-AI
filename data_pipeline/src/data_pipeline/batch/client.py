@@ -159,6 +159,15 @@ class BatchRunner:
                 seen.add(custom_id)
 
                 tokens = estimate_tokens(request)
+                # 요청 하나가 상한을 넘으면 새 파트를 열어도 소용이 없습니다.
+                # `count > 0` 조건 때문에 그런 요청은 그냥 담겨서, 상한을 두는 이유였던
+                # token_limit_exceeded 를 그대로 다시 맞습니다. 여기서 멈춥니다.
+                if tokens > token_limit:
+                    raise ValueError(
+                        f"{custom_id}: 요청 하나의 추정 토큰이 {tokens:,} 로 "
+                        f"BATCH_MAX_TOKENS({token_limit:,}) 를 넘습니다. "
+                        "EXTRACT_MAX_ENTITIES 를 줄이거나 상한을 올리세요."
+                    )
                 # 줄 수와 토큰 둘 다 본다. 토큰이 먼저 차는 쪽이 보통 레시피 데이터입니다.
                 over_tokens = count > 0 and used + tokens > token_limit
                 if handle is None or count >= limit or over_tokens:
@@ -258,7 +267,10 @@ class BatchRunner:
                     submitted_at=datetime.now(UTC).isoformat(timespec="seconds"),
                 )
             )
-        self.save_manifest(job_name, jobs)
+            # 파트마다 저장합니다. 루프가 끝난 뒤에만 저장하면, 중간 파트에서 실패했을 때
+            # 이미 생성된 원격 배치가 매니페스트에 없는 채로 남습니다. 그 상태로 재시도하면
+            # 같은 파트를 또 제출해 LLM 비용을 두 번 냅니다.
+            self.save_manifest(job_name, jobs)
         return jobs
 
     def refresh(self, job_name: str) -> list[BatchJob]:

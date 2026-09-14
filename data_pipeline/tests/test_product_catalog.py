@@ -247,10 +247,25 @@ def test_storage_type_is_loaded_in_korean(tmp_path: Path) -> None:
     assert [row[index] for row in rows.products] == ["냉동", "냉장", "상온", None]
 
 
-def test_unknown_storage_type_is_kept_as_is(tmp_path: Path) -> None:
-    """모르는 값을 임의로 셋 중 하나에 끼워 넣지 않습니다. 원문이 남아야 눈에 띕니다."""
+def test_unknown_storage_type_is_nulled_and_reported(tmp_path: Path) -> None:
+    """모르는 값을 임의로 셋 중 하나에 끼워 넣지 않고, 그대로 통과시키지도 않습니다.
+
+    `ck_product_storage_type` 이 셋만 받으므로 통과시키면 새 표기 한 건에 적재 전체가
+    롤백됩니다. 비우되 무엇이 버려졌는지는 남깁니다.
+    """
     write_parquet(tmp_path / "product_raw.parquet", [product_row("1", "가", storage_type="DEEP_FROZEN")])
     rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
 
     index = catalog.PRODUCT_COLUMNS.index("storage_type")
-    assert rows.products[0][index] == "DEEP_FROZEN"
+    assert rows.products[0][index] is None
+    assert rows.unknown_storage_types == {"DEEP_FROZEN": 1}
+
+
+def test_korean_storage_type_passes_through(tmp_path: Path) -> None:
+    """이미 한국어로 정리된 raw 가 들어와도 그대로 받아야 합니다."""
+    write_parquet(tmp_path / "product_raw.parquet", [product_row("1", "가", storage_type="냉장")])
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    index = catalog.PRODUCT_COLUMNS.index("storage_type")
+    assert rows.products[0][index] == "냉장"
+    assert rows.unknown_storage_types == {}
