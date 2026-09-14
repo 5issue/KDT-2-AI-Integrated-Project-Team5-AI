@@ -42,19 +42,34 @@ class ExplainReport:
     plan: dict[str, Any]
     seq_scans: list[str] = field(default_factory=list)
     total_cost: float = 0.0
-    # 테이블별 Seq Scan 추정 행수 중 가장 큰 값.
+    # 테이블별 Seq Scan 추정 출력 행수 중 가장 큰 값(필터 통과 후).
     seq_scan_rows: dict[str, int] = field(default_factory=dict)
+    # 표 자체의 추정 행수(pg_class.reltuples). 통계가 없으면 -1.
+    relation_rows: dict[str, float] = field(default_factory=dict)
 
     def forbidden_seq_scans(self, forbidden: tuple[str, ...], *, row_limit: int = 0) -> list[str]:
         """풀스캔이 금지된 테이블 중 실제로 풀스캔이 걸린 것.
 
-        `row_limit` 을 주면 그보다 작게 추정되는 스캔은 넘어갑니다. 작은 표에서는
-        플래너가 인덱스보다 순차 읽기를 고르는 편이 맞고, 그걸 실패로 보면 SQL 을
-        억지로 비틀게 됩니다. 자세한 이유는 `Settings.seq_scan_row_limit` 에 적었습니다.
+        `row_limit` 을 주면 그보다 작은 표의 스캔은 넘어갑니다. 작은 표에서는 플래너가
+        인덱스보다 순차 읽기를 고르는 편이 맞고, 그걸 실패로 보면 SQL 을 억지로 비틀게
+        됩니다. 자세한 이유는 `Settings.seq_scan_row_limit` 에 적었습니다.
+
+        **크기는 표 자체의 행수(`pg_class.reltuples`)로 봅니다.** EXPLAIN 의 `Plan Rows` 는
+        필터를 통과해 나오는 행수라, 큰 표에 선택적인 조건이 붙으면 값이 작게 나옵니다.
+        그걸로 재면 1,000만 행을 통째로 읽는 쿼리가 "10행" 으로 보여 그냥 통과합니다.
         """
-        return sorted(
-            {table for table in self.seq_scans if table in forbidden and self.seq_scan_rows.get(table, 0) >= row_limit}
-        )
+        return sorted({table for table in self.seq_scans if table in forbidden and self._scan_size(table) >= row_limit})
+
+    def _scan_size(self, table: str) -> float:
+        """이 표를 얼마나 읽는지. 통계가 없으면 추정 출력 행수로 물러납니다.
+
+        `reltuples` 는 ANALYZE 를 한 번도 안 돌린 표에서 -1 입니다. 판단할 근거가 없으니
+        그때만 Plan Rows 를 씁니다.
+        """
+        relation_rows = self.relation_rows.get(table, -1.0)
+        if relation_rows >= 0:
+            return relation_rows
+        return float(self.seq_scan_rows.get(table, 0))
 
 
 async def run_query(
@@ -109,4 +124,19 @@ async def explain_query(
         seq_scans=seq_scans,
         total_cost=float(plan.get("Total Cost", 0.0)),
         seq_scan_rows=seq_scan_rows,
+        relation_rows=await _relation_rows(conn, seq_scans),
     )
+
+
+async def _relation_rows(conn: AsyncConnection, tables: list[str]) -> dict[str, float]:
+    """표 자체의 추정 행수를 한 번에 가져옵니다.
+
+    EXPLAIN 결과에는 표 크기가 없어서 카탈로그를 따로 봐야 합니다.
+    """
+    if not tables:
+        return {}
+    rows = await conn.execute(
+        text("SELECT relname, reltuples FROM pg_class WHERE relname = ANY(:names)"),
+        {"names": sorted(set(tables))},
+    )
+    return {str(row.relname): float(row.reltuples) for row in rows}

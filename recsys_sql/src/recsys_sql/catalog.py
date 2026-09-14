@@ -103,14 +103,36 @@ def validate_params(query: SqlQuery, params: dict[str, Any]) -> dict[str, Any]:
         raise CatalogError(f"{query.name}: 선언되지 않은 파라미터입니다: {extra}")
 
     for name, type_name in query.params.items():
-        value = params[name]
-        expected = _PYTHON_TYPES[type_name]
-        # 파이썬에서 bool 은 int 의 서브클래스라 int 자리에 들어가는 것을 따로 막습니다.
-        if type_name == "int" and isinstance(value, bool):
-            raise CatalogError(f"{query.name}.{name}: int 자리에 bool 이 들어왔습니다.")
-        if not isinstance(value, expected):
-            raise CatalogError(f"{query.name}.{name}: {type_name} 을 기대했지만 {type(value).__name__} 입니다.")
+        _check_value(query.name, name, type_name, params[name])
     return params
+
+
+# 리스트 선언의 원소 타입.
+_ELEMENT_TYPES: dict[str, str] = {"list[int]": "int", "list[str]": "str"}
+
+
+def _check_value(query_name: str, name: str, type_name: str, value: Any) -> None:
+    """값 하나가 선언한 타입과 맞는지 봅니다."""
+    # 파이썬에서 bool 은 int 의 서브클래스입니다. 숫자 자리에 True 가 들어가면
+    # 여기서 안 막을 때 DB 까지 가서 1 로 바뀝니다. int 와 float 둘 다 막습니다.
+    if type_name in {"int", "float"} and isinstance(value, bool):
+        raise CatalogError(f"{query_name}.{name}: {type_name} 자리에 bool 이 들어왔습니다.")
+
+    if not isinstance(value, _PYTHON_TYPES[type_name]):
+        raise CatalogError(f"{query_name}.{name}: {type_name} 을 기대했지만 {type(value).__name__} 입니다.")
+
+    # 리스트는 껍데기만 보면 부족합니다. `list[int]` 에 문자열이 담겨 와도 통과해 버리고,
+    # 그 값은 asyncpg 바인딩 시점에 가서야 터집니다.
+    element_type = _ELEMENT_TYPES.get(type_name)
+    if element_type is None:
+        return
+    for index, item in enumerate(value):
+        if element_type == "int" and isinstance(item, bool):
+            raise CatalogError(f"{query_name}.{name}[{index}]: int 자리에 bool 이 들어왔습니다.")
+        if not isinstance(item, _PYTHON_TYPES[element_type]):
+            raise CatalogError(
+                f"{query_name}.{name}[{index}]: {element_type} 을 기대했지만 {type(item).__name__} 입니다."
+            )
 
 
 def load_query(path: Path) -> SqlQuery:

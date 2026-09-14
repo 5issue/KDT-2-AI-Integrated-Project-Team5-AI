@@ -35,6 +35,9 @@ WITH demand AS (
       AND NOT i.is_pantry
     GROUP BY ri.ingredient_id
 )
+-- 상품 단위로 접습니다. PRIMARY 재료가 둘인 상품(현재 36개)이 demand 두 줄에 걸리면
+-- 같은 상품이 두 번 나오고, 그 중복이 LIMIT/OFFSET 칸을 먹어 요청보다 적은 상품이 나갑니다.
+-- 걸린 재료는 버리지 않고 배열로 함께 냅니다. 화면에서 "왜 이 상품인가" 를 보여 줄 수 있습니다.
 SELECT p.product_id,
        p.name,
        p.price,
@@ -43,16 +46,20 @@ SELECT p.product_id,
        p.storage_type,
        p.origin_country,
        p.stock_quantity,
-       i.ingredient_id,
-       i.name AS ingredient_name,
-       d.recipe_count
+       MAX(d.recipe_count) AS recipe_count,
+       JSONB_AGG(
+           JSONB_BUILD_OBJECT('ingredient_id', i.ingredient_id, 'name', i.name)
+           ORDER BY d.recipe_count DESC, i.name
+       ) AS ingredients
 FROM demand d
 JOIN ingredient i          ON i.ingredient_id = d.ingredient_id
 JOIN product_ingredient pi ON pi.ingredient_id = d.ingredient_id
                           AND pi.role = 'PRIMARY'
 JOIN product p             ON p.product_id = pi.product_id
                           AND p.is_active
-ORDER BY d.recipe_count DESC,
+GROUP BY p.product_id, p.name, p.price, p.weight_g, p.product_type,
+         p.storage_type, p.origin_country, p.stock_quantity
+ORDER BY recipe_count DESC,
          p.price ASC,
          p.product_id ASC
 LIMIT :max_results

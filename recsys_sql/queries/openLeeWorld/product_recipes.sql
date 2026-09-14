@@ -24,9 +24,12 @@ WITH base AS (
       AND pi.role = 'PRIMARY'
 ),
 candidate AS (
+    -- 필수 재료로 걸린 것만 후보입니다. 선택 재료만 겹치는 레시피를 넣으면
+    -- "이 상품으로 만들 수 있는 요리" 에 필수 재료를 하나도 못 채우는 레시피가 섞입니다.
     SELECT DISTINCT ri.recipe_id
     FROM base b
     JOIN recipe_ingredient ri ON ri.ingredient_id = b.ingredient_id
+                             AND ri.is_required
 ),
 summary AS (
     SELECT ri.recipe_id,

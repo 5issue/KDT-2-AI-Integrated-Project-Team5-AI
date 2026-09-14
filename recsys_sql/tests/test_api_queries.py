@@ -56,7 +56,8 @@ class TestBubbleProducts:
                 )
             )
         }
-        assert {row["ingredient_id"] for row in rows} <= used
+        matched = {item["ingredient_id"] for row in rows for item in row["ingredients"]}
+        assert matched <= used
 
     async def test_pantry_products_do_not_fill_the_screen(self, db_conn: AsyncConnection) -> None:
         """상비재료는 어느 버블에서나 1등이 됩니다. 빼지 않으면 화면이 소금·설탕이 됩니다."""
@@ -65,8 +66,10 @@ class TestBubbleProducts:
             row.ingredient_id
             for row in await db_conn.execute(text("SELECT ingredient_id FROM ingredient WHERE is_pantry"))
         }
+        matched = {item["ingredient_id"] for row in rows for item in row["ingredients"]}
+
         assert rows
-        assert not {row["ingredient_id"] for row in rows} & pantry
+        assert not matched & pantry
 
     async def test_skip_pages_without_overlap(self, db_conn: AsyncConnection) -> None:
         """페이지가 겹치면 같은 상품이 두 번 보입니다."""
@@ -75,6 +78,14 @@ class TestBubbleProducts:
 
         assert len(first) == 5
         assert not {row["product_id"] for row in first} & {row["product_id"] for row in second}
+
+    async def test_each_product_appears_once(self, db_conn: AsyncConnection) -> None:
+        """PRIMARY 재료가 둘인 상품이 두 줄로 나오면 중복이 LIMIT 칸을 먹습니다."""
+        rows = await fetch(db_conn, "bubble_products", {"keyword_id": "MEAT", "max_results": 50, "skip": 0})
+        product_ids = [row["product_id"] for row in rows]
+
+        assert rows
+        assert len(product_ids) == len(set(product_ids))
 
 
 class TestBubbleRuleIsDefinedOnce:
@@ -155,6 +166,45 @@ class TestProductQueries:
         for row in rows:
             assert row["matched_count"] >= 1, "상품 자기 재료도 안 세고 있습니다"
             assert row["matched_count"] + row["missing_count"] == row["total_count"]
+
+    async def test_optional_only_match_is_not_a_candidate(self, db_conn: AsyncConnection) -> None:
+        """선택 재료만 겹치는 레시피는 "이 상품으로 만들 수 있는 요리" 가 아닙니다.
+
+        필수 재료를 하나도 못 채우는데 목록에 올리면 화면이 거짓말을 합니다.
+        """
+        product_id = (
+            await db_conn.execute(
+                text(
+                    """
+                    SELECT pi.product_id
+                    FROM product_ingredient pi
+                    JOIN recipe_ingredient ri ON ri.ingredient_id = pi.ingredient_id
+                    WHERE pi.role = 'PRIMARY'
+                    ORDER BY pi.product_id
+                    LIMIT 1
+                    """
+                )
+            )
+        ).scalar()
+
+        for row in await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 50}):
+            covered = (
+                await db_conn.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM recipe_ingredient ri
+                        JOIN product_ingredient pi ON pi.ingredient_id = ri.ingredient_id
+                                                  AND pi.product_id = :product_id
+                                                  AND pi.role = 'PRIMARY'
+                        WHERE ri.recipe_id = :recipe_id
+                          AND ri.is_required
+                        """
+                    ),
+                    {"product_id": product_id, "recipe_id": row["recipe_id"]},
+                )
+            ).scalar()
+            assert covered, f"{row['recipe_id']}: 필수 재료를 하나도 안 채우는데 후보가 됐습니다"
 
 
 class TestRecipeQueries:
