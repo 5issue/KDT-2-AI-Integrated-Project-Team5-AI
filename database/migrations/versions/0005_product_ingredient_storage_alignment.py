@@ -110,7 +110,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("ingredient_id", sa.BigInteger(), nullable=False),
-        sa.Column("source_item_id", sa.BigInteger(), nullable=False),
+        # FoodKeeper source IDs are strings such as ``fk_134``.
+        sa.Column("source_item_id", sa.Text(), nullable=False),
         sa.Column("source_food_name", sa.Text(), nullable=False),
         sa.Column("source_food_subtitle", sa.Text(), nullable=True),
         sa.Column("source_slot", sa.Text(), nullable=False),

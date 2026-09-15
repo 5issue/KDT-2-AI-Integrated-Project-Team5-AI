@@ -101,7 +101,7 @@ AND PRIMARY Ingredient가 정확히 하나
 | 필드 묶음 | 저장값 |
 | --- | --- |
 | Ingredient 연결 | `ingredient_id` |
-| FoodKeeper 원문 | `source_item_id`, `source_food_name`, `source_food_subtitle`, `source_slot` |
+| FoodKeeper 원문 | `source_item_id TEXT`, `source_food_name`, `source_food_subtitle`, `source_slot` |
 | 서비스 조회값 | `storage_location`, `storage_context` |
 | 기간 | `duration_min`, `duration_max`, `duration_unit`, `duration_text` |
 | 설명 | `storage_tips` 전체 번역 TEXT |
@@ -115,7 +115,9 @@ AND PRIMARY Ingredient가 정확히 하나
 | `(source_item_id, source_slot)` UNIQUE | FoodKeeper 원천 slot 중복 방지 |
 | 장소·상황·기간·slot CHECK | FoodKeeper slot 변환 오류 방지 |
 
-`source_slot`은 원문 값을 보존하고, 장소와 상황은 정해진 규칙으로만 파생한다.
+`source_item_id`는 `fk_134`처럼 접두사가 포함될 수 있는 원천 식별 문자열이다. 서비스 조회값으로
+사용하지 않고, 원천 추적·재적재와 `source_slot` 중복 방지에 사용한다. `source_slot`은 원문 값을
+보존하고, 장소와 상황은 정해진 규칙으로만 파생한다.
 
 | source slot | 장소 | 상황 |
 | --- | --- | --- |
