@@ -113,25 +113,30 @@ class EmbeddingReport:
         return "\n".join(lines)
 
 
-def select_sql(target: str) -> str:
+def select_sql(target: str, *, refresh: bool = False) -> str:
     """임베딩 대상 행과 텍스트를 뽑는 SELECT.
 
-    `embedding IS NULL` 로 이미 채워진 행을 건너뜁니다. 중간에 끊겼을 때 처음부터 다시
-    돌리면 돈과 시간이 두 배로 듭니다.
+    기본은 `embedding IS NULL` 로 이미 채워진 행을 건너뜁니다. 중간에 끊겼을 때 처음부터
+    다시 돌리면 돈과 시간이 두 배로 듭니다.
+
+    `refresh` 는 이미 채워진 행까지 다시 만듭니다. **임베딩 텍스트가 바뀌었을 때** 씁니다.
+    레시피 임베딩에는 재료명이 들어가므로, 재료 연결이 늘면(재적재·재매칭) 기존 임베딩이
+    낡습니다. 그대로 두면 검색이 옛 재료 기준으로 돕니다.
     """
     key_sql, text_sql = TEXT_SQL[target]
     alias = _ALIAS[target]
+    where = "TRUE" if refresh else f"{alias}.embedding IS NULL"
     return f"""
         SELECT {key_sql} AS target_key, {text_sql} AS body
         FROM {_FROM[target]}
-        WHERE {alias}.embedding IS NULL
+        WHERE {where}
         ORDER BY 1
     """
 
 
-async def collect_targets(conn: asyncpg.Connection, target: str) -> list[tuple[str, str]]:
+async def collect_targets(conn: asyncpg.Connection, target: str, *, refresh: bool = False) -> list[tuple[str, str]]:
     """(자연키, 임베딩할 텍스트) 목록. 텍스트가 빈 행은 빼고 돌려줍니다."""
-    rows = await conn.fetch(select_sql(target))
+    rows = await conn.fetch(select_sql(target, refresh=refresh))
     return [(row["target_key"], body) for row in rows if (body := (row["body"] or "").strip())]
 
 
@@ -174,11 +179,13 @@ async def run_embedding(
     *,
     settings: Settings | None = None,
     dry_run: bool = False,
+    refresh: bool = False,
     client: OpenAI | None = None,
 ) -> EmbeddingReport:
     """대상 행을 임베딩해 staging 에 넣고 본 테이블에 반영합니다.
 
     `dry_run` 이면 대상 수와 추정 비용만 세고 API 를 부르지 않습니다.
+    `refresh` 면 이미 채워진 행까지 다시 만듭니다(임베딩 텍스트가 바뀌었을 때).
     """
     settings = settings or get_settings()
     report = EmbeddingReport()
@@ -187,10 +194,9 @@ async def run_embedding(
         await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
 
         for target in targets:
-            total_rows = await conn.fetchval(
-                f"SELECT COUNT(*) FROM {_FROM[target]} WHERE {_ALIAS[target]}.embedding IS NULL"
-            )
-            pairs = await collect_targets(conn, target)
+            where = "TRUE" if refresh else f"{_ALIAS[target]}.embedding IS NULL"
+            total_rows = await conn.fetchval(f"SELECT COUNT(*) FROM {_FROM[target]} WHERE {where}")
+            pairs = await collect_targets(conn, target, refresh=refresh)
             report.skipped_empty[target] = int(total_rows or 0) - len(pairs)
             report.estimated_tokens += estimate_tokens([text for _, text in pairs])
 

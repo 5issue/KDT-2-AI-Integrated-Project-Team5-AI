@@ -385,7 +385,7 @@ def command_embed(args: argparse.Namespace) -> int:
     """embedding 컬럼을 채웁니다. rag_lab 의 pgvector 검색이 여기에 의존합니다."""
     settings = get_settings()
     targets = list(EMBEDDING_TARGETS) if args.target == "all" else [args.target]
-    report = asyncio.run(run_embedding(targets, settings=settings, dry_run=not args.apply))
+    report = asyncio.run(run_embedding(targets, settings=settings, dry_run=not args.apply, refresh=args.refresh))
     print(report.render())
     if not args.apply:
         print("\n실제로 채우려면 --apply 를 붙이세요.", file=sys.stderr)
@@ -521,6 +521,11 @@ def build_parser() -> argparse.ArgumentParser:
     embed = sub.add_parser("embed", help="recipe / product / ingredient 의 embedding 채우기")
     embed.add_argument("--target", default="all", choices=["all", *EMBEDDING_TARGETS])
     embed.add_argument("--apply", action="store_true", help="실제로 API 를 부르고 DB 에 반영")
+    embed.add_argument(
+        "--refresh",
+        action="store_true",
+        help="이미 채워진 행도 다시 만듭니다 (재료 연결이 바뀐 뒤)",
+    )
     embed.set_defaults(func=command_embed)
 
     recipes = sub.add_parser("load-recipes", help="구조화된 한국어 레시피(COOKRCP01) 적재")

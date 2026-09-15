@@ -118,3 +118,19 @@ def test_report_says_whether_it_actually_applied() -> None:
     assert "안 함(dry-run)" in report.render()
     report.applied = True
     assert "완료" in report.render()
+
+
+def test_refresh_rebuilds_rows_that_already_have_embeddings() -> None:
+    """임베딩 텍스트가 바뀌면 기존 임베딩이 낡습니다.
+
+    레시피 임베딩에는 재료명이 들어갑니다. 재매칭으로 재료 연결이 늘면(56% -> 79%)
+    옛 임베딩은 그때의 재료 기준이라, 검색이 과거 상태로 돕니다.
+    """
+    assert "embedding IS NULL" in embedding.select_sql("recipe")
+    assert "embedding IS NULL" not in embedding.select_sql("recipe", refresh=True)
+
+
+def test_default_still_skips_filled_rows() -> None:
+    """기본값까지 다시 만들면 중간에 끊겼을 때 돈이 두 배로 듭니다."""
+    for target in embedding.TARGETS:
+        assert "embedding IS NULL" in embedding.select_sql(target), target
