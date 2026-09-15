@@ -22,8 +22,23 @@
 -- 기본 장소가 비어 있는 상품(1,551건)은 장소로 거르지 않고 지침 전부를 돌려줍니다.
 -- 상황(일반/구매후/개봉후/해동후)이 여러 개면 하나를 임의로 고르지 않고 목록으로 냅니다.
 -- 어느 쪽을 보여 줄지는 화면이 정할 일입니다.
+--
+-- ## 같은 (장소, 상황)이 여러 줄인 경우
+--
+-- FoodKeeper 는 한 재료를 여러 갈래로 나눠 둡니다. `햄` 하나에 bone-in/boneless,
+-- whole/half, fully-cooked/cook-before-eating 이 따로 있어 같은 재료에 19줄이 붙습니다.
+-- 그대로 내보내면 화면에 `냉장 · 구매후` 가 19번 찍힙니다.
+--
+-- **기간이 다를 때는 짧은 쪽을 냅니다.** 지금 적재분에서 중복 160조 중 125조가 기간이
+-- 어긋나고, `게류 냉장 구매후` 는 `10-12개월` 과 `2-4 일` 이 함께 있습니다. 긴 쪽을
+-- 보여 주면 상한 음식을 먹으라고 하는 셈입니다. 고를 수 없으면 짧은 쪽이 안전합니다.
+-- 단위가 섞여 있어 일 단위로 환산해 비교합니다.
+--
+-- 이건 조회 단계의 방어입니다. 중복 자체는 적재에서 정리해야 하고,
+-- 규칙은 `docs/product-ingredient-storage-normalization-guide.md` 5.6 절에 있습니다.
 
-SELECT p.product_id,
+SELECT DISTINCT ON (sg.storage_location, sg.storage_context)
+       p.product_id,
        p.name AS product_name,
        p.storage_type,
        i.ingredient_id,
@@ -49,6 +64,18 @@ WHERE p.product_id = :product_id
       WHERE pick.product_id = p.product_id
         AND pick.role = 'PRIMARY'
   ) = 1
+-- DISTINCT ON 은 ORDER BY 앞부분이 그룹 키와 같아야 합니다.
 ORDER BY sg.storage_location,
          sg.storage_context,
+         -- 기간이 짧은 것부터. 단위가 섞여 있어 일로 환산합니다.
+         COALESCE(sg.duration_max, sg.duration_min) * CASE sg.duration_unit
+             WHEN '시간' THEN 1.0 / 24
+             WHEN '일'   THEN 1
+             WHEN '주'   THEN 7
+             WHEN '개월' THEN 30
+             WHEN '년'   THEN 365
+             ELSE 1
+         END ASC NULLS LAST,
+         -- 기간이 같으면 팁이 있는 쪽을 먼저(정규화 가이드 5.6 절).
+         (sg.storage_tips IS NOT NULL) DESC,
          sg.storage_id;

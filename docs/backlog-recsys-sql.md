@@ -88,7 +88,17 @@ PR #10 이 PK 를 건드리므로 그것과 함께 정하는 편이 낫습니다
   합니다.** `0005` 의 CHECK 에는 `seasonal`, `popularity`, `text_search` 도 있지만
   해석이 없습니다. 해석 없는 rule_type 은 후보 0건이 되어 `min_candidates` 에서 걸립니다.
 
-## 5. 운영
+## 5. 적재 쪽에 넘기는 것
+
+**`storage_guideline` 중복 337행 중 125조는 기간이 어긋납니다.** `게류 냉장 구매후` 에
+`10-12개월` 과 `2-4 일` 이 함께 있습니다.
+
+`product_storage_guideline` 이 조회 시점에 짧은 쪽을 고르도록 막아 두었지만, 그건
+방어일 뿐입니다. 원천에서 정리해야 합니다 — 규칙은
+`docs/product-ingredient-storage-normalization-guide.md` 5.6 절에 있고,
+`docs/backlog-data-pipeline.md` 1-1 과 같은 항목입니다.
+
+## 6. 운영
 
 - **CI 에서 DB 테스트가 돕니다.** 지금은 `.env` 가 없어 44개가 조용히 skip 됩니다.
   GitHub Actions 에 `DATABASE_URL` 시크릿을 넣고 DB 잡을 따로 두는 인프라 변경이라

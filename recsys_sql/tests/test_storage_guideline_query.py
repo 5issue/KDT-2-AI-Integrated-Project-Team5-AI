@@ -125,3 +125,88 @@ async def test_enum_columns_are_korean(db_conn: AsyncConnection) -> None:
     ).scalar()
 
     assert leftovers == 0
+
+
+async def test_one_row_per_location_and_context(db_conn: AsyncConnection) -> None:
+    """같은 (장소, 상황)이 여러 번 나오면 화면이 같은 칸을 반복해서 찍습니다.
+
+    FoodKeeper 가 한 재료를 여러 갈래로 나눠 둬서(햄 하나에 19줄) 그대로 내보내면
+    `냉장 · 구매후` 만 열아홉 번 나옵니다.
+    """
+    product_id = await scalar(
+        db_conn,
+        """
+        SELECT pi.product_id
+        FROM product_ingredient pi
+        JOIN storage_guideline sg ON sg.ingredient_id = pi.ingredient_id
+        WHERE pi.role = 'PRIMARY'
+        GROUP BY pi.product_id, sg.storage_location, sg.storage_context
+        HAVING COUNT(*) > 1
+        ORDER BY COUNT(*) DESC
+        LIMIT 1
+        """,
+    )
+    assert product_id is not None, "중복이 있는 상품이 적재분에 없습니다"
+
+    rows = await fetch(db_conn, product_id)
+    slots = [(row["storage_location"], row["storage_context"]) for row in rows]
+
+    assert len(slots) == len(set(slots))
+
+
+async def test_conflicting_durations_return_the_shortest(db_conn: AsyncConnection) -> None:
+    """기간이 어긋나면 짧은 쪽을 냅니다.
+
+    `게류 냉장 구매후` 에 `10-12개월` 과 `2-4 일` 이 함께 있습니다. 긴 쪽을 보여 주면
+    상한 음식을 먹으라고 하는 셈입니다. 고를 수 없으면 짧은 쪽이 안전합니다.
+    """
+    row = (
+        await db_conn.execute(
+            text(
+                """
+                SELECT pi.product_id, sg.storage_location, sg.storage_context
+                FROM product_ingredient pi
+                JOIN storage_guideline sg ON sg.ingredient_id = pi.ingredient_id
+                JOIN product p ON p.product_id = pi.product_id
+                WHERE pi.role = 'PRIMARY'
+                  AND (p.storage_type IS NULL OR sg.storage_location = p.storage_type)
+                GROUP BY pi.product_id, sg.storage_location, sg.storage_context
+                HAVING COUNT(DISTINCT (sg.duration_min, sg.duration_max, sg.duration_unit)) > 1
+                ORDER BY pi.product_id
+                LIMIT 1
+                """
+            )
+        )
+    ).first()
+    if row is None:
+        pytest.skip("기간이 어긋나는 중복이 적재분에 없습니다")
+
+    days = """
+        COALESCE(duration_max, duration_min) * CASE duration_unit
+            WHEN '시간' THEN 1.0 / 24 WHEN '일' THEN 1 WHEN '주' THEN 7
+            WHEN '개월' THEN 30 WHEN '년' THEN 365 ELSE 1 END
+    """
+    shortest = await scalar(
+        db_conn,
+        f"""
+        SELECT duration_text
+        FROM storage_guideline sg
+        JOIN product_ingredient pi ON pi.ingredient_id = sg.ingredient_id
+        WHERE pi.product_id = {row.product_id}
+          AND pi.role = 'PRIMARY'
+          AND sg.storage_location = '{row.storage_location}'
+          AND sg.storage_context = '{row.storage_context}'
+        ORDER BY {days} ASC NULLS LAST, (sg.storage_tips IS NOT NULL) DESC, sg.storage_id
+        LIMIT 1
+        """,
+    )
+
+    rows = await fetch(db_conn, row.product_id)
+    chosen = [
+        item
+        for item in rows
+        if (item["storage_location"], item["storage_context"]) == (row.storage_location, row.storage_context)
+    ]
+
+    assert len(chosen) == 1
+    assert chosen[0]["duration_text"] == shortest
