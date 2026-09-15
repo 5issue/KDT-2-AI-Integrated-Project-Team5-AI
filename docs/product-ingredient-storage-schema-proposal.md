@@ -73,7 +73,7 @@ Product는 판매 SKU, Ingredient는 식재료 기준축, Storage Guideline은 I
 - `source_type`, `source_product_id`와 UNIQUE 추가
 - 실제 SKU가 없는 원천을 위해 `sku` NULL 허용
 - 미확인 재고와 품절을 구분하도록 `stock_quantity` NULL 허용 및 기본값 제거
-- `storage_type`: `냉장`, `냉동`, `상온`, NULL만 허용
+- `storage_type`: `REFRIGERATOR`, `FREEZER`, `PANTRY`, NULL만 허용
 - `stock_quantity`: NULL 또는 0 이상의 값만 허용
 
 `storage_type`은 사용자의 현재 장소가 아니다. 예를 들어 냉장 삼겹살을 사용자가 냉동실로 옮겨도
@@ -115,7 +115,7 @@ index가 이미 발견되어도 중단하므로, 수동 schema가 있는 DB는 �
 | --- | --- |
 | `ingredient_id` FK | 존재하지 않는 Ingredient에 지침 연결 방지 |
 | `(ingredient_id, storage_location, storage_context)` UNIQUE | 서비스 조회에서 대표 보관법을 1건으로 보장 |
-| 장소·상황·기간·slot CHECK | FoodKeeper slot 변환 오류 방지 |
+| 장소·상황·기간·slot CHECK | 허용값과 기간 범위 검증 |
 
 `source_item_id`는 staging에서만 원천 row를 식별하는 데 사용하고, 최종
 `storage_guideline`에는 저장하지 않는다. 여러 FoodKeeper 원천 variant는 staging에서
@@ -130,10 +130,14 @@ index가 이미 발견되어도 중단하므로, 수동 schema가 있는 DB는 �
 
 | source slot | 장소 | 상황 |
 | --- | --- | --- |
-| `pantry`, `refrigerate`, `freeze` | 상온, 냉장, 냉동 | 일반 |
-| `dop_pantry`, `dop_refrigerate`, `dop_freeze` | 상온, 냉장, 냉동 | 구매후 |
-| `pantry_after_opening`, `refrigerate_after_opening` | 상온, 냉장 | 개봉후 |
-| `refrigerate_after_thawing` | 냉장 | 해동후 |
+| `pantry`, `refrigerate`, `freeze` | `PANTRY`, `REFRIGERATOR`, `FREEZER` | `NOT_APPLICABLE` |
+| `dop_pantry`, `dop_refrigerate`, `dop_freeze` | `PANTRY`, `REFRIGERATOR`, `FREEZER` | `FROM_PURCHASE` |
+| `pantry_after_opening`, `refrigerate_after_opening` | `PANTRY`, `REFRIGERATOR` | `AFTER_OPENING` |
+| `refrigerate_after_thawing` | `REFRIGERATOR` | `AFTER_THAWING` |
+
+`storage_location`과 `storage_context`는 DB·loader·조회 쿼리에서 위 영문 code를 canonical
+값으로 사용한다. API나 UI에서 사용자에게 표시할 때만 `REFRIGERATOR → 냉장`,
+`FREEZER → 냉동`, `PANTRY → 상온`처럼 label을 매핑한다.
 
 ## User Fridge: 이번 ERD 변경 제안
 
