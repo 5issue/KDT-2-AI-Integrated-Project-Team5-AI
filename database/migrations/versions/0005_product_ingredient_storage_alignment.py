@@ -147,12 +147,6 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("storage_id", name="pk_storage_guideline"),
         sa.UniqueConstraint(
-            "ingredient_id",
-            "storage_location",
-            "storage_context",
-            name="uq_storage_guideline_query",
-        ),
-        sa.UniqueConstraint(
             "source_item_id",
             "source_slot",
             name="uq_storage_guideline_source_slot",
