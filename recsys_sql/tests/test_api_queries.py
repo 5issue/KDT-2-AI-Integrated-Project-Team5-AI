@@ -297,3 +297,33 @@ class TestMyFridge:
         )
         for row in rows:
             assert len(row["missing_ingredients"]) == row["missing_count"]
+
+
+class TestRecipeProductPriority:
+    """레시피 지정 상품 우선순위."""
+
+    async def test_two_designated_slots_do_not_duplicate_the_recipe(
+        self, db_conn: AsyncConnection, seeded: SeedIds
+    ) -> None:
+        """`recipe_product` 키에 ingredient_id 가 있어 한 상품이 두 자리에 지정될 수 있습니다.
+
+        그대로 조인하면 같은 레시피가 두 번 나오고, 그 중복이 LIMIT 앞에서 생겨
+        요청보다 적은 레시피가 나갑니다.
+        """
+        await db_conn.execute(
+            text(
+                "INSERT INTO recipe_product (recipe_id, ingredient_id, product_id, recommendation_priority) "
+                "VALUES (:recipe_id, :ingredient_id, :product_id, 9)"
+            ),
+            {
+                "recipe_id": seeded.tofu_braise,
+                "ingredient_id": seeded.sesame_oil,
+                "product_id": seeded.tofu_a,
+            },
+        )
+
+        rows = await fetch(db_conn, "product_recipes", {"product_id": seeded.tofu_a, "max_results": 50})
+        recipe_ids = [row["recipe_id"] for row in rows]
+
+        assert seeded.tofu_braise in recipe_ids
+        assert len(recipe_ids) == len(set(recipe_ids)), "같은 레시피가 여러 번 나왔습니다"

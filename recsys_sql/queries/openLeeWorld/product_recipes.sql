@@ -59,8 +59,17 @@ SELECT r.recipe_id,
        s.missing_count
 FROM summary s
 JOIN recipe r              ON r.recipe_id = s.recipe_id
-LEFT JOIN recipe_product rp ON rp.recipe_id = r.recipe_id
-                           AND rp.product_id = :product_id
+-- recipe_product 의 키는 (recipe_id, ingredient_id, product_id) 입니다. 재료 자리까지
+-- 포함하므로, 한 상품이 같은 레시피의 두 자리에 지정되면 행이 둘입니다. 그대로 조인하면
+-- LEFT JOIN 이 summary 행을 그 수만큼 복제해 같은 레시피가 목록에 두 번 나오고,
+-- 그 중복이 LIMIT 앞에서 생겨 요청보다 적은 레시피가 나갑니다.
+-- 여기서는 "이 상품이 이 레시피에서 갖는 우선순위" 하나만 있으면 되므로 먼저 접습니다.
+LEFT JOIN LATERAL (
+    SELECT MAX(designated.recommendation_priority) AS recommendation_priority
+    FROM recipe_product designated
+    WHERE designated.recipe_id = r.recipe_id
+      AND designated.product_id = :product_id
+) rp ON TRUE
 WHERE s.total_count > 0
 ORDER BY COALESCE(rp.recommendation_priority, 0) DESC,
          s.missing_count ASC,
