@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
 from tests_helpers import write_jsonl
 
@@ -153,8 +154,8 @@ def test_storage_columns_are_derived_from_slot(tmp_settings: Settings) -> None:
     derived = {(row[slot_index], row[location_index], row[context_index]) for row in rows.storage}
 
     assert derived == {
-        ("pantry", "PANTRY", "NOT_APPLICABLE"),
-        ("dop_refrigerate", "REFRIGERATOR", "FROM_PURCHASE"),
+        ("pantry", "상온", "일반"),
+        ("dop_refrigerate", "냉장", "구매후"),
     }
 
 
@@ -187,3 +188,93 @@ def test_match_metadata_is_carried(tmp_settings: Settings) -> None:
 
     methods = {row[0]: row[STAGING_MATCH_COLUMNS.index("method")] for row in rows.matches}
     assert methods == {"멥쌀": "exact", "마늘": "exact", "버터": "llm"}
+
+
+def test_translated_recipe_below_threshold_is_skipped(tmp_path: Path) -> None:
+    """재료가 절반도 안 붙은 번역 레시피는 '부족 재료' 계산이 무의미합니다."""
+    records = tmp_path / "records"
+    records.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_recipe_id": "r1",
+        "name": "사과 파이",
+        "name_original": "Apple Pie",
+        "ingredients": [
+            {"raw_text": "a", "name": "사과", "normalized_name": "사과", "is_required": True},
+            {"raw_text": "b", "name": "버터", "normalized_name": "버터", "is_required": True},
+            {"raw_text": "c", "name": "밀가루", "normalized_name": "밀가루", "is_required": True},
+        ],
+        "steps": [],
+    }
+    write_jsonl(records / "recipes.jsonl", [payload])
+
+    # 3개 중 1개만 매칭 = 33% < 70%
+    rows = build_staging_rows(records, {"사과": 1}, min_match_rate=0.7)
+    assert rows.recipes == []
+    assert rows.skipped_recipes == 1
+
+    # 임계값을 낮추면 들어옵니다.
+    rows = build_staging_rows(records, {"사과": 1}, min_match_rate=0.3)
+    assert len(rows.recipes) == 1
+    assert rows.skipped_recipes == 0
+
+
+def test_korean_recipe_is_not_filtered(tmp_path: Path) -> None:
+    """한국어 원본 레시피는 MVP 우선 적재 대상이라 매칭률로 거르지 않습니다."""
+    records = tmp_path / "records"
+    records.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_recipe_id": "k1",
+        "name": "흰밥",
+        "name_original": None,
+        "ingredients": [
+            {"raw_text": "멥쌀", "name": "멥쌀", "normalized_name": "멥쌀", "is_required": True},
+            {"raw_text": "물", "name": "물", "normalized_name": "물", "is_required": True},
+        ],
+        "steps": [],
+    }
+    write_jsonl(records / "recipes.jsonl", [payload])
+
+    # 하나도 안 붙어도 적재합니다.
+    rows = build_staging_rows(records, {}, min_match_rate=0.7)
+    assert len(rows.recipes) == 1
+    assert rows.skipped_recipes == 0
+
+
+def test_partial_duration_is_nulled_to_satisfy_check(tmp_path: Path) -> None:
+    """duration 은 셋 다 있거나 셋 다 없어야 합니다(ck_storage_guideline_duration_complete).
+
+    원본 unit_source 가 'When Ripe' 처럼 단위가 아닌 문구여서 수치 없이 단위만 채워진
+    행이 23개 있었고, 그 한 부류 때문에 적재 전체가 롤백됐습니다.
+    """
+    records = tmp_path / "records"
+    records.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_item_id": "fk_249",
+        "source_food_name": "Apricots",
+        "normalized_name": "살구",
+        "rules": [
+            {
+                "source_slot": "pantry",
+                "duration_min": None,
+                "duration_max": None,
+                "duration_unit": "When Ripe",
+                "duration_text": "익었을 때",
+            },
+            {
+                "source_slot": "freeze",
+                "duration_min": 6.0,
+                "duration_max": 9.0,
+                "duration_unit": "Months",
+                "duration_text": "6-9 개월",
+            },
+        ],
+    }
+    write_jsonl(records / "storage_guide.jsonl", [payload])
+
+    rows = build_staging_rows(records, {"살구": 5})
+    partial, complete = rows.storage[0], rows.storage[1]
+
+    # 컬럼 순서: ... duration_min, duration_max, duration_unit, duration_text
+    assert (partial[7], partial[8], partial[9]) == (None, None, None)
+    assert partial[10] == "익었을 때", "사람이 읽을 표기는 남아야 합니다"
+    assert (complete[8], complete[9]) == (Decimal("9.00"), "개월"), "단위는 한국어 한 벌로 모읍니다"

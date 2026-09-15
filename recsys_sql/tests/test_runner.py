@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from recsys_sql.catalog import CatalogError, load_catalog
-from recsys_sql.config import PACKAGE_DIR
+from recsys_sql.config import QUERIES_DIR
 from recsys_sql.runner import validate_params
 
-TEMPLATE_DIR = PACKAGE_DIR / "queries" / "_template"
+TEMPLATE_DIR = QUERIES_DIR / "_template"
 
 
 @pytest.fixture(scope="module")
@@ -44,3 +44,52 @@ def test_bool_is_not_accepted_as_int(fridge_query) -> None:  # type: ignore[no-u
 def test_int_is_accepted_where_float_declared(fridge_query) -> None:  # type: ignore[no-untyped-def]
     """float 자리에 int 는 허용합니다."""
     validate_params(fridge_query, {"user_id": 1, "min_coverage": 1, "max_results": 10})
+
+
+def test_seq_scan_size_uses_relation_rows_not_filtered_output() -> None:
+    """`Plan Rows` 는 필터를 통과한 행수라 큰 표를 작게 보이게 합니다.
+
+    1,000만 행짜리 표를 통째로 읽어도 선택적인 조건이 붙으면 10 으로 나옵니다.
+    그걸로 재면 이 검사가 아무것도 못 잡습니다.
+    """
+    from recsys_sql.runner import ExplainReport
+
+    report = ExplainReport(
+        query_name="q",
+        plan={},
+        seq_scans=["recipe_ingredient"],
+        seq_scan_rows={"recipe_ingredient": 10},
+        relation_rows={"recipe_ingredient": 10_000_000.0},
+    )
+
+    assert report.forbidden_seq_scans(("recipe_ingredient",), row_limit=50_000) == ["recipe_ingredient"]
+
+
+def test_small_relation_passes_even_with_a_full_scan() -> None:
+    """작은 표는 플래너가 순차 읽기를 고르는 편이 맞습니다."""
+    from recsys_sql.runner import ExplainReport
+
+    report = ExplainReport(
+        query_name="q",
+        plan={},
+        seq_scans=["recipe_ingredient"],
+        seq_scan_rows={"recipe_ingredient": 8_393},
+        relation_rows={"recipe_ingredient": 8_393.0},
+    )
+
+    assert report.forbidden_seq_scans(("recipe_ingredient",), row_limit=50_000) == []
+
+
+def test_missing_statistics_falls_back_to_plan_rows() -> None:
+    """ANALYZE 를 한 번도 안 돌린 표는 reltuples 가 -1 입니다. 그때만 옛 기준을 씁니다."""
+    from recsys_sql.runner import ExplainReport
+
+    report = ExplainReport(
+        query_name="q",
+        plan={},
+        seq_scans=["product"],
+        seq_scan_rows={"product": 90_000},
+        relation_rows={"product": -1.0},
+    )
+
+    assert report.forbidden_seq_scans(("product",), row_limit=50_000) == ["product"]

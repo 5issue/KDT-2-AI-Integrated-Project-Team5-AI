@@ -192,6 +192,11 @@ def test_collect_dispatches_schema_per_request(tmp_settings: Settings) -> None:
                             "purpose": None,
                         }
                     ],
+                    "image_url": None,
+                    "steps": [
+                        {"step_no": 1, "instruction": "쌀을 씻는다", "image_url": None},
+                        {"step_no": 2, "instruction": "밥을 짓는다", "image_url": None},
+                    ],
                     "confidence": 0.9,
                     "reason": "재료 목록에서 추출",
                 },
@@ -229,3 +234,78 @@ def test_collect_dispatches_schema_per_request(tmp_settings: Settings) -> None:
     records = extract.load_records("storage_guide", tmp_settings)
     assert records[0]["food_name_ko"] == "버터"
     assert records[0]["_entity_key"] == "fk_1"
+
+
+def test_recipe_prompt_states_normalization_rules(tmp_settings: Settings) -> None:
+    """소규모 실행에서 실제로 어긋났던 세 가지가 프롬프트에 명시돼 있어야 합니다.
+
+    - 단위가 'tablespoons' 와 '큰술' 로 섞여 나왔습니다.
+    - description 에 출처 URL 만 들어간 레시피가 5건 중 3건이었습니다.
+    - 조리 단계 instruction 이 '1. 1. 믹싱볼에...' 처럼 번호가 두 번 붙었습니다.
+    """
+    system = extract.RECIPE_SYSTEM_TEMPLATE
+
+    assert "단위(unit)도 한국어로 통일한다" in system
+    assert "description 에 URL 이나 출처 표기를 넣지 않는다" in system
+    assert "원문의 번호 접두사를 뗀다" in system
+
+
+def test_requests_split_by_token_budget(tmp_settings: Settings) -> None:
+    """대기 토큰 한도 때문에 파일 하나가 예산을 넘으면 안 됩니다.
+
+    실제로 3.81M 토큰짜리 파일 하나를 넣었다가 배치가 64초 만에
+    token_limit_exceeded 로 죽었습니다.
+    """
+    from data_pipeline.batch.client import BatchRunner, estimate_tokens
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    tmp_settings.batch_max_tokens = 5_000
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    requests = [{"custom_id": f"r-{i:03d}", "body": {"messages": [{"content": "가" * 5_000}]}} for i in range(6)]
+    paths = runner.write_requests(requests, job_name="x9")
+
+    assert len(paths) > 1, "예산을 넘겼는데 파일이 하나뿐입니다."
+    for path in paths:
+        lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+        assert sum(estimate_tokens(line) for line in lines) <= tmp_settings.batch_max_tokens
+
+
+def test_submit_skips_parts_already_submitted(tmp_settings: Settings) -> None:
+    """파트를 나눠 순차 제출하려면 이미 넣은 것을 다시 넣지 않아야 합니다."""
+    from data_pipeline.batch.client import BatchJob, BatchRunner
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    for part in (1, 2, 3):
+        (runner.requests_dir / f"x9_part{part:03d}_input.jsonl").write_text("{}\n", encoding="utf-8")
+
+    assert len(runner.pending_parts("x9")) == 3
+    runner.save_manifest(
+        "x9",
+        [BatchJob("x9_part001_input.jsonl", "file-1", "batch_1", "completed", "2026-09-09T00:00:00+00:00")],
+    )
+    pending = runner.pending_parts("x9")
+    assert [path.name for path in pending] == ["x9_part002_input.jsonl", "x9_part003_input.jsonl"]
+
+
+def test_dead_parts_are_resubmitted(tmp_settings: Settings) -> None:
+    """실패한 파트를 '제출됨' 으로 보고 건너뛰면 그 파트가 조용히 빠집니다."""
+    from data_pipeline.batch.client import BatchJob, BatchRunner
+    from data_pipeline.stages import STAGE_EXTRACT
+
+    runner = BatchRunner(STAGE_EXTRACT, tmp_settings)
+    runner.requests_dir.mkdir(parents=True, exist_ok=True)
+    for part in (1, 2):
+        (runner.requests_dir / f"x9_part{part:03d}_input.jsonl").write_text("{}\n", encoding="utf-8")
+
+    runner.save_manifest(
+        "x9",
+        [
+            BatchJob("x9_part001_input.jsonl", "f1", "b1", "completed", "2026-09-09T00:00:00+00:00"),
+            BatchJob("x9_part002_input.jsonl", "f2", "b2", "failed", "2026-09-09T00:00:00+00:00"),
+        ],
+    )
+
+    # 완료된 파트는 건너뛰고, 실패한 파트만 다시 대상이 됩니다.
+    assert [path.name for path in runner.pending_parts("x9")] == ["x9_part002_input.jsonl"]

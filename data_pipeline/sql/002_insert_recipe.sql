@@ -4,7 +4,7 @@
 
 INSERT INTO recipe (
     name, description, category_id, cuisine_type, difficulty,
-    prep_time_min, cook_time_min, servings, cooking_method, nutrition, tags,
+    prep_time_min, cook_time_min, servings, cooking_method, nutrition, tags, image_url,
     source_type, source_recipe_id
 )
 SELECT sr.name,
@@ -18,6 +18,7 @@ SELECT sr.name,
        sr.cooking_method,
        sr.nutrition,
        sr.tags,
+       sr.image_url,
        sr.source_type,
        sr.source_id
 FROM staging_recipe sr
@@ -31,4 +32,5 @@ SET name           = EXCLUDED.name,
     servings       = COALESCE(EXCLUDED.servings, recipe.servings),
     cooking_method = COALESCE(EXCLUDED.cooking_method, recipe.cooking_method),
     nutrition      = CASE WHEN EXCLUDED.nutrition = '{}'::jsonb THEN recipe.nutrition ELSE EXCLUDED.nutrition END,
-    tags           = CASE WHEN EXCLUDED.tags = '{}'::text[] THEN recipe.tags ELSE EXCLUDED.tags END;
+    tags           = CASE WHEN EXCLUDED.tags = '{}'::text[] THEN recipe.tags ELSE EXCLUDED.tags END,
+    image_url      = COALESCE(EXCLUDED.image_url, recipe.image_url);

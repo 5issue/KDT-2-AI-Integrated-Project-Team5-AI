@@ -43,6 +43,7 @@ def collect_params(query_name: str, pairs: list[str]) -> dict[str, Any]:
         if "=" not in pair:
             raise CatalogError(f"--param 은 name=value 형식이어야 합니다: {pair!r}")
         name, _, value = pair.partition("=")
+        # partition()은 어떤 문자열이 들어와도 무조건 3개짜리 튜플을 반환하므로 언패킹 에러가 나지 않아 안전합니다.
         name = name.strip()
         if name not in query.params:
             raise CatalogError(f"{query_name} 에 없는 파라미터입니다: {name}")

@@ -9,14 +9,16 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.catalog import SqlQuery, load_catalog
-from recsys_sql.config import PACKAGE_DIR, get_settings
+from recsys_sql.config import QUERIES_DIR, get_settings
 from recsys_sql.fixtures import SeedIds
 from recsys_sql.runner import explain_query, run_query
 
-TEMPLATE_DIR = PACKAGE_DIR / "queries" / "_template"
+TEMPLATE_DIR = QUERIES_DIR / "_template"
+QUERY_DIR = QUERIES_DIR / "openLeeWorld"
 
 pytestmark = pytest.mark.db
 
@@ -61,16 +63,22 @@ class TestFridgeRecipeMatch:
         assert grill["missing_count"] == 0
 
     async def test_expired_ingredient_does_not_count(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
-        """유통기한이 지난 두부는 보유하지 않은 것으로 처리해야 합니다."""
+        """유통기한이 지난 두부는 보유하지 않은 것으로 처리해야 합니다.
+
+        두부조림의 필수 재료는 두부와 참기름입니다. 두부는 냉장고에 있지만 기한이 지났고
+        참기름은 아예 없으므로, 냉장고 재료를 하나도 쓰지 않는 레시피가 됩니다.
+        그래서 후보 자체에서 빠집니다. 같은 요청에서 나머지 시드 레시피는 나오므로
+        상한(`max_results`) 때문에 잘린 것이 아닙니다.
+        """
         rows = await fetch(
             db_conn,
             "fridge_recipe_match",
-            {"user_id": seeded.user, "min_coverage": 0.0, "max_results": 50},
+            {"user_id": seeded.user, "min_coverage": 0.0, "max_results": 500},
         )
-        braise = next(row for row in rows if row["recipe_id"] == seeded.tofu_braise)
+        recipe_ids = {row["recipe_id"] for row in rows}
 
-        assert braise["covered_count"] == 0
-        assert braise["missing_count"] == 2
+        assert seeded.kimchi_stew in recipe_ids, "기한이 남은 재료를 쓰는 레시피는 나와야 합니다"
+        assert seeded.tofu_braise not in recipe_ids
 
     async def test_min_coverage_filters_out_low_matches(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """커버리지 하한을 올리면 두부조림이 빠집니다."""
@@ -206,12 +214,19 @@ class TestExecutionPlan:
     async def test_no_forbidden_sequential_scan(
         self, db_conn: AsyncConnection, query_name: str, params: dict[str, Any]
     ) -> None:
-        """FORBID_SEQ_SCAN_ON 에 적힌 테이블은 인덱스로 접근해야 합니다."""
+        """FORBID_SEQ_SCAN_ON 에 적힌 테이블은 인덱스로 접근해야 합니다.
+
+        표가 작을 때는 플래너가 순차 읽기를 고르는 편이 맞습니다.
+        `SEQ_SCAN_ROW_LIMIT` 를 넘는 규모에서만 실패시킵니다.
+        """
         settings = get_settings()
         report = await explain_query(db_conn, template_query(query_name), params)
-        forbidden = report.forbidden_seq_scans(settings.forbid_seq_scan_on)
+        forbidden = report.forbidden_seq_scans(settings.forbid_seq_scan_on, row_limit=settings.seq_scan_row_limit)
 
-        assert not forbidden, f"{query_name}: 금지된 Seq Scan {forbidden} (인덱스를 확인하세요)"
+        assert not forbidden, (
+            f"{query_name}: 금지된 Seq Scan {forbidden} "
+            f"(추정 행수 { {table: report.seq_scan_rows[table] for table in forbidden} }, 인덱스를 확인하세요)"
+        )
 
     async def test_query_finishes_within_timeout(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """statement_timeout 안에 끝나야 합니다. 넘으면 run_query 가 예외를 냅니다."""
@@ -221,3 +236,69 @@ class TestExecutionPlan:
             {"user_id": seeded.user, "min_coverage": 0.1, "max_results": 10},
         )
         assert result.elapsed_ms < get_settings().query_timeout_seconds * 1000
+
+
+class TestProductIngredientRole:
+    """보유 판정과 상품 추천이 같은 role 을 봐야 합니다."""
+
+    async def test_secondary_ingredient_product_is_not_recommended(
+        self, db_conn: AsyncConnection, seeded: SeedIds
+    ) -> None:
+        """SECONDARY 로만 걸린 상품을 추천하면, 담아도 재료가 계속 부족합니다.
+
+        냉장고 쪽은 PRIMARY 만 보유로 인정합니다. 추천 쪽이 role 을 안 보면
+        "사라고 해서 샀는데 여전히 부족" 한 상태가 반복됩니다.
+        """
+        await db_conn.execute(
+            text(
+                "INSERT INTO product_ingredient (product_id, ingredient_id, role) "
+                "VALUES (:product_id, :ingredient_id, 'SECONDARY')"
+            ),
+            {"product_id": seeded.kimchi_a, "ingredient_id": seeded.sesame_oil},
+        )
+
+        rows = await fetch(
+            db_conn,
+            "missing_ingredient_products",
+            {"user_id": seeded.user, "recipe_id": seeded.tofu_braise, "max_per_ingredient": 10},
+        )
+        sesame_products = {row["product_id"] for row in rows if row["ingredient_id"] == seeded.sesame_oil}
+
+        assert seeded.kimchi_a not in sesame_products, "SECONDARY 로 걸린 상품이 추천되었습니다."
+        assert sesame_products, "PRIMARY 상품까지 같이 빠지면 안 됩니다."
+
+
+class TestBufferBudget:
+    """Neon 에서는 버퍼 블록 수가 그대로 네트워크 왕복이 됩니다.
+
+    계산 노드와 스토리지가 분리돼 있어, 캐시가 식으면 `shared hit` 이 `shared read` 로
+    바뀝니다(`recsys_sql/docs/postgresql_neon_explain_checklist.md` 3절).
+    그래서 시간보다 블록 수가 회귀를 정직하게 보여 줍니다.
+
+    홈 화면 첫 쿼리가 한때 5행을 내는 데 **197만 블록**을 읽었습니다. 버블 규칙 해석이
+    (버블 x 레시피) 쌍마다 재료 집계를 다시 돌린 탓이었고, alembic 0010 에서 레시피당
+    한 번만 집계하도록 고쳤습니다(4,600 블록). 다시 그 모양으로 돌아가지 않게 막습니다.
+    """
+
+    BUDGET = 100_000
+
+    @pytest.mark.parametrize(
+        ("query_name", "params"),
+        [
+            ("bubble_candidate_counts", {}),
+            ("bubble_recipe_candidates", {"keyword_id": "MEAT", "max_results": 50}),
+            ("bubble_products", {"keyword_id": "MEAT", "max_results": 20, "skip": 0}),
+        ],
+    )
+    async def test_bubble_queries_stay_within_budget(
+        self, db_conn: AsyncConnection, query_name: str, params: dict[str, Any]
+    ) -> None:
+        """버블 쿼리 3종은 같은 뷰를 봅니다. 뷰가 무거워지면 셋 다 같이 무거워집니다."""
+        query = next(query for query in load_catalog(QUERY_DIR) if query.name == query_name)
+        report = await explain_query(db_conn, query, params, analyze=True)
+
+        assert report.shared_blocks, "BUFFERS 가 안 붙었습니다"
+        assert report.shared_blocks < self.BUDGET, (
+            f"{query_name}: 버퍼 {report.shared_blocks:,} 블록. 예산 {self.BUDGET:,}. "
+            "뷰가 레시피당 한 번이 아니라 쌍마다 집계하고 있는지 확인하세요."
+        )

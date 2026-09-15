@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "raw data -> OpenAI Batch API 파싱 -> Neon PostgreSQL bulk insert"
 requires-python = "==3.11.*"
 dependencies = [
-    "alembic>=1.16.5",
     "asyncpg>=0.30.0",
     "openai>=2.6.0",
     "pgvector>=0.4.2",

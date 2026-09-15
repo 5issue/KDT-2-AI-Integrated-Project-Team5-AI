@@ -74,7 +74,8 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 
 ## 1단계: 프로파일
 
-파일마다 스키마 + 샘플 행 + 같은 폴더의 다른 데이터셋 이름을 주고 아래를 판단하게 합니다.
+파일마다 스키마 + 샘플 행 + **같은 폴더의 다른 데이터셋 카탈로그(이름·행수·컬럼)** 를 주고
+아래를 판단하게 합니다.
 
 - `target_tables` — 어느 테이블로 가는가 (없으면 `["none"]` + `loadable=false`)
 - `rows_per_entity` / `group_by_columns` — 한 엔티티가 한 행인가, 여러 행에 흩어져 있는가
@@ -83,9 +84,30 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 - `companion_datasets` — 같이 봐야 하는 다른 데이터셋
 - `skip_reason` — 버전 이력, 컬럼 사전, 중복 사본 등 제외 사유
 
-다른 데이터셋 이름을 함께 주는 이유는 중복 사본을 알아채게 하려는 것입니다.
-실제 raw 에 `foodkeeper_product`(수치형)와 `foodkeeper_xls_product`(전부 문자열)가
-같은 661행 데이터로 들어 있습니다.
+형제 데이터셋을 이름만이 아니라 **컬럼까지** 주는 이유는 중복 사본을 알아채게 하려는
+것입니다. 실제 raw 에 `foodkeeper_product`(수치형)와 `foodkeeper_xls_product`(전부
+문자열)가 같은 661행 데이터로 들어 있는데, 이름만 봐서는 갈리지 않습니다.
+
+### 제약 레이어 (`stages/constraints.py`)
+
+`collect` 는 LLM 판단을 그대로 쓰지 않고 결정적 제약을 한 번 통과시킵니다.
+두 모델(`gpt-4o-mini`, `gpt-4.1-mini`)로 돌려 본 결과가 근거입니다.
+**무엇이 무슨 데이터인지는 잘 판단하는데, 아래 같은 제약은 반복해서 어겼습니다.**
+
+| 규칙 | 하는 일 | 판정 근거 |
+| --- | --- | --- |
+| `unknown_column` | 없는 컬럼 참조 제거 | 실제 parquet 스키마 |
+| `companion` | 짝을 실측으로 교체 | 같은 이름 컬럼의 **값 겹침** |
+| `storage_source` | 보관 소스 하나로 단일화 | 9개 슬롯 열거형을 값으로 가진 쪽 우선 |
+| `recipe_fk` | `recipe_ingredient` 에 `recipe` 동반 | DB 외래키 |
+| `companion_pair` | 검증된 짝은 반쪽이라고 버리지 않음 | 그룹 키로 실제 이어지는지 |
+
+전부 raw 를 읽어 참·거짓을 가리므로 **데이터셋 이름을 조건에 적어 두지 않습니다.**
+새 raw 가 들어와도 그대로 동작합니다. 조정 내역은 `collect` 출력에 남고, 어느 규칙이
+무엇을 왜 고쳤는지 사람이 검토할 수 있습니다.
+
+짝 판정에서 정수만 든 컬럼은 근거에서 뺍니다. 서로 다른 표의 `ID` 는 각자 1부터 세는
+별개 번호라 겹침이 무조건 1.0 이 나옵니다(실제로 이 오탐을 밟았습니다).
 
 ## 2단계: 추출
 
@@ -127,11 +149,12 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `sql/001_staging_tables.sql` | staging 5종 + `CREATE EXTENSION vector` |
+| `sql/001_staging_tables.sql` | staging 6종 + `CREATE EXTENSION vector` |
 | `sql/002_insert_recipe.sql` | `(source_type, source_recipe_id)` 기준 `recipe` upsert |
 | `sql/003_insert_recipe_ingredient.sql` | 매칭 결과로 FK 를 채워 `recipe_ingredient` upsert |
 | `sql/004_insert_storage_guideline.sql` | `storage_guideline` upsert |
-| `sql/005_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
+| `sql/005_insert_recipe_step.sql` | 조리 단계를 `recipe_step` 으로 upsert (줄어든 뒤쪽 단계는 삭제) |
+| `sql/020_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
 | `sql/099_truncate_staging.sql` | staging 비우기 |
 
 001~004 는 **한 트랜잭션**입니다. 004 에서 실패하면 002 가 넣은 레시피도 남지 않습니다.
@@ -163,14 +186,19 @@ COPY 와 긴 트랜잭션은 PgBouncer transaction 모드와 맞지 않습니다
 
 ## 마이그레이션
 
-스키마는 이미 Neon 에 있으므로 기존 브랜치에는 baseline 도장만 찍고 시작합니다.
+**마이그레이션은 이 폴더가 아니라 레포 루트의 [`database/`](../database/) 에서 관리합니다.**
+data_pipeline 은 스키마를 바꾸지 않고 이미 있는 테이블에 적재만 합니다.
 
 ```bash
-cd data_pipeline
-uv run alembic stamp 0001
+uv run alembic -c database/alembic.ini current
+uv run alembic -c database/alembic.ini upgrade head
 ```
 
-`sql/002~004` 의 `ON CONFLICT` 는 실제 스키마에 이미 있는 유니크 제약을 씁니다
+`database/migrations/env.py` 는 프로세스 환경변수 -> 루트 `.env` -> `data_pipeline/.env`
+순으로 접속 정보를 찾고, `DATABASE_URL_DIRECT` 가 있으면 그쪽을 먼저 씁니다.
+DDL 은 pooler 가 아니라 direct 로 거는 편이 안전하기 때문입니다.
+
+`sql/002~005` 의 `ON CONFLICT` 는 실제 스키마에 이미 있는 유니크 제약을 씁니다
 (`recipe_source_unique_idx`, `uq_storage_guideline_source_rule`). 없으면 `load` 가 먼저 막습니다.
 
 ## 테스트

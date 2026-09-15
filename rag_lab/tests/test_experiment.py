@@ -59,7 +59,7 @@ def test_snapshot_params_excludes_secrets() -> None:
     params = snapshot_params(settings)
 
     assert "top_k" in params
-    assert not {"database_url", "database_url_direct", "openai_api_key"} & set(params)
+    assert not {"database_url", "database_url_direct", "llm_api_key", "llm_embedding_api_key"} & set(params)
 
 
 def test_write_jsonl_round_trip(tmp_path: Path) -> None:

@@ -1,9 +1,46 @@
 # serving
 
-FastAPI + asyncpg 비동기 서빙 서버입니다. `recsys_sql` 에서 검증한 추천 쿼리를 API 로 노출합니다.
+FastAPI + asyncpg 비동기 서빙 서버입니다. **SQL 은 `recsys_sql` 카탈로그에서 가져옵니다.**
 
 SQLAlchemy 를 거치지 않고 asyncpg 를 직접 씁니다. 서빙 경로에서는 ORM 매핑 비용 없이
 정해진 SQL 만 돌리면 되기 때문입니다.
+
+## 이 폴더는 .sql 파일을 갖지 않습니다
+
+예전에는 `recsys_sql` 에서 검증한 쿼리를 `serving/sql/` 로 복사해 왔습니다(promote).
+복사본은 반드시 갈라집니다. 실제로 `user_fridge.ingredient_id` 를 걷어낼 때 recsys_sql
+쪽만 고쳐지고 이쪽 복사본은 사라진 컬럼을 그대로 참조한 채 남았습니다.
+
+지금은 `recsys_sql` 을 워크스페이스 의존성으로 두고 카탈로그를 직접 씁니다.
+두 폴더가 다른 것은 `.env` 뿐입니다.
+
+```python
+from serving.queries import build_query
+
+sql, args = build_query("product_detail", {"product_id": 101})
+async with pool.acquire() as conn:
+    rows = await conn.fetch(sql, *args)
+```
+
+`build_query` 가 하는 일:
+
+1. `ALLOWED_QUERIES` 화이트리스트 확인 — 무엇을 공개하는지 한 곳에 적혀 있어야 합니다
+2. `recsys_sql.prepare` 호출 — 파라미터 검증 + `:name` -> `$1` 변환
+
+파라미터가 빠지거나 타입이 어긋나면 DB 까지 가지 않고 걸립니다. 카탈로그에서 쿼리가
+사라지거나 이름이 바뀌면 `tests/test_app.py` 가 배포 전에 잡습니다.
+
+**`recsys_sql.repository` 는 SQLAlchemy 를 끌어오지 않습니다.** 이 폴더가 asyncpg 만
+쓰기로 한 결정은 그대로입니다. `tests/test_app.py` 가 별도 프로세스에서 고정합니다.
+
+### 새 엔드포인트를 붙이려면
+
+1. `recsys_sql/queries/<owner>/` 에 SQL 을 쓰고 pytest 로 검증 (그쪽 README 참고)
+2. `serving/queries.py` 의 `ALLOWED_QUERIES` 에 이름 추가
+3. 라우터에서 `build_query(이름, 파라미터)` 호출
+4. `schemas.py` 에 응답 모델 추가
+
+SQL 을 이 폴더로 복사하지 마세요. `tests/test_app.py` 가 `.sql` 파일이 생기면 실패합니다.
 
 ## 시작하기
 
@@ -18,12 +55,15 @@ uv run serving run          # http://127.0.0.1:8000 (자동 리로드)
 
 ## 엔드포인트
 
-| 메서드 | 경로 | 설명 |
-| --- | --- | --- |
-| GET | `/health` | liveness. DB 를 건드리지 않습니다. |
-| GET | `/health/db` | readiness. 풀에서 커넥션을 빌려 왕복 한 번. 실패 시 503 |
-| GET | `/users/{user_id}/recipe-recommendations` | 냉장고 재료 기반 레시피 추천 |
-| GET | `/users/{user_id}/reorder-candidates` | 재구매 후보 |
+| 메서드 | 경로                                      | 설명                                                    |
+| ------ | ----------------------------------------- | ------------------------------------------------------- |
+| GET    | `/health`                                 | liveness. DB 를 건드리지 않습니다.                      |
+| GET    | `/health/db`                              | readiness. 풀에서 커넥션을 빌려 왕복 한 번. 실패 시 503 |
+| GET    | `/users/{user_id}/recipe-recommendations` | 냉장고 재료 기반 레시피 추천                            |
+| GET    | `/users/{user_id}/reorder-candidates`     | 재구매 후보                                             |
+
+`ai_context/api_spec.md` 의 나머지 엔드포인트는 아직 라우터가 없습니다. 받칠 SQL 은
+카탈로그에 이미 있습니다 — `recsys_sql/README.md` 의 대응표를 보세요.
 
 liveness 와 readiness 를 나눈 이유는, DB 가 잠깐 흔들릴 때 컨테이너가 통째로
 재시작되지 않게 하기 위해서입니다.
@@ -44,24 +84,6 @@ liveness 와 readiness 를 나눈 이유는, DB 가 잠깐 흔들릴 때 컨테�
 `DATABASE_URL` 이 없으면 풀 없이 뜹니다. DB 없이도 앱을 띄워 라우팅과 스키마를
 확인할 수 있게 하기 위한 것이고, 이때 DB 가 필요한 엔드포인트는 503 으로 답합니다.
 
-## SQL 관리
-
-SQL 은 `serving/sql/` 에 파일로 둡니다. 파이썬 문자열로 흩어 두면 리뷰가 어렵습니다.
-
-```
-recsys_sql/queries/<owner>/*.sql   ← pytest 로 규칙을 검증하는 곳 (:name 바인딩)
-            │  검증 통과 후 promote
-            ▼
-serving/sql/*.sql                  ← 서빙이 실제로 쓰는 것 ($1 위치 바인딩)
-```
-
-파일 헤더의 `promoted-from` 이 원본 경로를 가리킵니다. 바인딩 표기가 다른 이유는
-SQLAlchemy 는 이름 바인딩을, asyncpg 는 위치 바인딩을 쓰기 때문입니다.
-`tests/test_app.py` 가 옮겨온 SQL 에 이름 바인딩이 남아 있지 않은지 확인합니다.
-
-`queries.ALLOWED_QUERIES` 화이트리스트에 없는 이름은 로드되지 않습니다. 경로가
-사용자 입력에서 오지 않더라도, 파일 로딩에 화이트리스트를 두는 편이 안전합니다.
-
 ## 보안 관련
 
 - 값은 전부 asyncpg 위치 파라미터로 넘어갑니다. SQL 문자열에 값을 끼워 넣지 않습니다.
@@ -77,11 +99,11 @@ SQLAlchemy 는 이름 바인딩을, asyncpg 는 위치 바인딩을 쓰기 때�
 uv run pytest serving/tests -q
 ```
 
-| 파일 | DB 필요 | 하는 일 |
-| --- | --- | --- |
-| `tests/test_dsn.py` | 아니오 | DSN 변환, pooler 감지, 마스킹 |
-| `tests/test_app.py` | 아니오 | 라우팅, 503 처리, 입력 검증, SQL 화이트리스트 |
-| `tests/test_endpoints_db.py` | 예 | 실제 Neon 에서 promoted SQL 실행 + 응답 스키마 |
+| 파일                         | DB 필요 | 하는 일                                                      |
+| ---------------------------- | ------- | ------------------------------------------------------------ |
+| `tests/test_dsn.py`          | 아니오  | DSN 변환, pooler 감지, 마스킹                                |
+| `tests/test_app.py`          | 아니오  | 라우팅, 503 처리, 입력 검증, 카탈로그 계약, .sql 복사본 금지 |
+| `tests/test_endpoints_db.py` | 예      | 실제 Neon 에서 카탈로그 SQL 실행 + 응답 스키마               |
 
 # fastapi 배포
 
