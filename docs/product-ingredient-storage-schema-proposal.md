@@ -96,7 +96,10 @@ AND PRIMARY Ingredient가 정확히 하나
 
 `storage_guideline`은 팀 ERD와 dev Neon에 이미 존재한다. production baseline에는 아직 없으므로
 `0005`는 production 기준 Alembic 경로에서 이 테이블을 물리적으로 생성한다. 수동 반영된 dev에
-`0005`를 직접 실행하지 않는다.
+`0005`를 직접 실행하지 않는다. migration은 기존 `storage_guideline`이 발견되면
+`IF NOT EXISTS`로 건너뛰지 않고 중단한다. Ingredient/Product의 논리적으로 동일한 UNIQUE
+index가 이미 발견되어도 중단하므로, 수동 schema가 있는 DB는 별도 reconciliation 또는 stamp
+절차를 먼저 적용해야 한다.
 
 | 필드 묶음 | 저장값 |
 | --- | --- |
@@ -165,6 +168,8 @@ MVP에서는 `product.storage_type`을 기본 장소로 사용한다. 사용자�
 이 migration은 현재 Alembic head 뒤에 실행되는 storage_guideline 정리용 revision이다.
 실제 production 반영 전에는
 chaeyeon 님 PR에서 정한 `0001_baseline` stamp와 기존 revision 적용 절차를 먼저 검증한다.
+`0005`는 기존 수동 객체를 자동으로 흡수하는 reconciliation migration이 아니며, 대상 DB에
+`storage_guideline` 또는 동일 컬럼 조합의 UNIQUE index가 있으면 schema drift 오류로 중단한다.
 
 production에서 분기한 임시 Neon 브랜치는 기본 `DATABASE_URL`을 바꾸지 않고 아래처럼 선택한다.
 
