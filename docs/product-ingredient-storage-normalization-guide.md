@@ -423,31 +423,9 @@ AND storage_guideline.storage_location = product.storage_type
 
 ### 6.3 마이냉장고 조회
 
-Product의 `storage_type`은 판매 시점의 기본 장소이며, 사용자가 실제로 보관 중인 장소는 아니다.
-사용자가 냉장 상품을 냉동실로 옮길 수 있으므로 현재 장소는 `user_fridge.storage_location`에 둔다.
-
-```text
-상품 기본: 냉장
-사용자 현재 장소: 냉동
-
-Product.storage_type = 냉장
-User Fridge.storage_location = 냉동
-
-→ 삼겹살 Ingredient의 냉동 지침 표시
-```
-
-장소 선택 우선순위는 다음과 같다.
-
-```text
-1. user_fridge.storage_location
-   사용자가 현재 장소를 선택한 경우
-
-2. product.storage_type
-   현재 장소가 비어 있을 때 Product 기본 장소 사용
-```
-
-이 구조에서는 사용자가 냉장·냉동을 바꿔도 Product 또는 Ingredient 지침을 수정하지 않는다. User
-Fridge의 현재 장소만 바꾸고, 같은 Ingredient의 다른 보관 지침을 조회한다.
+MVP에서는 `user_fridge`에 실제 보관 장소를 저장하지 않는다. 냉장고에 담긴 상품도
+`product.storage_type`을 기본 장소로 사용해 보관 지침을 조회한다. 사용자가 상품을 다른 장소로
+옮기는 기능은 별도 schema·서비스 정책으로 분리한다.
 
 ### 6.5 보관법을 보여줄 수 있는 Product 조건
 

@@ -27,10 +27,10 @@ Product는 판매 SKU, Ingredient는 식재료 기준축, Storage Guideline은 I
 
 | 대상 | 팀 ERD | 현재 Neon | 이번 migration |
 | --- | --- | --- | --- |
-| `ingredient` | 계층·원천 키 없음, 별칭 TEXT | Neon에는 일부 변경이 수동 반영됨 | ERD 변경과 제약 정식 반영 |
-| `product` | 원천 키 없음, SKU·재고 필수 | Neon에는 일부 변경이 수동 반영됨 | 원천 키·NULL 정책·제약 정식 반영 |
-| `storage_guideline` | 테이블은 이미 정의됨 | dev에는 존재, production baseline에는 없음 | production baseline에 물리 반영 |
-| `user_fridge` | Ingredient와 Product를 함께 저장 | dev와 production 모두 기존 구조 | Product 기준으로 변경 |
+| `ingredient` | 계층·원천 키 없음, 별칭 TEXT | Neon에는 일부 변경이 수동 반영됨 | 이번 PR에서 변경하지 않음 |
+| `product` | 원천 키 없음, SKU·재고 필수 | Neon에는 일부 변경이 수동 반영됨 | 이번 PR에서 변경하지 않음 |
+| `storage_guideline` | 테이블은 이미 정의됨 | 원천 variant 단위로 적재됨 | 서비스 조회 키별 대표 1건으로 정리 |
+| `user_fridge` | Ingredient와 Product를 함께 저장 | 기존 구조 | 이번 PR에서 변경하지 않음 |
 
 ## Ingredient
 
@@ -101,7 +101,7 @@ AND PRIMARY Ingredient가 정확히 하나
 | 필드 묶음 | 저장값 |
 | --- | --- |
 | Ingredient 연결 | `ingredient_id` |
-| FoodKeeper 원문 | `source_item_id TEXT`, `source_food_name`, `source_food_subtitle`, `source_slot` |
+| FoodKeeper 원문 | `source_food_name`, `source_food_subtitle`, `source_slot` |
 | 서비스 조회값 | `storage_location`, `storage_context` |
 | 기간 | `duration_min`, `duration_max`, `duration_unit`, `duration_text` |
 | 설명 | `storage_tips` 전체 번역 TEXT |
@@ -111,16 +111,19 @@ AND PRIMARY Ingredient가 정확히 하나
 | 제약 | 이유 |
 | --- | --- |
 | `ingredient_id` FK | 존재하지 않는 Ingredient에 지침 연결 방지 |
-| `(source_item_id, source_slot)` UNIQUE | FoodKeeper 원천 slot 중복 방지 |
+| `(ingredient_id, storage_location, storage_context)` UNIQUE | 서비스 조회에서 대표 보관법을 1건으로 보장 |
 | 장소·상황·기간·slot CHECK | FoodKeeper slot 변환 오류 방지 |
 
-`source_item_id`는 `fk_134`처럼 접두사가 포함될 수 있는 원천 식별 문자열이다. 서비스 조회값으로
-사용하지 않고, 원천 추적·재적재와 `source_slot` 중복 방지에 사용한다. `source_slot`은 원문 값을
-보존하고, 장소와 상황은 정해진 규칙으로만 파생한다.
+`source_item_id`는 staging에서만 원천 row를 식별하는 데 사용하고, 최종
+`storage_guideline`에는 저장하지 않는다. 여러 FoodKeeper 원천 variant는 staging에서
+`(ingredient_id, storage_location, storage_context)`별로 그룹화한다. 기간 정보가 서로 다르면
+자동 병합하지 않고 검토 대상으로 분리하며, 동일한 기간이면 대표 1건만 최종 적재한다.
+`source_slot`은 최종 행에 보존하고, 장소와 상황은 정해진 규칙으로 파생한다.
 
-하나의 Ingredient·장소·상황에 여러 FoodKeeper 원천이 매핑될 수 있으므로 해당 조합에는 UNIQUE를
-두지 않는다. 원천 variant는 모두 보존하고, 조회 계층에서 Product별 근거 또는 명시된 fallback 규칙으로
-선택한다. 서로 다른 기간을 하나의 대표값으로 병합하지 않는다.
+하나의 Ingredient·장소·상황에 여러 FoodKeeper 원천이 매핑될 수 있으므로 원천 variant는 staging에서
+모두 보존한다. 최종 서비스 테이블에 적재할 때는 동일한 기간을 가진 후보 중 대표 1건만 선택하고,
+서로 다른 기간이 충돌하면 자동 병합하지 않고 검토 대상으로 분리한다. 따라서 최종 테이블에서는
+해당 조회 조합을 UNIQUE로 보장한다.
 
 | source slot | 장소 | 상황 |
 | --- | --- | --- |
@@ -143,21 +146,12 @@ AND PRIMARY Ingredient가 정확히 하나
 
 | 구분 | 변경 | 이유 |
 | --- | --- | --- |
-| 삭제 | `ingredient_id` | 사용자가 보유한 단위는 재료가 아닌 실제 구매 Product |
-| 추가 | `storage_location` nullable | 사용자가 상품을 실제로 둔 장소 |
-| 변경 | PK를 `(user_id, product_id)`로 | 한 사용자의 한 Product 보유 행을 하나로 관리 |
+| 변경 없음 | - | `user_fridge`는 추천 SQL에서 사용하지 않으므로 이번 PR에서 schema를 변경하지 않음 |
 
 ### 조회 규칙
 
-ERD에는 두 장소 컬럼을 저장하고, 어느 값을 우선할지는 서비스 조회 정책으로 처리한다.
-
-~~~text
-현재 장소 = COALESCE(user_fridge.storage_location, product.storage_type)
-~~~
-
-- `user_fridge.storage_location`이 있으면 사용자가 선택한 실제 장소를 사용한다.
-- 없으면 `product.storage_type`을 상품 기본 장소로 사용한다.
-- 선택된 장소에 `일반`, `구매후`, `개봉후`, `해동후`가 여러 개면 하나를 임의 선택하지 않고 함께 표시한다.
+MVP에서는 `product.storage_type`을 기본 장소로 사용한다. 사용자가 실제 보관 장소를 바꾸는 기능은
+이번 범위에 포함하지 않는다.
 
 ## 이번에 추가하지 않는 것
 
@@ -168,8 +162,8 @@ ERD에는 두 장소 컬럼을 저장하고, 어느 값을 우선할지는 서�
 
 ## 적용 전제
 
-이 migration은 Alembic `0004_drop_non_food_category` 뒤에 실행되는 production baseline용 revision이다.
-Alembic 이력이 없고 수동 schema가 섞인 `dev/subeom`에는 실행하지 않는다. 실제 production 반영 전에는
+이 migration은 현재 Alembic head 뒤에 실행되는 storage_guideline 정리용 revision이다.
+실제 production 반영 전에는
 chaeyeon 님 PR에서 정한 `0001_baseline` stamp와 기존 revision 적용 절차를 먼저 검증한다.
 
 production에서 분기한 임시 Neon 브랜치는 기본 `DATABASE_URL`을 바꾸지 않고 아래처럼 선택한다.

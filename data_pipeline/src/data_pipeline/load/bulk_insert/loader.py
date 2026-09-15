@@ -34,7 +34,7 @@ from data_pipeline.load.bulk_insert.models import (
 REQUIRED_INDEXES = (
     "recipe_source_unique_idx",
     "uq_ingredient_source_identity_key",
-    "uq_storage_guideline_source_rule",
+    "uq_storage_guideline_query",
 )
 
 SQL_STEPS = (

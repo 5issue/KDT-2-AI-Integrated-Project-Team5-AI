@@ -146,7 +146,10 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
                 SOURCE_TYPE,
             )
             guidelines = await conn.fetchval(
-                "SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'"
+                "SELECT COUNT(*) FROM storage_guideline "
+                "WHERE ingredient_id = $1 AND storage_location = '냉장' "
+                "AND storage_context = '구매후'",
+                ingredient_id,
             )
             steps = await conn.fetchval(
                 "SELECT COUNT(*) FROM recipe_step rs JOIN recipe r USING (recipe_id) WHERE r.source_type = $1",
@@ -177,7 +180,10 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
                 await run_sql_file(conn, settings.sql_dir / name)
             again = await conn.fetchval("SELECT COUNT(*) FROM recipe WHERE source_type = $1", SOURCE_TYPE)
             again_guidelines = await conn.fetchval(
-                "SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'"
+                "SELECT COUNT(*) FROM storage_guideline "
+                "WHERE ingredient_id = $1 AND storage_location = '냉장' "
+                "AND storage_context = '구매후'",
+                ingredient_id,
             )
             again_steps = await conn.fetchval(
                 "SELECT COUNT(*) FROM recipe_step rs JOIN recipe r USING (recipe_id) WHERE r.source_type = $1",
@@ -189,7 +195,15 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
 
     async with load_connection_scope() as conn:
         assert await conn.fetchval("SELECT COUNT(*) FROM recipe WHERE source_type = $1", SOURCE_TYPE) == 0
-        assert await conn.fetchval("SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'") == 0
+        assert (
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM storage_guideline "
+                "WHERE ingredient_id = $1 AND storage_location = '냉장' "
+                "AND storage_context = '구매후'",
+                ingredient_id,
+            )
+            == 0
+        )
 
 
 async def test_apply_stock_skips_products_it_does_not_own() -> None:
