@@ -5,6 +5,26 @@ LangGraph + pgvector 기반 RAG 실험 환경입니다.
 핵심은 **같은 질문 세트를 파라미터만 바꿔 반복해서 돌리고 결과를 비교**하는 것입니다.
 그래서 검색 파라미터를 전부 `.env` 로 빼고, 실행 결과에 그때의 파라미터를 같이 기록합니다.
 
+## 무엇에 쓰는가: 추천 문구 생성
+
+**열린 질문에 답하는 챗봇이 아닙니다.** 이 폴더가 만드는 것은
+`/recommendations/my-recipes` 응답에 붙을 **추천 문구**입니다.
+"냉장고에 김치랑 돼지고기가 있으니 김치볶음찌개를 추천합니다" 같은 한 줄.
+
+| | 무엇으로 | 왜 |
+| --- | --- | --- |
+| 보관법 | **RAG 아님.** API 클릭 시 DB 조회 | 답이 `storage_guideline` 에 이미 있습니다 |
+| 추천 문구 | **RAG** | 문장을 생성해야 하는 유일한 자리 |
+
+그래서 `storage_guideline` 에는 embedding 을 두지 않습니다. 조회 경로가 이미
+결정적입니다 — `product -> product_ingredient(PRIMARY) -> ingredient -> storage_guideline`.
+질문을 해석할 필요가 없으니 벡터 검색이 낄 자리가 없습니다.
+
+`rag-lab ask "대파 어떻게 보관해"` 가 답을 못 하는 것은 **정상**입니다. 그 질문은 RAG 를
+거치지 않습니다. 검색·라우팅 자체를 확인하는 용도로는 `ask` 를 계속 써도 됩니다.
+
+자세한 범위는 `ai_context/스프린트 범위와 제외 항목.md` 에 있습니다.
+
 ## 최종 목표: 여기도 serving 의 repository layer 입니다
 
 `recsys_sql` 은 이미 그렇게 정리했습니다 — `serving` 이 `.sql` 복사본을 갖지 않고
@@ -29,12 +49,37 @@ LangGraph + pgvector 기반 RAG 실험 환경입니다.
 ## 시작하기
 
 ```bash
-cp rag_lab/.env.example rag_lab/.env   # 본인 Neon 브랜치 URL 과 OpenAI 키
+cp rag_lab/.env.example rag_lab/.env   # 본인 Neon 브랜치 URL 과 API 키
 uv sync --all-packages --all-groups
 uv run rag-lab check-db                # pgvector 설치 여부까지 확인
 uv run rag-lab route "대파 어떻게 보관해"   # DB/API 없이 라우팅만 확인
 uv run rag-lab ask "김치로 뭐 해먹지"
 ```
+
+### 먼저: 임베딩이 채워져 있어야 합니다
+
+검색은 `recipe` / `product` / `ingredient` 의 `embedding` 컬럼을 씁니다. **비어 있으면
+검색이 아무것도 못 찾고, 근거가 없으면 LLM 을 아예 부르지 않으므로 `ask` 가 항상
+빈손으로 끝납니다.** 그래프도 라우터도 다 있는데 연료가 없는 상태입니다.
+
+채우는 것은 `data_pipeline` 쪽입니다.
+
+```bash
+uv run data-pipeline embed --target all            # dry-run: 대상 수와 추정 비용
+uv run data-pipeline embed --target all --apply    # 실제 실행. 4,667행에 약 $0.002
+```
+
+확인은 이렇게 합니다.
+
+```sql
+SELECT count(*) AS total, count(embedding) AS embedded FROM recipe;
+```
+
+`embedded` 가 0 이면 아직 안 채워진 것입니다. 재실행해도 이미 채워진 행은 건너뜁니다.
+
+**답이 안 나오면 모델이 아니라 검색을 먼저 보세요.** `SCORE_THRESHOLD` 기본값이
+0.25 라, 임베딩을 막 채운 직후에는 이 값을 0 으로 낮춰 검색 자체는 되는지 갈라 보는 편이
+빠릅니다.
 
 ## 공급자 갈아끼우기
 
@@ -96,7 +141,11 @@ EMBEDDING_DIM=1024                       # 아래 주의 참고
 예전 이름(`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`)도 계속
 읽습니다. 로컬 `.env` 가 조용히 깨지지 않게 두는 것이고, 새로 쓰는 값은 `LLM_*` 입니다.
 
-`data_pipeline` 은 OpenAI Batch API 에 묶여 있어 이 추상화를 쓰지 않습니다.
+**임베딩 모델을 바꾸면 `data_pipeline` 쪽도 맞춰야 합니다.** 검색에 쓰는 모델과 적재에
+쓴 모델이 다르면 벡터 공간이 달라 검색이 엉뚱해집니다. `data_pipeline/.env` 의
+`OPENAI_EMBEDDING_MODEL` 을 함께 바꾸고 전체를 다시 임베딩하세요.
+
+`data_pipeline` 의 **채팅** 경로는 OpenAI Batch API 에 묶여 있어 이 추상화를 쓰지 않습니다.
 배치 제출·폴링·수거가 OpenAI 고유 엔드포인트(`/v1/batches`)라 공급자를 바꾸려면
 파이프라인 자체를 다시 써야 합니다.
 

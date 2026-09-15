@@ -21,8 +21,10 @@
 | `product_popularity` | **0** | 주문·조회 로그 없음 |
 | `user_product_affinity` | **0** | 같음 |
 | `app_user` / `user_fridge` | **0** | 데모 계정 필요 |
+| `embedding` 컬럼 (recipe/product/ingredient) | 4,667 / 4,667 | 2026-09-15 채움. `embed` 명령 |
 
-alembic head: `0009_cooking_method`. 누적 API 비용 약 $3.4.
+alembic head: `0010_bubble_view_perf`. 누적 API 비용 약 $3.4
+(임베딩 한 바퀴는 $0.002 로 무시할 수준).
 
 ---
 
@@ -103,6 +105,7 @@ stamp 라 alembic 밖에서 Neon 에 직접 만든 것입니다. PR 이 라이�
 | 바뀐 것 | 볼 파일 |
 | --- | --- |
 | 컬럼 추가·삭제 | `sql/001_staging_tables.sql` (staging 은 `ADD COLUMN IF NOT EXISTS` 로 따라잡음) |
+| 검색에 쓰는 텍스트 | `load/embedding.py` 의 `TEXT_SQL` **과** `rag_lab/.../retrieval.py` 의 `_SOURCES` (짝입니다) |
 | 컬럼 추가·삭제 | `sql/00{2..8}_insert_*.sql` 의 INSERT 컬럼 목록 |
 | 값 제약 변경 | `src/data_pipeline/domain.py` 의 열거 조회표 |
 | 타깃 테이블 계약 | `domain.TARGET_TABLE_CONTRACTS` (1~3단계 프롬프트에 들어감) |
@@ -112,7 +115,22 @@ stamp 라 alembic 밖에서 Neon 에 직접 만든 것입니다. PR 이 라이�
 롤백**합니다. 스키마가 바뀌면 여기서 먼저 걸립니다. 마이그레이션을 적용한 뒤
 이 테스트부터 돌리세요.
 
-## 4. 알아 둘 것
+## 4. 이번 스프린트 제외 항목이 적재에 미치는 것
+
+확정 내용은 `ai_context/스프린트 범위와 제외 항목.md` 에 있습니다. 적재 쪽 할 일만 옮깁니다.
+
+| 항목 | 적재 쪽 할 일 |
+| --- | --- |
+| 영문 레시피 전량 제외 | `recipe.source_type = 'recipes'` 1,004건. **먼저 결정 필요** — 지울지, 신규만 막을지 |
+| 보관팁 시연 20종만 | 지금 229개 재료 935행이 들어가 있음. 다른 브랜치의 20종 작업과 머지 시점에 조율 |
+| 갑각·패류 / 장류·향신료 | 재료를 **지우지 마세요.** `recipe_ingredient`·`product_ingredient` FK 가 걸려 있어 참조가 깨집니다. 조회 필터나 플래그로 걸러야 하는데 지금 스키마에 그 컬럼이 없습니다 |
+| `MEAL_KIT` / `READY_TO_EAT` | 상품 25건(`READY_TO_EAT` 은 적재분 없음). 영향 작음 |
+| 부피 -> 무게 환산, 영양성분 | 원래 범위 밖. 추가 작업 없음 |
+
+**되돌릴 수 있습니다.** 2·3단계 산출물이 `data/artifacts/` 에 남아 있어 언제든 다시
+적재하면 같은 상태가 됩니다.
+
+## 5. 알아 둘 것
 
 - **열거값은 한국어입니다.** `storage_type`, `storage_location`, `storage_context`,
   `duration_unit`, `cooking_method`. 화면에 그대로 나가는 값이라 저장 시점에 한 벌로
@@ -126,5 +144,8 @@ stamp 라 alembic 밖에서 Neon 에 직접 만든 것입니다. PR 이 라이�
   `BATCH_MAX_TOKENS` 기본 100만, `--parts` 로 병렬 제출.
 - **`failed` 를 진행 중으로 보면 2시간을 날립니다.** 실제로 그랬습니다. `DEAD_STATUSES`
   처리가 들어가 있으니 폴링 루프를 고칠 때 빼지 마세요.
+- **임베딩은 `embed` 명령이 채웁니다.** `rag_lab` 의 pgvector 검색이 여기에 의존하고,
+  비어 있으면 RAG 가 통째로 멈춥니다. `--apply` 없이 돌리면 대상 수와 추정 비용만 봅니다.
+  `embedding IS NULL` 인 행만 처리하므로 중간에 끊겨도 이어서 돌리면 됩니다.
 - **적재는 재현 가능합니다.** Neon 브랜치를 갈아도 `data/artifacts/` 의 3단계 산출물로
   다시 적재하면 같은 상태가 됩니다.

@@ -29,7 +29,7 @@ raw 데이터 적재 -> 추천 SQL -> RAG 실험 -> API 서빙까지를 한 워�
 
 | 폴더 | 역할 | 콘솔 스크립트 |
 | --- | --- | --- |
-| `data_pipeline/` | raw -> OpenAI Batch API 파싱 -> Neon bulk insert. `sql/` 에 insert 문 | `uv run data-pipeline` |
+| `data_pipeline/` | raw -> OpenAI Batch API 파싱 -> Neon bulk insert + 임베딩. `sql/` 에 insert 문 | `uv run data-pipeline` |
 | `recsys_sql/` | 추천 SQL 카탈로그(`src/recsys_sql/queries/<github_id>/`) + 검증. **serving 의 repository layer** | `uv run recsys-sql` |
 | `rag_lab/` | LangGraph + pgvector RAG 실험(`experiments/<github_id>/`) | `uv run rag-lab` |
 | `serving/` | FastAPI + asyncpg 서빙. SQL 은 recsys_sql 카탈로그를 import (복사본 없음) | `uv run serving` |
