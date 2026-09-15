@@ -111,13 +111,16 @@ AND PRIMARY Ingredient가 정확히 하나
 | 제약 | 이유 |
 | --- | --- |
 | `ingredient_id` FK | 존재하지 않는 Ingredient에 지침 연결 방지 |
-| `(ingredient_id, storage_location, storage_context)` UNIQUE | 같은 서비스 조회에 서로 다른 기간이 겹치지 않도록 함 |
 | `(source_item_id, source_slot)` UNIQUE | FoodKeeper 원천 slot 중복 방지 |
 | 장소·상황·기간·slot CHECK | FoodKeeper slot 변환 오류 방지 |
 
 `source_item_id`는 `fk_134`처럼 접두사가 포함될 수 있는 원천 식별 문자열이다. 서비스 조회값으로
 사용하지 않고, 원천 추적·재적재와 `source_slot` 중복 방지에 사용한다. `source_slot`은 원문 값을
 보존하고, 장소와 상황은 정해진 규칙으로만 파생한다.
+
+하나의 Ingredient·장소·상황에 여러 FoodKeeper 원천이 매핑될 수 있으므로 해당 조합에는 UNIQUE를
+두지 않는다. 원천 variant는 모두 보존하고, 조회 계층에서 Product별 근거 또는 명시된 fallback 규칙으로
+선택한다. 서로 다른 기간을 하나의 대표값으로 병합하지 않는다.
 
 | source slot | 장소 | 상황 |
 | --- | --- | --- |
