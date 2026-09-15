@@ -18,8 +18,10 @@ FROM user_product_affinity upa
 JOIN product p ON p.product_id = upa.product_id
 WHERE upa.user_id = :user_id
   AND p.is_active
-  -- stock_quantity 는 실제 스키마에서 NULL 허용입니다.
-  AND COALESCE(p.stock_quantity, 0) > 0
+  -- stock_quantity 는 NULL 허용이고, **NULL 은 품절이 아니라 "수량을 모른다" 입니다**
+  -- (정규화 가이드 4.3: 품절이 명시된 경우만 0 으로 저장). 모르는 것을 품절로 치면
+  -- 지금 적재분(2,553개 전부 NULL)에서는 결과가 항상 빈손이 됩니다.
+  AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
   AND upa.last_purchased_at IS NOT NULL
   AND upa.last_purchased_at < NOW() - MAKE_INTERVAL(days => :days_since)
   AND NOT EXISTS (
