@@ -46,6 +46,8 @@ class ExplainReport:
     seq_scan_rows: dict[str, int] = field(default_factory=dict)
     # 표 자체의 추정 행수(pg_class.reltuples). 통계가 없으면 -1.
     relation_rows: dict[str, float] = field(default_factory=dict)
+    # 읽은 버퍼 블록 수(hit + read). analyze=True 일 때만 채워집니다.
+    shared_blocks: int = 0
 
     def forbidden_seq_scans(self, forbidden: tuple[str, ...], *, row_limit: int = 0) -> list[str]:
         """풀스캔이 금지된 테이블 중 실제로 풀스캔이 걸린 것.
@@ -92,6 +94,12 @@ async def run_query(
     return QueryResult(query_name=query.name, rows=rows, elapsed_ms=(time.perf_counter() - started) * 1000)
 
 
+def _shared_blocks(node: dict[str, Any]) -> int:
+    """계획 전체가 읽은 버퍼 블록 수. hit 과 read 를 합칩니다."""
+    total = int(node.get("Shared Hit Blocks", 0)) + int(node.get("Shared Read Blocks", 0))
+    return total + sum(_shared_blocks(child) for child in node.get("Plans", []))
+
+
 def _collect_seq_scans(node: dict[str, Any], found: list[str], rows: dict[str, int]) -> None:
     """실행계획 트리에서 Seq Scan 대상 테이블과 추정 행수를 모읍니다."""
     if node.get("Node Type") == "Seq Scan" and "Relation Name" in node:
@@ -108,10 +116,21 @@ async def explain_query(
     conn: AsyncConnection,
     query: SqlQuery,
     params: dict[str, Any] | None = None,
+    *,
+    analyze: bool = False,
 ) -> ExplainReport:
-    """EXPLAIN (FORMAT JSON) 으로 실행계획을 받아옵니다. ANALYZE 는 쓰지 않아 실제 실행은 하지 않습니다."""
+    """EXPLAIN (FORMAT JSON) 으로 실행계획을 받아옵니다.
+
+    기본값은 ANALYZE 없이 계획만 봅니다. `analyze=True` 면 실제로 실행해서 버퍼 사용량까지
+    받아옵니다. 카탈로그 쿼리는 로더가 읽기 전용을 강제하므로 실행해도 안전합니다.
+
+    Neon 은 계산 노드와 스토리지가 분리돼 있어, 버퍼 블록 수가 그대로 네트워크 왕복이
+    될 수 있습니다(`recsys_sql/docs/postgresql_neon_explain_checklist.md`). 그래서 시간보다
+    블록 수가 회귀를 더 정직하게 보여 줍니다.
+    """
     bound = validate_params(query, params or {})
-    raw = (await conn.execute(text(f"EXPLAIN (FORMAT JSON) {query.sql}"), bound)).scalar_one()
+    options = "ANALYZE, BUFFERS, FORMAT JSON" if analyze else "FORMAT JSON"
+    raw = (await conn.execute(text(f"EXPLAIN ({options}) {query.sql}"), bound)).scalar_one()
     plan_list = json.loads(raw) if isinstance(raw, str) else raw
     plan = plan_list[0]["Plan"]
 
@@ -119,6 +138,7 @@ async def explain_query(
     seq_scan_rows: dict[str, int] = {}
     _collect_seq_scans(plan, seq_scans, seq_scan_rows)
     return ExplainReport(
+        shared_blocks=_shared_blocks(plan),
         query_name=query.name,
         plan=plan,
         seq_scans=seq_scans,

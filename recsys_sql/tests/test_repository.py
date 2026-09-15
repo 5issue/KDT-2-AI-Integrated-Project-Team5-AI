@@ -29,10 +29,10 @@ def test_repeated_param_reuses_one_number() -> None:
     body = "\n".join(line for line in query.sql.splitlines() if not line.lstrip().startswith("--"))
     assert body.count(":product_id") == 2
 
-    sql, args = bind_asyncpg(query, {"product_id": 7, "max_results": 10})
+    sql, args = bind_asyncpg(query, {"product_id": 7, "max_results": 10, "skip": 0})
     converted = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
 
-    assert args == (7, 10)
+    assert args == (7, 10, 0)
     assert converted.count("$1") == 2
 
 

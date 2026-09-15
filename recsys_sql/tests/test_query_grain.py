@@ -94,7 +94,7 @@ async def params_for(conn: AsyncConnection, name: str, seeded: SeedIds) -> dict[
         "my_fridge_items": {"user_id": seeded.user},
         "my_recipe_candidates": {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 500},
         "product_detail": {"product_id": product_id},
-        "product_recipes": {"product_id": seeded.tofu_a, "max_results": 500},
+        "product_recipes": {"product_id": seeded.tofu_a, "max_results": 500, "skip": 0},
         "product_storage_guideline": {"product_id": product_id},
         "recipe_detail": {"recipe_id": seeded.kimchi_stew},
         "recipe_missing_ingredients": {

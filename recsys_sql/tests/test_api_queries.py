@@ -161,7 +161,7 @@ class TestProductQueries:
             )
         ).scalar()
 
-        rows = await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 10})
+        rows = await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 10, "skip": 0})
         assert rows
         for row in rows:
             assert row["matched_count"] >= 1, "상품 자기 재료도 안 세고 있습니다"
@@ -187,7 +187,7 @@ class TestProductQueries:
             )
         ).scalar()
 
-        for row in await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 50}):
+        for row in await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 50, "skip": 0}):
             covered = (
                 await db_conn.execute(
                     text(
@@ -322,8 +322,121 @@ class TestRecipeProductPriority:
             },
         )
 
-        rows = await fetch(db_conn, "product_recipes", {"product_id": seeded.tofu_a, "max_results": 50})
+        rows = await fetch(db_conn, "product_recipes", {"product_id": seeded.tofu_a, "max_results": 50, "skip": 0})
         recipe_ids = [row["recipe_id"] for row in rows]
 
         assert seeded.tofu_braise in recipe_ids
         assert len(recipe_ids) == len(set(recipe_ids)), "같은 레시피가 여러 번 나왔습니다"
+
+
+class TestApiSpecContract:
+    """api_spec 응답에 필요한 값이 쿼리에서 나오는지.
+
+    화면이 쓰는 값이 빠지면 서빙이 왕복을 한 번 더 돌거나 값을 지어내게 됩니다.
+    """
+
+    async def test_bubble_list_carries_label_and_description(self, db_conn: AsyncConnection) -> None:
+        """api_spec 13절이 label 과 description 을 함께 요구합니다."""
+        rows = await fetch(db_conn, "bubble_candidate_counts", {})
+
+        assert rows
+        assert all(row["label"] for row in rows)
+        assert all(row["description"] for row in rows), "버블 설명이 비어 있습니다"
+
+    async def test_bubble_products_tell_whether_more_pages_exist(self, db_conn: AsyncConnection) -> None:
+        """api_spec 14절의 has_next 를 만들 수 있어야 합니다.
+
+        전체 개수를 함께 주지 않으면 서빙이 개수를 세는 왕복을 한 번 더 돕니다.
+        """
+        first = await fetch(db_conn, "bubble_products", {"keyword_id": "MEAT", "max_results": 3, "skip": 0})
+
+        assert len(first) == 3
+        total = first[0]["total_count"]
+        assert total > 3, "이 버블에는 다음 페이지가 있어야 합니다"
+
+        tail = await fetch(db_conn, "bubble_products", {"keyword_id": "MEAT", "max_results": 3, "skip": total - 1})
+        assert len(tail) == 1, "마지막 페이지는 total_count 로 계산됩니다"
+
+    async def test_product_recipes_are_pageable(self, db_conn: AsyncConnection) -> None:
+        """api_spec 16절도 next_cursor / has_next 를 요구합니다."""
+        product_id = (
+            await db_conn.execute(
+                text(
+                    """
+                    SELECT pi.product_id
+                    FROM product_ingredient pi
+                    JOIN recipe_ingredient ri ON ri.ingredient_id = pi.ingredient_id AND ri.is_required
+                    WHERE pi.role = 'PRIMARY'
+                    GROUP BY pi.product_id
+                    HAVING COUNT(DISTINCT ri.recipe_id) > 3
+                    ORDER BY pi.product_id
+                    LIMIT 1
+                    """
+                )
+            )
+        ).scalar()
+        assert product_id is not None
+
+        first = await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 2, "skip": 0})
+        second = await fetch(db_conn, "product_recipes", {"product_id": product_id, "max_results": 2, "skip": 2})
+
+        assert len(first) == 2
+        assert first[0]["total_recipes"] > 2
+        assert not {row["recipe_id"] for row in first} & {row["recipe_id"] for row in second}
+
+    async def test_recipe_detail_steps_are_ordered(self, db_conn: AsyncConnection) -> None:
+        """조리 단계가 뒤섞여 나가면 요리가 안 됩니다."""
+        recipe_id = (
+            await db_conn.execute(
+                text(
+                    "SELECT recipe_id FROM recipe_step GROUP BY recipe_id "
+                    "HAVING COUNT(*) > 3 ORDER BY recipe_id LIMIT 1"
+                )
+            )
+        ).scalar()
+        assert recipe_id is not None
+
+        rows = await fetch(db_conn, "recipe_detail", {"recipe_id": recipe_id})
+        steps = [item["step_no"] for item in rows[0]["steps"]]
+
+        assert steps == sorted(steps)
+        assert all(item["instruction"] for item in rows[0]["steps"])
+
+    async def test_unknown_ids_return_nothing_not_an_error(self, db_conn: AsyncConnection) -> None:
+        """없는 id 는 빈 결과여야 합니다. 서빙이 404 를 만들 수 있게."""
+        assert await fetch(db_conn, "product_detail", {"product_id": -1}) == []
+        assert await fetch(db_conn, "recipe_detail", {"recipe_id": -1}) == []
+
+    async def test_bubble_products_rank_by_recipe_demand(self, db_conn: AsyncConnection) -> None:
+        """인기도 데이터가 없어 쓰임새로 정렬합니다. 그 규칙이 실제로 지켜지는지."""
+        rows = await fetch(db_conn, "bubble_products", {"keyword_id": "MEAT", "max_results": 30, "skip": 0})
+        counts = [row["recipe_count"] for row in rows]
+
+        assert rows
+        assert counts == sorted(counts, reverse=True)
+
+    async def test_my_recipes_respect_the_match_rate_floor(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """하한을 올리면 덜 맞는 레시피가 빠져야 합니다."""
+        rows = await fetch(
+            db_conn,
+            "my_recipe_candidates",
+            {"user_id": seeded.user, "min_match_rate": 1.0, "max_results": 100},
+        )
+
+        assert all(float(row["match_rate"]) == 1.0 for row in rows)
+
+    async def test_multi_primary_product_is_one_fridge_row(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """PRIMARY 가 둘이어도 냉장고 한 칸은 한 줄입니다. 재료만 배열로 늘어납니다."""
+        await db_conn.execute(
+            text(
+                "INSERT INTO product_ingredient (product_id, ingredient_id, role) "
+                "VALUES (:product_id, :ingredient_id, 'PRIMARY')"
+            ),
+            {"product_id": seeded.kimchi_a, "ingredient_id": seeded.pork},
+        )
+
+        rows = await fetch(db_conn, "my_fridge_items", {"user_id": seeded.user})
+        kimchi = next(row for row in rows if row["product_id"] == seeded.kimchi_a)
+
+        assert len([row for row in rows if row["product_id"] == seeded.kimchi_a]) == 1
+        assert len(kimchi["ingredients"]) == 2

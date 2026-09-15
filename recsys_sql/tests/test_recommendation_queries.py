@@ -18,6 +18,7 @@ from recsys_sql.fixtures import SeedIds
 from recsys_sql.runner import explain_query, run_query
 
 TEMPLATE_DIR = PACKAGE_DIR / "queries" / "_template"
+QUERY_DIR = PACKAGE_DIR / "queries" / "openLeeWorld"
 
 pytestmark = pytest.mark.db
 
@@ -265,3 +266,39 @@ class TestProductIngredientRole:
 
         assert seeded.kimchi_a not in sesame_products, "SECONDARY 로 걸린 상품이 추천되었습니다."
         assert sesame_products, "PRIMARY 상품까지 같이 빠지면 안 됩니다."
+
+
+class TestBufferBudget:
+    """Neon 에서는 버퍼 블록 수가 그대로 네트워크 왕복이 됩니다.
+
+    계산 노드와 스토리지가 분리돼 있어, 캐시가 식으면 `shared hit` 이 `shared read` 로
+    바뀝니다(`recsys_sql/docs/postgresql_neon_explain_checklist.md` 3절).
+    그래서 시간보다 블록 수가 회귀를 정직하게 보여 줍니다.
+
+    홈 화면 첫 쿼리가 한때 5행을 내는 데 **197만 블록**을 읽었습니다. 버블 규칙 해석이
+    (버블 x 레시피) 쌍마다 재료 집계를 다시 돌린 탓이었고, alembic 0010 에서 레시피당
+    한 번만 집계하도록 고쳤습니다(4,600 블록). 다시 그 모양으로 돌아가지 않게 막습니다.
+    """
+
+    BUDGET = 100_000
+
+    @pytest.mark.parametrize(
+        ("query_name", "params"),
+        [
+            ("bubble_candidate_counts", {}),
+            ("bubble_recipe_candidates", {"keyword_id": "MEAT", "max_results": 50}),
+            ("bubble_products", {"keyword_id": "MEAT", "max_results": 20, "skip": 0}),
+        ],
+    )
+    async def test_bubble_queries_stay_within_budget(
+        self, db_conn: AsyncConnection, query_name: str, params: dict[str, Any]
+    ) -> None:
+        """버블 쿼리 3종은 같은 뷰를 봅니다. 뷰가 무거워지면 셋 다 같이 무거워집니다."""
+        query = next(query for query in load_catalog(QUERY_DIR) if query.name == query_name)
+        report = await explain_query(db_conn, query, params, analyze=True)
+
+        assert report.shared_blocks, "BUFFERS 가 안 붙었습니다"
+        assert report.shared_blocks < self.BUDGET, (
+            f"{query_name}: 버퍼 {report.shared_blocks:,} 블록. 예산 {self.BUDGET:,}. "
+            "뷰가 레시피당 한 번이 아니라 쌍마다 집계하고 있는지 확인하세요."
+        )

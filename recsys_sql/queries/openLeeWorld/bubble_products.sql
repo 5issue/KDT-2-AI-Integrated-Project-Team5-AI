@@ -47,6 +47,10 @@ SELECT p.product_id,
        p.origin_country,
        p.stock_quantity,
        MAX(d.recipe_count) AS recipe_count,
+       -- api_spec 14절의 has_next / next_cursor 용입니다. 페이지를 잘라 내기 전의
+       -- 전체 개수라, 서빙이 `skip + 받은 수 < total_count` 로 판단하면 됩니다.
+       -- 개수를 따로 세는 왕복을 한 번 더 도는 것보다 낫습니다.
+       COUNT(*) OVER () AS total_count,
        JSONB_AGG(
            JSONB_BUILD_OBJECT('ingredient_id', i.ingredient_id, 'name', i.name)
            ORDER BY d.recipe_count DESC, i.name

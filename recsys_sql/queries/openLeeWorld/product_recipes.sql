@@ -1,7 +1,7 @@
 -- name: product_recipes
 -- owner: openLeeWorld
 -- description: 상품으로 만들 수 있는 레시피. 재료 경유로 찾고 커버리지 요약을 붙입니다
--- params: product_id:int, max_results:int
+-- params: product_id:int, max_results:int, skip:int
 --
 -- `GET /products/{productId}/recipes` 용입니다.
 --
@@ -56,7 +56,9 @@ SELECT r.recipe_id,
        r.cooking_method,
        s.total_count,
        s.matched_count,
-       s.missing_count
+       s.missing_count,
+       -- api_spec 16절의 has_next 용. 자르기 전 전체 개수입니다.
+       COUNT(*) OVER () AS total_recipes
 FROM summary s
 JOIN recipe r              ON r.recipe_id = s.recipe_id
 -- recipe_product 의 키는 (recipe_id, ingredient_id, product_id) 입니다. 재료 자리까지
@@ -75,4 +77,5 @@ ORDER BY COALESCE(rp.recommendation_priority, 0) DESC,
          s.missing_count ASC,
          r.cook_time_min ASC NULLS LAST,
          r.recipe_id ASC
-LIMIT :max_results;
+LIMIT :max_results
+OFFSET :skip;

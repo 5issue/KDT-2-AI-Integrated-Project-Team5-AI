@@ -11,13 +11,15 @@
 -- 나오는 상태가 됩니다. 실제로 이 파일과 `bubble_recipe_candidates` 가 한동안
 -- 서로 다른 해석을 들고 있었습니다.
 
+-- `description` 은 api_spec 13절 응답에 들어갑니다. 화면이 버블 아래 설명으로 씁니다.
 SELECT b.keyword_id,
        b.label,
+       b.description,
        b.min_candidates,
        COUNT(c.recipe_id) AS candidates,
        COUNT(c.recipe_id) >= b.min_candidates AS is_servable
 FROM bubble_keyword b
 LEFT JOIN bubble_recipe_candidate c ON c.keyword_id = b.keyword_id
 WHERE b.is_active
-GROUP BY b.keyword_id, b.label, b.min_candidates, b.display_order
+GROUP BY b.keyword_id, b.label, b.description, b.min_candidates, b.display_order
 ORDER BY b.display_order;
