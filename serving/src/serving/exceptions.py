@@ -23,7 +23,9 @@ _STATUS_TO_CODE = {code.http_status: code for code in ErrorCode}
 
 
 def _is_api_request(request: Request) -> bool:
-    return request.url.path.startswith(API_PREFIX)
+    # startswith 만 쓰면 /api/v10 같은 유사 prefix 도 걸립니다. 경로 경계까지 봅니다.
+    path = request.url.path
+    return path == API_PREFIX or path.startswith(f"{API_PREFIX}/")
 
 
 def _envelope_response(status_code: int, code: ErrorCode, message: str | None = None) -> JSONResponse:

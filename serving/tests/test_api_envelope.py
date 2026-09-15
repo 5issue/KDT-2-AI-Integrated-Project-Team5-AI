@@ -64,3 +64,11 @@ async def test_health_endpoints_stay_plain(offline_client: AsyncClient) -> None:
 
     assert ready.status_code == 503
     assert "detail" in ready.json()
+
+
+async def test_prefix_match_requires_path_boundary(offline_client: AsyncClient) -> None:
+    """/api/v10 처럼 prefix 만 비슷한 경로는 envelope 대상이 아닙니다."""
+    response = await offline_client.get("/api/v10/users/1/recipe-recommendations")
+
+    assert response.status_code == 404
+    assert "detail" in response.json()
