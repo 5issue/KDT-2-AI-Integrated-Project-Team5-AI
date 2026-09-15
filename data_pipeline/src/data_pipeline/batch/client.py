@@ -25,9 +25,16 @@ from data_pipeline.schemas import strict_json_schema
 
 CHAT_COMPLETIONS_URL = "/v1/chat/completions"
 TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+# 종료됐지만 결과가 없는 상태. 더 기다려도 달라지지 않으므로 폴링을 멈춰야 합니다.
+DEAD_STATUSES = frozenset({"failed", "expired", "cancelled"})
 
 # OpenAI 제한: 입력 파일 하나에 50,000줄 / 200MB
 HARD_MAX_REQUESTS = 50_000
+
+# 토큰 추정용 문자수 나눗값. 한국어와 영어가 섞여 있어 정확하지는 않습니다.
+# tiktoken 을 붙이면 정확해지지만 의존성이 늘어서, **적게 나눠 넘치는 쪽보다
+# 많이 나눠 안전한 쪽**으로 보수적인 값을 씁니다. 넘치면 배치가 통째로 죽습니다.
+CHARS_PER_TOKEN = 2.5
 
 
 @dataclass(slots=True)
@@ -41,6 +48,7 @@ class BatchJob:
     submitted_at: str
     output_file_id: str | None = None
     error_file_id: str | None = None
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -67,6 +75,13 @@ class BatchOutcome:
     def summary(self) -> str:
         """한 줄 요약."""
         return f"성공 {len(self.records)}건 / 실패 {len(self.failures)}건 (총 {self.total}건)"
+
+
+def estimate_tokens(request: dict[str, Any]) -> int:
+    """요청 한 줄의 입력 토큰 어림값. 파일을 나눌 기준으로만 씁니다."""
+    body = request.get("body", {})
+    chars = sum(len(str(message.get("content", ""))) for message in body.get("messages", []))
+    return int(chars / CHARS_PER_TOKEN) + 1
 
 
 def build_chat_request(
@@ -126,11 +141,13 @@ class BatchRunner:
         """요청들을 JSONL 로 떨어뜨립니다. 줄 수 제한을 넘으면 파트로 나눕니다."""
         self.requests_dir.mkdir(parents=True, exist_ok=True)
         limit = min(self.settings.batch_max_requests, HARD_MAX_REQUESTS)
+        token_limit = self.settings.batch_max_tokens
 
         written: list[Path] = []
         seen: set[str] = set()
         part = 1
         count = 0
+        used = 0
         handle = None
         try:
             for request in requests:
@@ -141,7 +158,19 @@ class BatchRunner:
                     )
                 seen.add(custom_id)
 
-                if handle is None or count >= limit:
+                tokens = estimate_tokens(request)
+                # 요청 하나가 상한을 넘으면 새 파트를 열어도 소용이 없습니다.
+                # `count > 0` 조건 때문에 그런 요청은 그냥 담겨서, 상한을 두는 이유였던
+                # token_limit_exceeded 를 그대로 다시 맞습니다. 여기서 멈춥니다.
+                if tokens > token_limit:
+                    raise ValueError(
+                        f"{custom_id}: 요청 하나의 추정 토큰이 {tokens:,} 로 "
+                        f"BATCH_MAX_TOKENS({token_limit:,}) 를 넘습니다. "
+                        "EXTRACT_MAX_ENTITIES 를 줄이거나 상한을 올리세요."
+                    )
+                # 줄 수와 토큰 둘 다 본다. 토큰이 먼저 차는 쪽이 보통 레시피 데이터입니다.
+                over_tokens = count > 0 and used + tokens > token_limit
+                if handle is None or count >= limit or over_tokens:
                     if handle is not None:
                         handle.close()
                     path = self.requests_dir / f"{job_name}_part{part:03d}_input.jsonl"
@@ -149,8 +178,10 @@ class BatchRunner:
                     written.append(path)
                     part += 1
                     count = 0
+                    used = 0
                 handle.write(json.dumps(request, ensure_ascii=False) + "\n")
                 count += 1
+                used += tokens
         finally:
             if handle is not None:
                 handle.close()
@@ -181,16 +212,44 @@ class BatchRunner:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return [BatchJob(**item) for item in payload["jobs"]]
 
-    def submit(self, job_name: str) -> list[BatchJob]:
-        """이 잡의 입력 파일들을 업로드하고 배치를 생성합니다."""
+    def pending_parts(self, job_name: str) -> list[Path]:
+        """아직 제출하지 않았거나, 제출했지만 죽은 파트.
+
+        실패/만료/취소된 파트는 결과가 없으므로 다시 넣어야 합니다. 매니페스트에 있다는
+        이유로 건너뛰면 그 파트가 조용히 빠진 채로 파이프라인이 끝납니다.
+        """
         inputs = sorted(self.requests_dir.glob(f"{job_name}_part*_input.jsonl"))
-        if not inputs:
+        try:
+            jobs = self.load_manifest(job_name)
+        except FileNotFoundError:
+            return inputs
+        alive = {job.input_file for job in jobs if job.status not in DEAD_STATUSES}
+        return [path for path in inputs if path.name not in alive]
+
+    def submit(self, job_name: str, *, max_parts: int | None = None) -> list[BatchJob]:
+        """아직 제출하지 않은 입력 파일을 업로드하고 배치를 생성합니다.
+
+        `max_parts` 로 한 번에 몇 파트만 넣을 수 있습니다. OpenAI 의 대기 토큰 한도는
+        조직 단위라, 전부 한꺼번에 넣으면 넘칩니다. 한 파트가 끝난 뒤 다음을 넣는 식으로
+        나눠 제출하면 됩니다. 이미 제출한 파트는 매니페스트에 남아 다시 넣지 않습니다.
+        """
+        pending = self.pending_parts(job_name)
+        if not pending:
+            if sorted(self.requests_dir.glob(f"{job_name}_part*_input.jsonl")):
+                return []
             raise FileNotFoundError(f"{self.stage}: {job_name} 의 입력 파일이 없습니다. 먼저 build 를 실행하세요.")
         if self.settings.dry_run:
             raise RuntimeError("DRY_RUN=true 인 상태에서는 배치를 제출하지 않습니다.")
 
-        jobs: list[BatchJob] = []
-        for path in inputs:
+        try:
+            jobs: list[BatchJob] = self.load_manifest(job_name)
+        except FileNotFoundError:
+            jobs = []
+        targets = pending[:max_parts] if max_parts else pending
+        # 죽은 파트를 재제출하는 경우, 매니페스트의 옛 기록은 새 배치로 갈아끼웁니다.
+        retry = {path.name for path in targets}
+        jobs = [job for job in jobs if job.input_file not in retry]
+        for path in targets:
             with path.open("rb") as handle:
                 uploaded = self.client.files.create(file=handle, purpose="batch")
             batch = self.client.batches.create(
@@ -208,7 +267,10 @@ class BatchRunner:
                     submitted_at=datetime.now(UTC).isoformat(timespec="seconds"),
                 )
             )
-        self.save_manifest(job_name, jobs)
+            # 파트마다 저장합니다. 루프가 끝난 뒤에만 저장하면, 중간 파트에서 실패했을 때
+            # 이미 생성된 원격 배치가 매니페스트에 없는 채로 남습니다. 그 상태로 재시도하면
+            # 같은 파트를 또 제출해 LLM 비용을 두 번 냅니다.
+            self.save_manifest(job_name, jobs)
         return jobs
 
     def refresh(self, job_name: str) -> list[BatchJob]:
@@ -219,6 +281,7 @@ class BatchRunner:
             job.status = batch.status
             job.output_file_id = batch.output_file_id
             job.error_file_id = batch.error_file_id
+            job.error = _first_error(batch)
         self.save_manifest(job_name, jobs)
         return jobs
 
@@ -282,6 +345,22 @@ class BatchRunner:
                     BatchFailure(custom_id=custom_id, reason="schema_validation", detail=str(exc)[:500])
                 )
         return outcome
+
+
+def _first_error(batch: Any) -> str | None:
+    """배치 자체가 실패했을 때의 사유. 요청 단위 실패가 아니라 배치 전체 거절입니다.
+
+    한도 초과(`token_limit_exceeded`)처럼 몇 초 만에 죽는 경우가 있어, 이 값이 없으면
+    호출한 쪽이 "아직 도는 중" 과 구분하지 못합니다.
+    """
+    errors = getattr(batch, "errors", None)
+    data = getattr(errors, "data", None) if errors is not None else None
+    if not data:
+        return None
+    first = data[0]
+    code = getattr(first, "code", None)
+    message = getattr(first, "message", None)
+    return f"{code}: {message}" if code else str(message)
 
 
 def _iter_jsonl(files: Sequence[Path]) -> Iterator[dict[str, Any]]:

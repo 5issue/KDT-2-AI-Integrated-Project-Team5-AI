@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from recsys_sql.config import Settings, get_settings
 
@@ -26,6 +27,9 @@ _META_LINE = re.compile(r"^\s*--\s*(?P<key>name|owner|description|params|tags)\s
 _BIND_PARAM = re.compile(r"(?<![:\w]):([a-zA-Z_]\w*)")
 
 _ALLOWED_PARAM_TYPES = frozenset({"int", "float", "str", "bool", "date", "list[int]", "list[str]"})
+
+# 헤더 줄의 `-- name:` 같은 표기는 바인딩이 아닙니다.
+_META_KEYS = frozenset({"name", "owner", "description", "params", "tags"})
 
 # 카탈로그 SQL 은 읽기 전용이어야 합니다. 쓰기 구문이 들어오면 검증에서 막습니다.
 _WRITE_KEYWORDS = re.compile(
@@ -78,6 +82,59 @@ def _parse_params(raw: str) -> dict[str, str]:
     return params
 
 
+# 파라미터 타입 이름 -> 받아 줄 파이썬 타입.
+# SQLAlchemy 를 끌어오지 않고도 검증할 수 있어야 해서 여기 둡니다. 서빙은 asyncpg 만 씁니다.
+_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
+    "int": (int,),
+    "float": (int, float),
+    "str": (str,),
+    "bool": (bool,),
+    "date": (str,),
+    "list[int]": (list, tuple),
+    "list[str]": (list, tuple),
+}
+
+
+def validate_params(query: SqlQuery, params: dict[str, Any]) -> dict[str, Any]:
+    """선언된 파라미터가 다 왔는지, 타입이 맞는지 확인합니다."""
+    if missing := sorted(set(query.params) - set(params)):
+        raise CatalogError(f"{query.name}: 파라미터가 빠졌습니다: {missing}")
+    if extra := sorted(set(params) - set(query.params)):
+        raise CatalogError(f"{query.name}: 선언되지 않은 파라미터입니다: {extra}")
+
+    for name, type_name in query.params.items():
+        _check_value(query.name, name, type_name, params[name])
+    return params
+
+
+# 리스트 선언의 원소 타입.
+_ELEMENT_TYPES: dict[str, str] = {"list[int]": "int", "list[str]": "str"}
+
+
+def _check_value(query_name: str, name: str, type_name: str, value: Any) -> None:
+    """값 하나가 선언한 타입과 맞는지 봅니다."""
+    # 파이썬에서 bool 은 int 의 서브클래스입니다. 숫자 자리에 True 가 들어가면
+    # 여기서 안 막을 때 DB 까지 가서 1 로 바뀝니다. int 와 float 둘 다 막습니다.
+    if type_name in {"int", "float"} and isinstance(value, bool):
+        raise CatalogError(f"{query_name}.{name}: {type_name} 자리에 bool 이 들어왔습니다.")
+
+    if not isinstance(value, _PYTHON_TYPES[type_name]):
+        raise CatalogError(f"{query_name}.{name}: {type_name} 을 기대했지만 {type(value).__name__} 입니다.")
+
+    # 리스트는 껍데기만 보면 부족합니다. `list[int]` 에 문자열이 담겨 와도 통과해 버리고,
+    # 그 값은 asyncpg 바인딩 시점에 가서야 터집니다.
+    element_type = _ELEMENT_TYPES.get(type_name)
+    if element_type is None:
+        return
+    for index, item in enumerate(value):
+        if element_type == "int" and isinstance(item, bool):
+            raise CatalogError(f"{query_name}.{name}[{index}]: int 자리에 bool 이 들어왔습니다.")
+        if not isinstance(item, _PYTHON_TYPES[element_type]):
+            raise CatalogError(
+                f"{query_name}.{name}[{index}]: {element_type} 을 기대했지만 {type(item).__name__} 입니다."
+            )
+
+
 def load_query(path: Path) -> SqlQuery:
     """.sql 파일 하나를 읽어 메타데이터까지 검증합니다."""
     text = path.read_text(encoding="utf-8")
@@ -113,6 +170,16 @@ def load_query(path: Path) -> SqlQuery:
 
     if match := _WRITE_KEYWORDS.search(_strip_comments(text)):
         raise CatalogError(f"{path.name}: 카탈로그 쿼리는 읽기 전용이어야 합니다 ({match.group(0)} 발견).")
+
+    # SQLAlchemy 의 `text()` 는 주석 안까지 훑어 `:이름` 을 바인딩으로 잡습니다.
+    # 위 검사는 주석을 지우고 보기 때문에, 설명에 `:w1` 같은 표기를 적어 두면
+    # 여기서는 통과하고 실행 시점에 "값이 없다" 로 터집니다. 실제로 한 번 밟았습니다.
+    body_only = {name for name in _BIND_PARAM.findall(text) if name not in _META_KEYS}
+    if in_comment := body_only - used - declared:
+        raise CatalogError(
+            f"{path.name}: 주석에 바인딩처럼 보이는 표기가 있습니다: {sorted(in_comment)}. "
+            "설명에는 콜론 대신 다른 표기를 쓰세요."
+        )
 
     return query
 

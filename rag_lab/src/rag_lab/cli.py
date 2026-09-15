@@ -12,7 +12,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from rag_lab.clients import OpenAIChatClient, OpenAIEmbeddingClient
+from rag_lab.clients import LlmChatClient, LlmEmbeddingClient
 from rag_lab.config import get_settings
 from rag_lab.db import check_connection, engine_scope
 from rag_lab.experiment import load_cases, run_experiment
@@ -39,8 +39,8 @@ async def ask_once(question: str) -> int:
         async with engine.connect() as conn:
             deps = RagDependencies(
                 conn=conn,
-                embedder=OpenAIEmbeddingClient(settings),
-                chat=OpenAIChatClient(settings),
+                embedder=LlmEmbeddingClient(settings),
+                chat=LlmChatClient(settings),
                 settings=settings,
             )
             state = await make_ask(deps)(question)
@@ -67,8 +67,8 @@ async def run_experiment_command(name: str, cases_path: Path, out_dir: Path | No
         async with engine.connect() as conn:
             deps = RagDependencies(
                 conn=conn,
-                embedder=OpenAIEmbeddingClient(settings),
-                chat=OpenAIChatClient(settings),
+                embedder=LlmEmbeddingClient(settings),
+                chat=LlmChatClient(settings),
                 settings=settings,
             )
             report = await run_experiment(name, cases, deps, settings=settings)

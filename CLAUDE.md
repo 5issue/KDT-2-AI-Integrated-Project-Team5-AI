@@ -29,17 +29,24 @@ raw 데이터 적재 -> 추천 SQL -> RAG 실험 -> API 서빙까지를 한 워�
 
 | 폴더 | 역할 | 콘솔 스크립트 |
 | --- | --- | --- |
-| `data_pipeline/` | raw -> OpenAI Batch API 파싱 -> Neon bulk insert. `sql/` 에 insert 문, `migrations/` 에 alembic | `uv run data-pipeline` |
-| `recsys_sql/` | 추천 SQL 카탈로그(`queries/<github_id>/`) + pytest 검증 | `uv run recsys-sql` |
+| `data_pipeline/` | raw -> OpenAI Batch API 파싱 -> Neon bulk insert. `sql/` 에 insert 문 | `uv run data-pipeline` |
+| `recsys_sql/` | 추천 SQL 카탈로그(`src/recsys_sql/queries/<github_id>/`) + 검증. **serving 의 repository layer** | `uv run recsys-sql` |
 | `rag_lab/` | LangGraph + pgvector RAG 실험(`experiments/<github_id>/`) | `uv run rag-lab` |
-| `serving/` | FastAPI + asyncpg 서빙. `sql/` 은 recsys_sql 에서 promote | `uv run serving` |
+| `serving/` | FastAPI + asyncpg 서빙. SQL 은 recsys_sql 카탈로그를 import (복사본 없음) | `uv run serving` |
 
-주의할 점 두 가지:
+담당: `data_pipeline` / `database` 는 공통, `recsys_sql` 은 openLeeWorld,
+`rag_lab` 과 `serving` 은 각 담당자. 남은 일은 `docs/backlog-*.md` 에 있습니다.
+
+주의할 점 세 가지:
 
 - **`python -m <패키지>` 를 쓰지 말 것.** 루트에 멤버와 같은 이름의 디렉터리가 있어
   네임스페이스 패키지로 잡힙니다. 위 콘솔 스크립트를 쓰세요.
 - **테스트 파일 basename 은 레포 전체에서 유일해야 함.** pytest prepend 임포트 모드에서
   폴더가 달라도 같은 이름이면 충돌합니다.
+- **SQL 을 폴더 사이로 복사하지 말 것.** `serving` 은 `.sql` 파일을 갖지 않고
+  `recsys_sql` 카탈로그를 import 합니다. 복사본은 반드시 갈라집니다.
+- **카탈로그는 패키지 안(`src/recsys_sql/queries/`)에 둘 것.** 패키지 밖에 두면 휠에
+  담기지 않아 이미지 첫 요청에서 죽습니다. 개발 중에는 editable 설치라 안 드러납니다.
 
 ## Python workspace
 

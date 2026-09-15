@@ -2,10 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # src/serving/config.py -> serving/
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
-    cors_allow_origins: tuple[str, ...] = ()
+    cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
     @field_validator("cors_allow_origins", mode="before")
@@ -48,11 +48,6 @@ class Settings(BaseSettings):
     def docs_url(self) -> str | None:
         """local 이 아니면 문서 페이지를 닫습니다. 스키마 노출을 줄입니다."""
         return "/docs" if self.environment == "local" else None
-
-    @property
-    def sql_dir(self) -> Path:
-        """엔드포인트가 쓰는 .sql 파일 디렉터리."""
-        return PACKAGE_DIR / "sql"
 
     def require_database_url(self) -> str:
         """DB URL 을 꺼내되, 비어 있으면 값 노출 없이 실패시킵니다."""

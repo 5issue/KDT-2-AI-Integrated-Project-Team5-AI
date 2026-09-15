@@ -38,12 +38,20 @@ class Settings(BaseSettings):
     match_chunk_size: int = Field(default=25, ge=1, le=200)
     # 이 확신도 미만의 매칭은 채택하지 않고 미매칭으로 보고합니다.
     match_min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    # 번역된 레시피(원문이 한국어가 아닌 것)를 적재할 최소 재료 매칭률.
+    # MVP 방침: 재료가 절반도 안 붙은 레시피는 "부족 재료" 계산이 무의미해 데모에 못 씁니다.
+    # 한국어 원본 레시피는 이 필터를 적용하지 않습니다(우선 적재 대상).
+    recipe_min_match_rate: float = Field(default=0.7, ge=0.0, le=1.0)
     # recipe.source_type 기본값. 비워두면 데이터셋 이름을 씁니다.
     recipe_source_type: str = ""
     # 용어 기준표 원본 경로. 비워두면 domain.TERMINOLOGY_GUIDE 를 씁니다.
     terminology_path: Path | None = None
 
     batch_max_requests: int = Field(default=40_000, ge=1, le=50_000)
+    # 입력 파일 하나에 담을 토큰 상한. OpenAI 는 조직 단위로 "대기 중인 토큰" 한도를 두는데
+    # (gpt-4.1-mini 기준 200만) 한 번에 넘기면 배치가 몇 초 만에 token_limit_exceeded 로
+    # 죽습니다. 파일을 나눠 순차 제출하려고 둡니다.
+    batch_max_tokens: int = Field(default=1_000_000, ge=1_000)
     copy_chunk_size: int = Field(default=5_000, ge=1)
     dry_run: bool = False
 

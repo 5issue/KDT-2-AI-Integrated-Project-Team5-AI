@@ -6,9 +6,14 @@
 -- 우선순위: 레시피 지정 상품(recipe_product.recommendation_priority) > 최근 인기도 > 낮은 가격.
 -- 품절이거나 비활성인 상품은 후보에서 뺍니다.
 
+-- 냉장고는 상품을 담으므로 재료는 상품의 PRIMARY 구성 재료로 풉니다.
+-- `fridge_recipe_match` 와 같은 정의를 씁니다. 두 쿼리가 보유 재료를 다르게 보면
+-- "부족하다고 했는데 목록에는 없는" 재료가 생깁니다.
 WITH fridge AS (
-    SELECT DISTINCT uf.ingredient_id
+    SELECT DISTINCT pi.ingredient_id
     FROM user_fridge uf
+    JOIN product_ingredient pi ON pi.product_id = uf.product_id
+                              AND pi.role = 'PRIMARY'
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
 ),
@@ -37,7 +42,11 @@ ranked AS (
                         p.product_id ASC
            ) AS rank_in_ingredient
     FROM missing m
+    -- PRIMARY 만 봅니다. 냉장고 쪽(위 fridge CTE)이 PRIMARY 로만 보유를 인정하므로,
+    -- 여기서 SECONDARY 로 걸린 상품을 추천하면 그걸 담아도 재료는 계속 부족한 채 남습니다.
+    -- 밀키트에 조금 들어갔다고 "이걸 사면 두부가 해결된다" 고 말하면 안 됩니다.
     JOIN product_ingredient pi ON pi.ingredient_id = m.ingredient_id
+                              AND pi.role = 'PRIMARY'
     JOIN product p             ON p.product_id = pi.product_id
                               AND p.is_active
                               -- stock_quantity 는 실제 스키마에서 NULL 허용이라 COALESCE 가 필요합니다.

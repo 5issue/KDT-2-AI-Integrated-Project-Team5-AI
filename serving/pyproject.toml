@@ -8,8 +8,13 @@ dependencies = [
     "fastapi>=0.121.2",
     "pydantic>=2.12.4",
     "pydantic-settings>=2.13.1",
+    # SQL 카탈로그. serving 은 .sql 을 직접 갖지 않고 여기서 가져다 씁니다.
+    "recsys-sql",
     "uvicorn[standard]>=0.38.0",
 ]
+
+[tool.uv.sources]
+recsys-sql = { workspace = true }
 
 [project.scripts]
 serving = "serving.cli:main"
