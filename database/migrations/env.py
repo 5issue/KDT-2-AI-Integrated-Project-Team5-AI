@@ -1,6 +1,7 @@
 """Alembic 환경 설정.
 
-접속 문자열은 저장소에 두지 않는다. 저장소 루트의 `.env` 에 있는 `DATABASE_URL` 만 읽는다.
+접속 문자열은 저장소에 두지 않는다. 기본으로 저장소 루트의 `.env` 에 있는
+`DATABASE_URL`을 읽고, `DATABASE_URL_ENV_KEY`로 다른 환경변수 키를 선택할 수 있다.
 production 브랜치에 실수로 적용하지 않도록, 엔드포인트를 확인하고 싶으면
 `ALEMBIC_ALLOWED_HOST_PREFIX` 환경변수에 접두사를 지정한다.
 """
@@ -21,9 +22,12 @@ if config.config_file_name is not None:
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-database_url = os.getenv("DATABASE_URL")
+# 기본값은 기존 DATABASE_URL 이다. 임시 Neon 브랜치를 검증할 때만
+# DATABASE_URL_ENV_KEY=DATABASE_URL_DEV_SUBEOM2 처럼 대상 키를 명시한다.
+database_url_env_key = os.getenv("DATABASE_URL_ENV_KEY", "DATABASE_URL")
+database_url = os.getenv(database_url_env_key)
 if not database_url:
-    raise RuntimeError("DATABASE_URL 이 없다. 저장소 루트의 .env 를 확인한다.")
+    raise RuntimeError(f"{database_url_env_key} 이(가) 없다. 저장소 루트의 .env 를 확인한다.")
 
 allowed_prefix = os.getenv("ALEMBIC_ALLOWED_HOST_PREFIX")
 if allowed_prefix:
