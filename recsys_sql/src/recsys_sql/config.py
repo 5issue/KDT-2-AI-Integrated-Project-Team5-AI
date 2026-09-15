@@ -46,8 +46,21 @@ class Settings(BaseSettings):
 
     @property
     def queries_dir(self) -> Path:
-        """SQL 카탈로그 루트. 각자 폴더는 이 아래 github id 로 만듭니다."""
-        return PACKAGE_DIR / "queries"
+        """SQL 카탈로그 루트. 각자 폴더는 이 아래 github id 로 만듭니다.
+
+        두 군데를 봅니다.
+
+        1. 설치된 패키지 안 (`site-packages/recsys_sql/queries`)
+        2. 레포 트리 (`recsys_sql/queries`)
+
+        개발 중에는 editable 설치라 `__file__` 이 레포 안을 가리켜 2번이 잡히고,
+        이미지에서는 `--no-editable` 로 깔려 1번이 잡힙니다. 둘 다 돌아야 합니다.
+
+        `PACKAGE_DIR` 은 `parents[2]` 라 설치된 패키지에서는 엉뚱한 곳
+        (`lib/python3.11`)을 가리킵니다. 그래서 1번을 먼저 봅니다.
+        """
+        packaged = Path(__file__).resolve().parent / "queries"
+        return packaged if packaged.is_dir() else PACKAGE_DIR / "queries"
 
     @property
     def owner_dir(self) -> Path:

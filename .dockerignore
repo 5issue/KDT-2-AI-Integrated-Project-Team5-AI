@@ -1,67 +1,66 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-dist/
-build/
-.pytest_cache
+# 이미지 컨텍스트에서 제외할 것.
+#
+# 빌드 컨텍스트는 **레포 루트**입니다(serving 이 recsys_sql 을 워크스페이스 의존성으로
+# 받으므로 serving/ 만 보내면 빌드가 안 됩니다). 그래서 루트의 무거운 것과 비밀값을
+# 여기서 확실히 걸러야 합니다.
 
-# 환경
-.env
-.env.*
-!.env.example
-.venv/
-venv/
-.venv
-
-# uv
-.python-version
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# 모델 가중치 / 데이터 (용량이 크므로 Git LFS 또는 제외)
-*.pt
-*.pth
-*.ckpt
-*.bin
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# macOS
-.DS_Store
-
-# 로그
-*.log
-logs/
-wandb/
-mlruns/
-
-# ai 작업 문서들
-ai_context/
-AI_CONTEXT/
-
-# .dockerignore (루트)
-.venv/
-**/.venv/
-**/__pycache__/
+# --- 비밀값 (가장 중요) ------------------------------------------------------
+# `*` 는 `/` 를 넘지 않습니다. `*.pem` 은 루트의 pem 만 막고 `certs/server.pem` 은
+# 그대로 들어갑니다. 깊이를 넘기려면 `**/` 를 붙여야 합니다.
+# .env 가 이미지에 들어가면 레이어에 남아 `docker history` 로 보입니다.
+# 컨테이너에는 .env 파일이 필요 없습니다. 환경변수로 넣으면 pydantic-settings 가 읽습니다.
 **/.env
 **/.env.*
 !**/.env.example
+**/*.pem
+**/*.key
+**/*.tfvars
+**/id_rsa*
+**/*.p12
+
+# --- 빌드가 안 쓰는 것 -------------------------------------------------------
 .git/
+.github/
+.venv/
+**/.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+.ruff_cache/
+**/*.egg-info/
+**/dist/
+**/build/
+
+# --- 무거운 데이터 -----------------------------------------------------------
+# data_pipeline 은 이미지에 들어가지 않습니다. 적재는 별도 잡으로 돌립니다.
 data_pipeline/data/
 notebooks/
+**/*.ipynb
+**/.ipynb_checkpoints/
+**/*.jsonl
+**/*.parquet
+**/*.csv
+**/*.xls*
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.bin
+**/*.safetensors
+
+# --- 문서 --------------------------------------------------------------------
 ai_context/
-**/.pytest_cache/
+AI_CONTEXT/
 docs/
-*.jsonl
-*.parquet
-*.bin
-*safetensors
+*.md
+!README.md
+
+# --- 로컬 흔적 ---------------------------------------------------------------
+.vscode/
+.idea/
+**/*.swp
+**/.DS_Store
+**/*.log
+**/logs/
+wandb/
+mlruns/
