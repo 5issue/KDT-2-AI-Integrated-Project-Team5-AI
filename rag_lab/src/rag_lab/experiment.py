@@ -97,8 +97,12 @@ class ExperimentReport:
 def snapshot_params(settings: Settings) -> dict[str, object]:
     """실험에 영향을 주는 설정만 뽑습니다. 자격증명은 담지 않습니다."""
     return {
-        "chat_model": settings.openai_chat_model,
-        "embedding_model": settings.openai_embedding_model,
+        # 공급자도 기록합니다. 같은 모델명이라도 어디를 거쳤는지에 따라 결과가 달라져서,
+        # 이 값이 없으면 지난 실험과 비교할 수 없습니다.
+        "provider": settings.llm_provider,
+        "chat_model": settings.llm_model,
+        "embedding_provider": settings.embedding_provider_name,
+        "embedding_model": settings.llm_embedding_model,
         "embedding_dim": settings.embedding_dim,
         "top_k": settings.top_k,
         "score_threshold": settings.score_threshold,

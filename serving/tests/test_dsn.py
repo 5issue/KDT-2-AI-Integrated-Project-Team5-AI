@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from serving.config import get_settings
 from serving.db import mask_dsn, normalize_neon_dsn
 
 HOST = "ep-cool-frog-123.ap-southeast-1.aws.neon.tech"
@@ -59,3 +60,18 @@ def test_mask_dsn_hides_credentials_and_host() -> None:
     assert "neondb" in masked
     assert "pooled" in masked
     assert "direct" in mask_dsn(DIRECT)
+
+
+def test_cors_origins_accept_comma_separated_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """.env.example 이 쉼표 형식을 안내하므로 그 형식이 실제로 통해야 합니다.
+
+    pydantic-settings 는 복합 타입 필드를 검증기보다 먼저 JSON 으로 파싱합니다.
+    NoDecode 를 붙이지 않으면 field_validator 가 실행될 기회조차 없이 터집니다.
+    """
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "http://localhost:3000, https://example.test")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().cors_allow_origins == ("http://localhost:3000", "https://example.test")
+    finally:
+        monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+        get_settings.cache_clear()

@@ -12,11 +12,11 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from recsys_sql.config import PACKAGE_DIR, Settings
+from recsys_sql.config import QUERIES_DIR, Settings
 from recsys_sql.db import engine_scope
 from recsys_sql.fixtures import SeedIds, seed_minimal
 
-TEMPLATE_DIR = PACKAGE_DIR / "queries" / "_template"
+TEMPLATE_DIR = QUERIES_DIR / "_template"
 
 
 def database_url_configured() -> bool:

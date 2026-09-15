@@ -29,7 +29,12 @@ import asyncpg
 
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import engine_scope
-from data_pipeline.domain import derive_storage_columns
+from data_pipeline.domain import (
+    derive_storage_columns,
+    ingredient_match_key,
+    normalize_cooking_method,
+    normalize_duration_unit,
+)
 
 STAGING_RECIPE_COLUMNS = (
     "source_type",
@@ -44,7 +49,9 @@ STAGING_RECIPE_COLUMNS = (
     "cooking_method",
     "nutrition",
     "tags",
+    "image_url",
 )
+STAGING_RECIPE_STEP_COLUMNS = ("source_type", "source_id", "step_no", "instruction", "image_url")
 STAGING_RECIPE_INGREDIENT_COLUMNS = (
     "source_type",
     "source_id",
@@ -85,6 +92,7 @@ SQL_STEPS = (
     "002_insert_recipe.sql",
     "003_insert_recipe_ingredient.sql",
     "004_insert_storage_guideline.sql",
+    "005_insert_recipe_step.sql",
 )
 
 
@@ -94,10 +102,13 @@ class StagingRows:
 
     recipes: list[tuple[Any, ...]] = field(default_factory=list)
     recipe_ingredients: list[tuple[Any, ...]] = field(default_factory=list)
+    recipe_steps: list[tuple[Any, ...]] = field(default_factory=list)
     storage: list[tuple[Any, ...]] = field(default_factory=list)
     matches: list[tuple[Any, ...]] = field(default_factory=list)
     skipped_ingredients: int = 0
     skipped_storage: int = 0
+    skipped_steps: int = 0
+    skipped_recipes: int = 0
 
     def is_empty(self) -> bool:
         """적재할 것이 하나도 없는지."""
@@ -113,6 +124,8 @@ class LoadReport:
     row_counts: dict[str, int] = field(default_factory=dict)
     skipped_ingredients: int = 0
     skipped_storage: int = 0
+    skipped_steps: int = 0
+    skipped_recipes: int = 0
 
     def render(self) -> str:
         """사람이 읽을 요약."""
@@ -121,6 +134,10 @@ class LoadReport:
             lines.append(f"{'매칭 실패로 건너뛴 재료줄':<28}: {self.skipped_ingredients}행")
         if self.skipped_storage:
             lines.append(f"{'매칭 실패로 건너뛴 보관기준':<28}: {self.skipped_storage}행")
+        if self.skipped_steps:
+            lines.append(f"{'내용이 비어 건너뛴 조리단계':<28}: {self.skipped_steps}행")
+        if self.skipped_recipes:
+            lines.append(f"{'재료 매칭률 미달로 뺀 레시피':<28}: {self.skipped_recipes}건")
         lines.append(f"{'적용한 SQL':<28}: {', '.join(self.applied_sql) or '없음'}")
         lines.extend(f"{table:<28}: {count}행 (적재 후)" for table, count in sorted(self.row_counts.items()))
         return "\n".join(lines)
@@ -147,6 +164,7 @@ def build_staging_rows(
     match_meta: dict[str, dict[str, Any]] | None = None,
     *,
     source_type_override: str = "",
+    min_match_rate: float = 0.0,
 ) -> StagingRows:
     """중간 산출물을 COPY 용 튜플로 바꿉니다."""
     rows = StagingRows()
@@ -175,15 +193,46 @@ def build_staging_rows(
             if "rules" in payload:
                 _append_storage(rows, payload, matches)
             elif "ingredients" in payload:
-                _append_recipe(rows, payload, matches, source_type=source_type)
+                _append_recipe(rows, payload, matches, source_type=source_type, min_match_rate=min_match_rate)
     return rows
 
 
-def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str, int], *, source_type: str) -> None:
+def _match_rate(payload: dict[str, Any], matches: dict[str, int]) -> float:
+    """이 레시피의 재료 중 마스터에 붙은 비율. 재료가 없으면 0."""
+    keys = [ingredient_match_key(str(item.get("normalized_name") or "")) for item in payload.get("ingredients", [])]
+    keys = [key for key in keys if key]
+    if not keys:
+        return 0.0
+    return sum(1 for key in keys if key in matches) / len(keys)
+
+
+def _is_translated(payload: dict[str, Any]) -> bool:
+    """원문이 한국어가 아니라 번역된 레시피인가.
+
+    2단계가 원문이 한국어가 아닐 때만 `name_original` 을 남깁니다.
+    한국어 원본 레시피는 MVP 우선 적재 대상이라 매칭률 필터를 걸지 않습니다.
+    """
+    return bool(str(payload.get("name_original") or "").strip())
+
+
+def _append_recipe(
+    rows: StagingRows,
+    payload: dict[str, Any],
+    matches: dict[str, int],
+    *,
+    source_type: str,
+    min_match_rate: float = 0.0,
+) -> None:
     """ExtractedRecipe 한 건을 staging 행으로."""
     source_id = str(payload.get("source_recipe_id") or payload.get("_entity_key") or "").strip()
     name = _truncate(payload.get("name"), 255)
     if not source_id or not name:
+        return
+
+    # 번역 레시피만 매칭률로 거릅니다. 재료가 절반도 안 붙으면 "부족 재료" 계산이
+    # 무의미해 데모에 쓸 수 없습니다. 한국어 원본은 그대로 적재합니다.
+    if min_match_rate > 0 and _is_translated(payload) and _match_rate(payload, matches) < min_match_rate:
+        rows.skipped_recipes += 1
         return
 
     nutrition = {k: v for k, v in (payload.get("nutrition") or {}).items() if v is not None}
@@ -198,14 +247,17 @@ def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str
             payload.get("prep_time_min"),
             payload.get("cook_time_min"),
             _decimal(payload.get("servings"), 2),
-            _truncate(payload.get("cooking_method"), 50),
+            normalize_cooking_method(_truncate(payload.get("cooking_method"), 50)),
             json.dumps(nutrition, ensure_ascii=False),
             [tag.strip() for tag in payload.get("tags", []) if str(tag).strip()],
+            _truncate(payload.get("image_url"), 2000),
         )
     )
 
+    _append_recipe_steps(rows, payload, source_type=source_type, source_id=source_id)
+
     for line_no, item in enumerate(payload.get("ingredients", []), start=1):
-        normalized = str(item.get("normalized_name") or "").strip().lower()
+        normalized = ingredient_match_key(str(item.get("normalized_name") or ""))
         if not normalized:
             continue
         if normalized not in matches:
@@ -227,9 +279,36 @@ def _append_recipe(rows: StagingRows, payload: dict[str, Any], matches: dict[str
         )
 
 
+def _append_recipe_steps(
+    rows: StagingRows,
+    payload: dict[str, Any],
+    *,
+    source_type: str,
+    source_id: str,
+) -> None:
+    """ExtractedRecipe 의 조리 단계를 staging 행으로.
+
+    `recipe_step` 은 instruction 과 image_url 중 하나는 있어야 한다는 CHECK 를 갖습니다.
+    둘 다 빈 단계를 그대로 밀면 적재 전체가 롤백되므로 여기서 걸러 리포트에 셉니다.
+
+    step_no 는 LLM 이 준 번호를 믿지 않고 **살아남은 단계에 1부터 다시 매깁니다.**
+    빈 단계를 걸러내면 번호에 구멍이 생기는데, PK 가 (recipe_id, step_no) 라
+    구멍 자체는 문제가 없지만 화면이 순서를 그대로 쓰기 때문에 촘촘한 편이 낫습니다.
+    """
+    step_no = 0
+    for item in payload.get("steps") or []:
+        instruction = (str(item.get("instruction")).strip() if item.get("instruction") else None) or None
+        image_url = _truncate(item.get("image_url"), 2000)
+        if instruction is None and image_url is None:
+            rows.skipped_steps += 1
+            continue
+        step_no += 1
+        rows.recipe_steps.append((source_type, source_id, step_no, instruction, image_url))
+
+
 def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[str, int]) -> None:
     """ExtractedStorageItem 한 건을 staging 행으로."""
-    normalized = str(payload.get("normalized_name") or "").strip().lower()
+    normalized = ingredient_match_key(str(payload.get("normalized_name") or ""))
     source_item_id = str(payload.get("source_item_id") or payload.get("_entity_key") or "").strip()
     if not source_item_id:
         return
@@ -243,6 +322,7 @@ def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[st
         duration_text = str(rule.get("duration_text") or "").strip()
         if not duration_text:
             continue
+        minimum, maximum, unit = _duration_triplet(rule)
         rows.storage.append(
             (
                 source_item_id[:255],
@@ -252,13 +332,33 @@ def _append_storage(rows: StagingRows, payload: dict[str, Any], matches: dict[st
                 slot,
                 location,
                 context,
-                _decimal(rule.get("duration_min"), 2),
-                _decimal(rule.get("duration_max"), 2),
-                _truncate(rule.get("duration_unit"), 50),
+                minimum,
+                maximum,
+                unit,
                 duration_text,
                 rule.get("storage_tips"),
             )
         )
+
+
+def _duration_triplet(rule: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """duration 3종을 DB CHECK 에 맞춥니다. 셋 다 있거나 셋 다 없어야 합니다.
+
+    `ck_storage_guideline_duration_complete` 가 부분만 채운 행을 거부합니다.
+    실제로 원본 `unit_source` 가 'When Ripe' 처럼 단위가 아닌 문구인 경우가 있어
+    LLM 이 수치 없이 단위만 채웠고, 1,298개 중 23개가 여기 걸려 **적재 전체가
+    롤백**됐습니다. 한 행 때문에 전부 되돌아가므로 여기서 맞춰 둡니다.
+
+    버리는 것은 단위뿐입니다. 사람이 읽을 표기는 `duration_text` 에 남아 있습니다.
+
+    단위 표기는 `normalize_duration_unit` 으로 한국어 한 벌로 모읍니다.
+    """
+    minimum = _decimal(rule.get("duration_min"), 2)
+    maximum = _decimal(rule.get("duration_max"), 2)
+    unit = normalize_duration_unit(_truncate(rule.get("duration_unit"), 50))
+    if minimum is None or maximum is None or unit is None:
+        return None, None, None
+    return minimum, maximum, unit
 
 
 @asynccontextmanager
@@ -301,6 +401,7 @@ async def copy_staging(conn: asyncpg.Connection, rows: StagingRows, *, chunk_siz
     plan = (
         ("staging_ingredient_match", STAGING_MATCH_COLUMNS, rows.matches),
         ("staging_recipe", STAGING_RECIPE_COLUMNS, rows.recipes),
+        ("staging_recipe_step", STAGING_RECIPE_STEP_COLUMNS, rows.recipe_steps),
         ("staging_recipe_ingredient", STAGING_RECIPE_INGREDIENT_COLUMNS, rows.recipe_ingredients),
         ("staging_storage_guideline", STAGING_STORAGE_COLUMNS, rows.storage),
     )
@@ -323,11 +424,14 @@ async def run_load(
     report = LoadReport(
         skipped_ingredients=rows.skipped_ingredients,
         skipped_storage=rows.skipped_storage,
+        skipped_steps=rows.skipped_steps,
+        skipped_recipes=rows.skipped_recipes,
     )
 
     if settings.dry_run:
         report.staged = {
             "staging_recipe": len(rows.recipes),
+            "staging_recipe_step": len(rows.recipe_steps),
             "staging_recipe_ingredient": len(rows.recipe_ingredients),
             "staging_storage_guideline": len(rows.storage),
             "staging_ingredient_match": len(rows.matches),
@@ -339,7 +443,8 @@ async def run_load(
         await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
         await assert_prerequisites(conn)
         await conn.execute(
-            "TRUNCATE staging_recipe, staging_recipe_ingredient, staging_storage_guideline, staging_ingredient_match"
+            "TRUNCATE staging_recipe, staging_recipe_step, staging_recipe_ingredient, "
+            "staging_storage_guideline, staging_ingredient_match"
         )
         report.applied_sql.append(SQL_STEPS[0])
 
@@ -380,4 +485,5 @@ def collect_rows(settings: Settings | None = None) -> StagingRows:
         matches,
         meta,
         source_type_override=settings.recipe_source_type,
+        min_match_rate=settings.recipe_min_match_rate,
     )

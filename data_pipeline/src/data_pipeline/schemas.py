@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from data_pipeline.domain import STORAGE_SLOTS, TARGET_TABLES
 
-TargetTable = Literal["recipe", "recipe_ingredient", "storage_guideline", "none"]
+TargetTable = Literal["recipe", "recipe_ingredient", "recipe_step", "storage_guideline", "none"]
 Language = Literal["ko", "en", "mixed", "unknown"]
 Difficulty = Literal["EASY", "MEDIUM", "HARD"]
 RowsPerEntity = Literal["one", "many"]
@@ -115,7 +115,10 @@ class ExtractedIngredientLine(StrictModel):
         description="수식어/브랜드/손질상태를 뺀 한국어 기본형. 예: 'unsalted butter' -> '버터', '다진 마늘' -> '마늘'",
     )
     quantity: float | None = Field(default=None, description="수량. 원문에 없으면 null")
-    unit: str | None = Field(default=None, description="단위(g, ml, 개, 큰술 등). 없으면 null")
+    unit: str | None = Field(
+        default=None,
+        description="단위. 한국어로 통일한다(큰술/작은술/컵/개/장/쪽). g, ml 같은 국제단위는 그대로. 없으면 null",
+    )
     is_required: bool = Field(description="없으면 요리가 성립하지 않는 필수 재료면 true")
     is_raw_material: bool = Field(
         description="용어 기준의 원재료(가공되지 않은 순수 원료)면 true, 가공품/성분이면 false",
@@ -126,22 +129,46 @@ class ExtractedIngredientLine(StrictModel):
     )
 
 
+class ExtractedRecipeStep(StrictModel):
+    """recipe_step 한 줄. 조리 순서를 단계로 분리합니다.
+
+    DB CHECK 가 instruction 과 image_url 중 하나는 있을 것을 요구합니다.
+    둘 다 비면 적재 시점에 걸리므로 여기서 만들지 않습니다.
+    """
+
+    step_no: int = Field(description="1부터 시작하는 표시 순서. 원천 번호가 아니라 정리된 순서다")
+    instruction: str | None = Field(
+        default=None,
+        description="단계 설명(한국어). 원문의 번호 접두사(1., 2))는 떼고 내용만. 사진만 있으면 null",
+    )
+    image_url: str | None = Field(default=None, description="단계 사진 URL. 원문에 있으면 그대로, 없으면 null")
+
+
 class ExtractedRecipe(StrictModel):
-    """원본 레코드 하나(또는 그룹)를 recipe + recipe_ingredient 모양으로 변환한 결과."""
+    """원본 레코드 하나(또는 그룹)를 recipe + recipe_ingredient + recipe_step 모양으로 변환한 결과."""
 
     source_recipe_id: str = Field(description="원본 자연키. 프로파일의 entity_key_columns 값을 조합해 만든다")
     name: str = Field(description="레시피 이름(한국어)")
     name_original: str | None = Field(default=None, description="원문이 한국어가 아니면 원표기")
-    description: str | None = Field(default=None, description="두세 문장 요약. 없으면 null")
+    description: str | None = Field(
+        default=None,
+        description="어떤 음식인지 두세 문장. URL 이나 출처 표기는 넣지 않는다. 설명이 없으면 null",
+    )
     cuisine_type: str | None = Field(default=None, description="한식/양식/중식/일식/기타")
     difficulty: Difficulty | None = Field(default=None, description="조리 난이도")
     prep_time_min: int | None = Field(default=None, description="준비 시간(분). 원문에 없으면 null")
     cook_time_min: int | None = Field(default=None, description="조리 시간(분). 원문에 없으면 null")
     servings: float | None = Field(default=None, description="기준 인분 수")
+    # 원문 표현 그대로 받습니다. 열거값으로 모으는 일은 적재기(`normalize_cooking_method`)가
+    # 합니다. 프롬프트에 열거형을 못박아도 LLM 은 `오븐 굽기` 처럼 한 칸에 둘씩 적어 왔습니다.
     cooking_method: str | None = Field(default=None, description="대표 조리법. 예: 볶음, 조림, 구이, 끓이기")
     tags: list[str] = Field(description="용어 기준의 용도/TPO 태그. 없으면 빈 배열")
     nutrition: ExtractedNutrition | None = Field(default=None, description="영양정보. 원문에 없으면 null")
+    image_url: str | None = Field(default=None, description="레시피 대표 사진 URL. 원문에 없으면 null")
     ingredients: list[ExtractedIngredientLine] = Field(description="재료 목록")
+    steps: list[ExtractedRecipeStep] = Field(
+        description="조리 단계. 원문에 조리 순서가 있으면 단계로 쪼갠다. 없으면 빈 배열",
+    )
     confidence: float = Field(description="추출 확신도 0~1")
     reason: str = Field(description="판단 근거 한 줄. 특히 원문에 없어 null 로 둔 값이 있으면 적는다")
 
@@ -157,6 +184,8 @@ class ExtractedStorageRule(StrictModel):
     source_slot: StorageSlot = Field(description="보관 슬롯. DOP 는 구매일 기준을 뜻한다")
     duration_min: float | None = Field(default=None, description="최소 보관 기간. 수치가 없으면 null")
     duration_max: float | None = Field(default=None, description="최대 보관 기간. 수치가 없으면 null")
+    # 원문 표기 그대로 받고, 한국어 표기로 모으는 일은 적재기(`normalize_duration_unit`)가 합니다.
+    # 여기서 한국어를 요구하면 LLM 이 번역까지 하다가 `1년`처럼 수치를 섞어 넣습니다.
     duration_unit: str | None = Field(default=None, description="기간 단위(Days, Weeks, Months 등). 없으면 null")
     duration_text: str = Field(
         description="사람이 읽을 기간 표기. 수치가 없으면 원문 문구를 그대로 살린다. 비울 수 없다",

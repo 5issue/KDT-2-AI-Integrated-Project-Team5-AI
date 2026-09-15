@@ -1,6 +1,18 @@
 """Alembic 환경 설정.
 
-접속 문자열은 저장소에 두지 않는다. 저장소 루트의 `.env` 에 있는 `DATABASE_URL` 만 읽는다.
+접속 문자열은 저장소에 두지 않는다. `.env` 에서 읽으며, 찾는 순서는 아래와 같다.
+
+    1. 이미 설정된 프로세스 환경변수
+    2. `database/.env` (이 폴더 전용. README 의 설치 안내가 만드는 파일)
+    3. 저장소 루트의 `.env`
+    4. `data_pipeline/.env`
+
+이 저장소는 루트 `.env` 를 두지 않고 폴더별 `.env` 만 쓴다(루트 `.env.example` 참고).
+그래서 루트만 보면 아무 데서도 값을 찾지 못한다. 3번이 그 경우를 받는다.
+
+DDL 은 pooler 가 아니라 direct 엔드포인트로 거는 편이 안전하므로
+`DATABASE_URL_DIRECT` 가 있으면 그쪽을 먼저 쓴다. 없으면 `DATABASE_URL` 을 쓴다.
+
 production 브랜치에 실수로 적용하지 않도록, 엔드포인트를 확인하고 싶으면
 `ALEMBIC_ALLOWED_HOST_PREFIX` 환경변수에 접두사를 지정한다.
 """
@@ -19,11 +31,22 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-database_url = os.getenv("DATABASE_URL")
+# 먼저 읽은 쪽이 이긴다. load_dotenv 는 이미 있는 값을 덮어쓰지 않는다.
+for candidate in (
+    REPO_ROOT / "database" / ".env",
+    REPO_ROOT / ".env",
+    REPO_ROOT / "data_pipeline" / ".env",
+):
+    if candidate.exists():
+        load_dotenv(candidate)
+
+database_url = os.getenv("DATABASE_URL_DIRECT") or os.getenv("DATABASE_URL")
 if not database_url:
-    raise RuntimeError("DATABASE_URL 이 없다. 저장소 루트의 .env 를 확인한다.")
+    raise RuntimeError(
+        "DATABASE_URL 이 없다. 저장소 루트의 .env 또는 data_pipeline/.env 를 확인한다. 환경변수로 직접 넘겨도 된다."
+    )
 
 allowed_prefix = os.getenv("ALEMBIC_ALLOWED_HOST_PREFIX")
 if allowed_prefix:
@@ -32,10 +55,13 @@ if allowed_prefix:
         raise RuntimeError(f"허용되지 않은 대상이다: {host} (기대 접두사 {allowed_prefix})")
 
 # 이 저장소는 psycopg 3 을 쓴다. SQLAlchemy 기본값인 psycopg2 로 가지 않도록 드라이버를 지정한다.
-if database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-elif database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+#
+# 드라이버가 이미 붙어 있는 DSN 도 받는다. alembic 은 동기 엔진을 쓰는데, 폴더별 `.env` 는
+# `postgresql+asyncpg://` 로 적혀 있는 경우가 많다(data_pipeline 은 async 엔진을 쓴다).
+# 그대로 넘기면 동기 경로에서 커넥션을 열 때 죽는다. 여기서 psycopg 로 바꿔 준다.
+_scheme, _, _rest = database_url.partition("://")
+if _rest and _scheme.split("+", 1)[0] in {"postgresql", "postgres"}:
+    database_url = f"postgresql+psycopg://{_rest}"
 
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 

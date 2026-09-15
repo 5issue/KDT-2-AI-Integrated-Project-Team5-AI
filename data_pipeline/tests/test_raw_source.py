@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,47 @@ def test_empty_directory_is_rejected(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     with pytest.raises(FileNotFoundError, match="읽을 raw 파일"):
         discover_datasets(tmp_path / "empty")
+
+
+def test_reads_public_data_json_with_records_wrapper(tmp_path: Path) -> None:
+    """공공데이터 표준 JSON 은 {"fields": [...], "records": [...]} 형태입니다.
+
+    이 형태를 못 읽어서 넣어 둔 파일 3개가 경고 없이 무시되고 있었습니다.
+    """
+    payload = {
+        "fields": [{"id": "식품코드"}, {"id": "식품명"}],
+        "records": [
+            {"식품코드": "R112-1", "식품명": "국수"},
+            {"식품코드": "R112-2", "식품명": "소면"},
+        ],
+    }
+    (tmp_path / "nutrition.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    dataset = discover_datasets(tmp_path)[0]
+    assert dataset.fmt == "json"
+    assert dataset.row_count == 2
+    assert set(dataset.columns) == {"식품코드", "식품명"}
+    assert [r.payload["식품명"] for r in iter_records(dataset)] == ["국수", "소면"]
+
+
+def test_reads_plain_json_array(tmp_path: Path) -> None:
+    """최상위가 배열인 평범한 JSON 도 받습니다."""
+    (tmp_path / "plain.json").write_text(json.dumps([{"a": 1}, {"a": 2}], ensure_ascii=False), encoding="utf-8")
+    dataset = discover_datasets(tmp_path)[0]
+    assert dataset.row_count == 2
+
+
+def test_json_without_record_array_fails_loudly(tmp_path: Path) -> None:
+    """레코드를 못 찾으면 조용히 넘어가지 않고 어떤 키가 있는지 알려 줍니다."""
+    (tmp_path / "bad.json").write_text(json.dumps({"meta": {"x": 1}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="레코드 배열을 찾지 못했습니다"):
+        discover_datasets(tmp_path)
+
+
+def test_reads_csv_with_bom(tmp_path: Path) -> None:
+    """공공데이터 CSV 는 BOM 이 붙어 오는 일이 잦습니다. 붙으면 첫 컬럼명이 깨집니다."""
+    (tmp_path / "food.csv").write_text("﻿식품코드,식품명\nR1,국수\nR2,소면\n", encoding="utf-8")
+    dataset = discover_datasets(tmp_path)[0]
+    assert dataset.fmt == "csv"
+    assert "식품코드" in dataset.columns, "BOM 때문에 첫 컬럼명이 깨졌습니다"
+    assert dataset.row_count == 2
