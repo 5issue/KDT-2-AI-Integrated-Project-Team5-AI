@@ -11,6 +11,9 @@
     recsys_sql  카탈로그(SQL + 파라미터 계약) + pytest 검증
     serving     asyncpg 풀 + 엔드포인트. SQL 은 여기서 가져다 씀
 
+카탈로그(`queries/`)는 **패키지 안**에 있습니다. `.py` 와 똑같이 휠에 딸려 가므로
+설치 형태(editable / --no-editable)와 무관하게 같은 경로가 잡힙니다.
+
 ## 바인딩 형식
 
 카탈로그 SQL 은 `:name` 형식입니다(SQLAlchemy). 서빙은 asyncpg 를 직접 써서 `$1`
@@ -33,7 +36,7 @@ from functools import lru_cache
 from typing import Any
 
 from recsys_sql.catalog import CatalogError, SqlQuery, load_catalog, validate_params
-from recsys_sql.config import Settings, get_settings
+from recsys_sql.config import QUERIES_DIR
 
 # `:param` 은 잡고 `::text` 같은 캐스팅은 건너뜁니다. catalog 의 것과 같은 규칙입니다.
 _BIND_PARAM = re.compile(r"(?<![:\w]):([a-zA-Z_]\w*)")
@@ -43,21 +46,21 @@ _COMMENT_LINE = re.compile(r"^\s*--")
 
 
 @lru_cache(maxsize=1)
-def _catalog_by_name(root: str) -> dict[str, SqlQuery]:
+def _catalog_by_name() -> dict[str, SqlQuery]:
     """카탈로그를 이름으로 찾을 수 있게 펴 둡니다. 프로세스당 한 번만 읽습니다."""
-    from pathlib import Path
-
-    return {query.name: query for query in load_catalog(Path(root))}
+    return {query.name: query for query in load_catalog(QUERIES_DIR)}
 
 
-def find_query(name: str, settings: Settings | None = None) -> SqlQuery:
+def find_query(name: str) -> SqlQuery:
     """카탈로그에서 쿼리 하나를 찾습니다.
 
     `QUERY_OWNER` 와 무관하게 카탈로그 **전체**를 봅니다. 서빙은 누가 쓴 쿼리인지와
     상관없이 이름으로 찾아야 하기 때문입니다.
+
+    `Settings` 를 거치지 않습니다. 카탈로그는 패키지 안에 있어서 경로가 설정과 무관하고,
+    서빙이 이걸 부를 때 recsys_sql 의 `.env` 까지 읽을 이유가 없습니다.
     """
-    settings = settings or get_settings()
-    catalog = _catalog_by_name(str(settings.queries_dir))
+    catalog = _catalog_by_name()
     try:
         return catalog[name]
     except KeyError as exc:
@@ -86,6 +89,6 @@ def bind_asyncpg(query: SqlQuery, params: dict[str, Any]) -> tuple[str, tuple[An
     return converted, tuple(params[name] for name in order)
 
 
-def prepare(name: str, params: dict[str, Any], settings: Settings | None = None) -> tuple[str, tuple[Any, ...]]:
+def prepare(name: str, params: dict[str, Any]) -> tuple[str, tuple[Any, ...]]:
     """이름으로 찾아 바로 asyncpg 형식으로 냅니다. 서빙에서 가장 많이 쓰는 한 줄입니다."""
-    return bind_asyncpg(find_query(name, settings), params)
+    return bind_asyncpg(find_query(name), params)

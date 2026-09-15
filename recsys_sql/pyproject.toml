@@ -20,14 +20,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/recsys_sql"]
 
-# SQL 카탈로그를 휠에 함께 담습니다.
-#
-# `queries/` 가 패키지 밖에 있어서, 이 설정이 없으면 휠에 .sql 이 한 장도 안 들어갑니다.
-# 개발 중에는 `uv sync` 가 editable 로 설치해 `__file__` 이 레포 안을 가리키므로 드러나지
-# 않고, 이미지를 만드는 순간(--no-editable) 런타임에 FileNotFoundError 로 죽습니다.
-# `Settings.queries_dir` 이 패키지 안을 먼저 보고 없으면 레포 트리를 봅니다.
-[tool.hatch.build.targets.wheel.force-include]
-"queries" = "recsys_sql/queries"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

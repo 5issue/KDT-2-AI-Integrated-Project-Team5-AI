@@ -7,9 +7,7 @@ from pathlib import Path
 import pytest
 
 from recsys_sql.catalog import CatalogError, load_catalog, load_query
-from recsys_sql.config import PACKAGE_DIR
-
-QUERIES_DIR = PACKAGE_DIR / "queries"
+from recsys_sql.config import QUERIES_DIR
 
 
 def test_every_sql_file_in_catalog_is_valid() -> None:

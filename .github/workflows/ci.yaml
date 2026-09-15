@@ -37,12 +37,6 @@ jobs:
         # Neon 브랜치를 CI 에 붙이려면 secrets 에 DATABASE_URL 을 넣고 env 로 내려주세요.
         run: uv run pytest -q
 
-      - name: 휠에 SQL 카탈로그가 담기는지 확인
-        # serving 이 recsys_sql 카탈로그를 import 하는데, queries/ 는 패키지 밖에 있습니다.
-        # force-include 설정이 빠지면 휠에 .sql 이 한 장도 안 들어가고, 개발 중에는
-        # editable 설치라 드러나지 않다가 이미지 첫 요청에서 죽습니다.
-        run: ./scripts/verify_wheel_catalog.sh
-
   # docker-check: # TODO: docker 파일 추가 시 주석 해제
   #   name: Docker checks
   #   runs-on: ubuntu-latest

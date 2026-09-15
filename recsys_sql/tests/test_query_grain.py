@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.catalog import SqlQuery, load_catalog
-from recsys_sql.config import PACKAGE_DIR
+from recsys_sql.config import QUERIES_DIR
 from recsys_sql.fixtures import SeedIds
 from recsys_sql.runner import run_query
 
@@ -46,7 +46,7 @@ GRAIN: dict[str, tuple[str, ...]] = {
 
 def catalog() -> dict[str, SqlQuery]:
     """카탈로그 전체를 이름으로."""
-    return {query.name: query for query in load_catalog(PACKAGE_DIR / "queries")}
+    return {query.name: query for query in load_catalog(QUERIES_DIR)}
 
 
 def test_every_query_declares_its_grain() -> None:

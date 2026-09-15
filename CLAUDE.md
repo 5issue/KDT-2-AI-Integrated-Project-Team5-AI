@@ -30,7 +30,7 @@ raw 데이터 적재 -> 추천 SQL -> RAG 실험 -> API 서빙까지를 한 워�
 | 폴더 | 역할 | 콘솔 스크립트 |
 | --- | --- | --- |
 | `data_pipeline/` | raw -> OpenAI Batch API 파싱 -> Neon bulk insert. `sql/` 에 insert 문 | `uv run data-pipeline` |
-| `recsys_sql/` | 추천 SQL 카탈로그(`queries/<github_id>/`) + 검증. **serving 의 repository layer** | `uv run recsys-sql` |
+| `recsys_sql/` | 추천 SQL 카탈로그(`src/recsys_sql/queries/<github_id>/`) + 검증. **serving 의 repository layer** | `uv run recsys-sql` |
 | `rag_lab/` | LangGraph + pgvector RAG 실험(`experiments/<github_id>/`) | `uv run rag-lab` |
 | `serving/` | FastAPI + asyncpg 서빙. SQL 은 recsys_sql 카탈로그를 import (복사본 없음) | `uv run serving` |
 
@@ -45,6 +45,8 @@ raw 데이터 적재 -> 추천 SQL -> RAG 실험 -> API 서빙까지를 한 워�
   폴더가 달라도 같은 이름이면 충돌합니다.
 - **SQL 을 폴더 사이로 복사하지 말 것.** `serving` 은 `.sql` 파일을 갖지 않고
   `recsys_sql` 카탈로그를 import 합니다. 복사본은 반드시 갈라집니다.
+- **카탈로그는 패키지 안(`src/recsys_sql/queries/`)에 둘 것.** 패키지 밖에 두면 휠에
+  담기지 않아 이미지 첫 요청에서 죽습니다. 개발 중에는 editable 설치라 안 드러납니다.
 
 ## Python workspace
 

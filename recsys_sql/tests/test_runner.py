@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from recsys_sql.catalog import CatalogError, load_catalog
-from recsys_sql.config import PACKAGE_DIR
+from recsys_sql.config import QUERIES_DIR
 from recsys_sql.runner import validate_params
 
-TEMPLATE_DIR = PACKAGE_DIR / "queries" / "_template"
+TEMPLATE_DIR = QUERIES_DIR / "_template"
 
 
 @pytest.fixture(scope="module")

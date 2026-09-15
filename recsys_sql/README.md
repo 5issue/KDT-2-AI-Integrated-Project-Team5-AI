@@ -29,6 +29,9 @@ from recsys_sql import prepare  # 직접 쓸 때
 sql, args = prepare("product_detail", {"product_id": 101})
 ```
 
+`prepare` 는 `Settings` 를 거치지 않습니다. 카탈로그가 패키지 안에 있어 경로가 설정과
+무관하고, 서빙이 이걸 부를 때 `recsys_sql/.env` 까지 읽을 이유가 없습니다.
+
 `prepare` 가 하는 일은 둘입니다.
 
 1. **파라미터 검증** — 빠졌거나 타입이 어긋나면 DB 까지 가지 않고 여기서 걸립니다.
@@ -70,11 +73,17 @@ uv run pytest recsys_sql/tests -q
 ## 폴더 나눠 쓰기
 
 ```
-queries/
+src/recsys_sql/queries/
 ├── _template/          예시 3종 (그대로 두기)
 ├── <github_id>/        각자 폴더
 └── ...
 ```
+
+**패키지 안에 있는 것이 중요합니다.** 예전에는 `recsys_sql/queries/` 였는데, 패키지
+밖이라 휠에 담기지 않았습니다. 개발 중에는 `uv sync` 가 editable 로 설치해 `__file__` 이
+레포 안을 가리키므로 멀쩡해 보이고, 이미지를 만드는 순간(`--no-editable`) 첫 요청에서
+`FileNotFoundError` 로 죽습니다. 지금은 `.py` 와 똑같이 딸려 가므로 hatch 설정도,
+경로 폴백도 필요 없습니다.
 
 본인 github id 로 폴더를 만들고 `.env` 의 `QUERY_OWNER` 에 같은 값을 넣으면 CLI 의 기본
 대상이 본인 폴더로 잡힙니다. `load_catalog` 이 이름 중복을 막아 주므로 머지할 때 쿼리

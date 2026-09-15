@@ -81,7 +81,7 @@ CI 는 DB 없이 도는 테스트만 돌립니다.
 `recsys_sql` 과 `rag_lab` 은 폴더 안에서 다시 개인별로 갈립니다.
 
 ```
-recsys_sql/queries/<github_id>/*.sql        추천 SQL
+recsys_sql/src/recsys_sql/queries/<github_id>/*.sql   추천 SQL
 rag_lab/experiments/<github_id>/            실험 질문 세트와 결과
 ```
 

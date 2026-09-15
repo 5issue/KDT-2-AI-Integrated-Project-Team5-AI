@@ -10,6 +10,16 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # src/recsys_sql/config.py -> recsys_sql/
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
 
+# SQL 카탈로그. **패키지 안**에 있습니다.
+#
+# 예전에는 `recsys_sql/queries/` 였는데, 그러면 휠에 담기지 않습니다. 개발 중에는
+# editable 설치라 드러나지 않고 이미지를 만드는 순간 런타임에 죽습니다. 패키지 안으로
+# 옮겨서 `.py` 와 똑같이 딸려 가게 했습니다. hatch 설정도, 경로 폴백도 필요 없습니다.
+#
+# `Settings` 를 거치지 않고 바로 쓸 수 있게 모듈 상수로 둡니다. 서빙은 이 경로만
+# 필요하고 recsys_sql 의 `.env` 는 볼 이유가 없습니다.
+QUERIES_DIR = Path(__file__).resolve().parent / "queries"
+
 
 class Settings(BaseSettings):
     """recsys_sql 이 쓰는 환경변수 전체."""
@@ -46,21 +56,8 @@ class Settings(BaseSettings):
 
     @property
     def queries_dir(self) -> Path:
-        """SQL 카탈로그 루트. 각자 폴더는 이 아래 github id 로 만듭니다.
-
-        두 군데를 봅니다.
-
-        1. 설치된 패키지 안 (`site-packages/recsys_sql/queries`)
-        2. 레포 트리 (`recsys_sql/queries`)
-
-        개발 중에는 editable 설치라 `__file__` 이 레포 안을 가리켜 2번이 잡히고,
-        이미지에서는 `--no-editable` 로 깔려 1번이 잡힙니다. 둘 다 돌아야 합니다.
-
-        `PACKAGE_DIR` 은 `parents[2]` 라 설치된 패키지에서는 엉뚱한 곳
-        (`lib/python3.11`)을 가리킵니다. 그래서 1번을 먼저 봅니다.
-        """
-        packaged = Path(__file__).resolve().parent / "queries"
-        return packaged if packaged.is_dir() else PACKAGE_DIR / "queries"
+        """SQL 카탈로그 루트. 각자 폴더는 이 아래 github id 로 만듭니다."""
+        return QUERIES_DIR
 
     @property
     def owner_dir(self) -> Path:

@@ -74,10 +74,10 @@ def test_every_catalog_query_can_be_bound() -> None:
     주석에 `:표기` 를 적어 두면 실행 시점에야 터집니다. 여기서 미리 잡습니다.
     """
     from recsys_sql.catalog import load_catalog
-    from recsys_sql.config import get_settings
+    from recsys_sql.config import QUERIES_DIR
 
     samples: dict[str, object] = {"int": 1, "float": 0.5, "str": "x", "bool": True}
-    for query in load_catalog(get_settings().queries_dir):
+    for query in load_catalog(QUERIES_DIR):
         params = {name: samples[type_name] for name, type_name in query.params.items()}
         sql, args = bind_asyncpg(query, params)
         assert len(args) == len(query.params), query.name
