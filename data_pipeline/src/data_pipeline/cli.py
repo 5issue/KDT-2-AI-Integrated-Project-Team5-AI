@@ -41,6 +41,8 @@ from data_pipeline.load.bulk_insert import (
     run_load,
     run_sql_file,
 )
+from data_pipeline.load.embedding import TARGETS as EMBEDDING_TARGETS
+from data_pipeline.load.embedding import run_embedding
 from data_pipeline.stages import (
     STAGE_EXTRACT,
     STAGE_PROFILE,
@@ -377,6 +379,17 @@ def command_load_catalog(args: argparse.Namespace) -> int:
     return asyncio.run(load_catalog_async(get_settings(), apply=args.apply))
 
 
+def command_embed(args: argparse.Namespace) -> int:
+    """embedding 컬럼을 채웁니다. rag_lab 의 pgvector 검색이 여기에 의존합니다."""
+    settings = get_settings()
+    targets = list(EMBEDDING_TARGETS) if args.target == "all" else [args.target]
+    report = asyncio.run(run_embedding(targets, settings=settings, dry_run=not args.apply))
+    print(report.render())
+    if not args.apply:
+        print("\n실제로 채우려면 --apply 를 붙이세요.", file=sys.stderr)
+    return 0
+
+
 def command_load(args: argparse.Namespace) -> int:
     """중간 산출물을 staging 에 COPY 하고 타깃 테이블에 반영합니다."""
     settings = get_settings()
@@ -448,6 +461,11 @@ def build_parser() -> argparse.ArgumentParser:
     cat = sub.add_parser("load-catalog", help="category / product / product_ingredient 적재")
     cat.add_argument("--apply", action="store_true", help="실제로 DB 에 반영 (없으면 집계만)")
     cat.set_defaults(func=command_load_catalog)
+
+    embed = sub.add_parser("embed", help="recipe / product / ingredient 의 embedding 채우기")
+    embed.add_argument("--target", default="all", choices=["all", *EMBEDDING_TARGETS])
+    embed.add_argument("--apply", action="store_true", help="실제로 API 를 부르고 DB 에 반영")
+    embed.set_defaults(func=command_embed)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")

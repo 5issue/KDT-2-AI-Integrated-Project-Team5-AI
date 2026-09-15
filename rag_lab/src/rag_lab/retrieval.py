@@ -18,10 +18,43 @@ from rag_lab.config import DISTANCE_OPERATORS, Settings, get_settings
 SourceTable = Literal["recipe", "product", "ingredient"]
 
 # 검색 대상별로 (테이블, 식별자 컬럼, 제목 컬럼, 본문으로 쓸 표현식)
+#
+# **본문 표현식은 임베딩한 텍스트와 짝입니다.**
+# `data_pipeline/src/data_pipeline/load/embedding.py` 의 `TEXT_SQL` 과 같이 봐야 합니다.
+# 한쪽만 고치면 "검색은 됐는데 근거가 비어 있는" 상태가 됩니다.
+#
+# 예전에는 product 본문이 `metadata->>'summary'` 였는데 **그런 키가 없습니다**
+# (metadata 에는 brand / crawled_at / source_record_type / source_url 뿐). 상품이 검색돼도
+# 근거가 항상 빈 문자열로 나갔습니다. recipe 도 description 이 54%만 채워져 있어
+# 이름과 재료를 함께 씁니다.
 _SOURCES: dict[str, tuple[str, str, str, str]] = {
-    "recipe": ("recipe", "recipe_id", "name", "COALESCE(description, '')"),
-    "product": ("product", "product_id", "name", "COALESCE(metadata->>'summary', '')"),
-    "ingredient": ("ingredient", "ingredient_id", "name", "normalized_name"),
+    "recipe": (
+        "recipe",
+        "recipe_id",
+        "name",
+        """CONCAT_WS(' / ',
+               NULLIF(description, ''),
+               (SELECT STRING_AGG(i.name, ', ' ORDER BY ri.is_required DESC, i.name)
+                FROM recipe_ingredient ri
+                JOIN ingredient i ON i.ingredient_id = ri.ingredient_id
+                WHERE ri.recipe_id = recipe.recipe_id),
+               cooking_method)""",
+    ),
+    "product": (
+        "product",
+        "product_id",
+        "name",
+        """CONCAT_WS(' / ',
+               (SELECT c.name FROM category c WHERE c.category_id = product.category_id),
+               NULLIF(origin_country, ''),
+               storage_type)""",
+    ),
+    "ingredient": (
+        "ingredient",
+        "ingredient_id",
+        "name",
+        "CONCAT_WS(' / ', NULLIF(normalized_name, name), ARRAY_TO_STRING(aliases, ', '))",
+    ),
 }
 
 
