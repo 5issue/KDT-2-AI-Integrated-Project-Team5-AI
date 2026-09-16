@@ -61,7 +61,7 @@ v3 서버에 붙이면 `start_as_current_observation` 계열 API 가 안 맞습�
 | **추천 문구 경로 (`recommend`)** | **작동.** 상황 25건 + 자동 검사 6종 + 루브릭 8항목 채점 |
 | **평가 루브릭** | `rag 평가 지표 종류.md` 7절 그대로. 0~10점 x 8항목, 평균 7.5 통과 |
 | **판정 모델 분리** | `JUDGE_*` 4종. 자가 평가를 조립 시점에 거부 |
-| 서빙 진입점 | `from rag_lab import recommendation_reason` 로 내보냄 |
+| 서빙 진입점 | `from rag_lab import recommendation_reason` (실제 위치는 `recommendation/core.py`) |
 
 ```bash
 uv run rag-lab recommend --name baseline --cases rag_lab/experiments/<id>/cases.jsonl
@@ -93,8 +93,20 @@ JUDGE_MODEL=openai/gpt-4.1 uv run rag-lab recommend --name v5 --judge --cases ..
   값이라 벡터 검색을 한 번 더 돌 이유가 없습니다. `ask` 경로와 갈립니다.
 - **실험 파일과 결과는 사람별로 갈라 둡니다.** `experiments/<github_id>/cases.jsonl` 과
   `experiments/<github_id>/results/`. `.env` 의 `EXPERIMENT_OWNER` 가 기본 경로를 정합니다.
-- **`experiment.py` 와 `recommendation.py` 는 다른 사람이 봅니다.** 질문 세트 실험은
-  전자, 추천 문구는 후자입니다. 결과 JSONL 형식과 `snapshot_params` 는 공유합니다.
+- **`recommendation/` 은 네 모듈로 나뉘어 있고, 서빙이 쓰는 것은 `core` 하나뿐입니다.**
+
+  | 모듈 | 역할 | 서빙 |
+  | --- | --- | --- |
+  | `core` | 상황 -> 프롬프트 -> LLM 호출 | **씀** |
+  | `checks` | 재료 환각·보유 뒤집힘·시간 조작 (LLM 무관) | 안 씀 |
+  | `judge` | 루브릭 8항목 채점 | 안 씀 |
+  | `experiment` | 상황 세트 실행·JSONL·재채점 | 안 씀 |
+
+  한 파일에 있던 765줄을 나눈 것입니다. 생성 로직 자체는 짧은데 실험용 검증·리포팅이
+  함께 있어 길어졌습니다. `from rag_lab.recommendation import ...` 는 그대로 동작하지만,
+  새 코드는 어느 층을 쓰는지 드러나게 **모듈을 직접 지목**하세요.
+- **`rag_lab/experiment.py`(질문 세트) 와 `recommendation/experiment.py`(추천 문구) 는
+  다른 사람이 봅니다.** 결과 JSONL 형식과 `snapshot_params` 만 공유합니다.
 - **한국어 동음이의어는 문자열 검사로 못 가립니다.** `가지`(채소/수량단위/동사),
   `있으면`(가정) 같은 것들입니다. `_AMBIGUOUS_WORDS` 에는 **실제로 부딪힌 것만**
   넣으세요. 미리 채우면 진짜 환각을 놓칩니다.
