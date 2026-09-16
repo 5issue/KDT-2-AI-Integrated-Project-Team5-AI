@@ -98,6 +98,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_product (
     price             NUMERIC(12, 2) NOT NULL,
     product_type      TEXT NOT NULL,
     category_path     TEXT,
+    brand_name        TEXT,
     storage_type      TEXT,
     origin_country    TEXT,
     weight_g          NUMERIC(10, 2),

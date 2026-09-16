@@ -94,9 +94,58 @@ def test_parquet_none_strings_become_null(tmp_path: Path) -> None:
     write_parquet(tmp_path / "product_raw.parquet", [product_row("1", "가"), product_row("2", "나")])
     rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
 
-    # 컬럼 순서상 sku 는 10번째, stock_quantity 는 11번째
-    assert all(row[10] is None for row in rows.products)
-    assert all(row[11] is None for row in rows.products)
+    # 위치로 세지 않습니다. 컬럼이 하나 늘 때마다 숫자를 고치게 되고,
+    # 실제로 `brand_name` 이 들어오면서 한 칸씩 밀렸습니다.
+    sku = catalog.PRODUCT_COLUMNS.index("sku")
+    stock = catalog.PRODUCT_COLUMNS.index("stock_quantity")
+    assert all(row[sku] is None for row in rows.products)
+    assert all(row[stock] is None for row in rows.products)
+
+
+def test_brand_name_is_read_from_metadata(tmp_path: Path) -> None:
+    """지금 raw 는 브랜드를 `metadata` 안에만 싣고 옵니다(2,553행 전부).
+
+    `brand_id` 를 들고 있던 동안 이 값이 jsonb 안에 갇혀 있었습니다.
+    """
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [product_row("1", "새우살", metadata=json.dumps({"brand": "피쉬쉘"}, ensure_ascii=False))],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    brand = catalog.PRODUCT_COLUMNS.index("brand_name")
+    assert rows.products[0][brand] == "피쉬쉘"
+
+
+def test_top_level_brand_wins_over_metadata(tmp_path: Path) -> None:
+    """원천이 정리되면서 최상위 컬럼으로 올라와도 동작해야 합니다."""
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [
+            product_row(
+                "1",
+                "새우살",
+                brand="컬리",
+                metadata=json.dumps({"brand": "피쉬쉘"}, ensure_ascii=False),
+            )
+        ],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    brand = catalog.PRODUCT_COLUMNS.index("brand_name")
+    assert rows.products[0][brand] == "컬리"
+
+
+def test_missing_brand_becomes_null(tmp_path: Path) -> None:
+    """브랜드가 없는 상품이 459건 있습니다. 빈 문자열을 넣으면 '브랜드 없음' 과 구분이 안 됩니다."""
+    write_parquet(
+        tmp_path / "product_raw.parquet",
+        [product_row("1", "새우살", metadata=json.dumps({"brand": "  "}, ensure_ascii=False))],
+    )
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    brand = catalog.PRODUCT_COLUMNS.index("brand_name")
+    assert rows.products[0][brand] is None
 
 
 def test_product_ingredients_are_normalized_to_match_key(tmp_path: Path) -> None:
@@ -152,10 +201,11 @@ def test_nan_in_metadata_is_nulled(tmp_path: Path) -> None:
     )
     rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
 
-    meta = json.loads(rows.products[0][12])
+    metadata = catalog.PRODUCT_COLUMNS.index("metadata")
+    meta = json.loads(rows.products[0][metadata])
     assert meta["review_count"] is None
     assert meta["brand"] == "청정원"
-    assert "NaN" not in rows.products[0][12]
+    assert "NaN" not in rows.products[0][metadata]
 
 
 def test_duplicate_sku_keeps_the_first_and_nulls_the_rest(tmp_path: Path) -> None:
@@ -173,7 +223,8 @@ def test_duplicate_sku_keeps_the_first_and_nulls_the_rest(tmp_path: Path) -> Non
     )
     rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
 
-    skus = [row[10] for row in rows.products]
+    sku = catalog.PRODUCT_COLUMNS.index("sku")
+    skus = [row[sku] for row in rows.products]
     assert skus == ["M0001", None, "M0002"]
     assert len(rows.products) == 3, "중복 sku 때문에 상품 행이 사라지면 안 됩니다"
 

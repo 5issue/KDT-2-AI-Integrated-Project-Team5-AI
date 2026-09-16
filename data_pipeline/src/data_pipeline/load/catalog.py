@@ -32,6 +32,7 @@ PRODUCT_COLUMNS = (
     "price",
     "product_type",
     "category_path",
+    "brand_name",
     "storage_type",
     "origin_country",
     "weight_g",
@@ -164,6 +165,35 @@ def _jsonb(value: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
 
+# 브랜드 이름 길이 상한. alembic 0011 의 `product.brand_name VARCHAR(100)` 과 같습니다.
+BRAND_NAME_LENGTH = 100
+
+
+def _brand_name(payload: dict[str, Any]) -> str | None:
+    """브랜드 이름. 최상위 `brand` 를 먼저 보고, 없으면 `metadata.brand` 를 봅니다.
+
+    지금 raw(`product_raw.parquet`)는 `metadata` 안에만 싣고 오는데, 원천이 정리되면서
+    최상위 컬럼으로 올라올 수 있습니다. 둘 다 보면 raw 가 어느 쪽이든 동작합니다.
+
+    **`brand_id` 가 아니라 이름을 담습니다.** `brand` 테이블이 없고, 지금 브랜드에
+    달 속성이 이름뿐이라 표를 만들 이유가 없습니다(alembic `0011` 의 사유 참고).
+    """
+    direct = _text(payload.get("brand"))
+    if direct:
+        return direct[:BRAND_NAME_LENGTH]
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(metadata, dict):
+        return None
+    nested = _text(metadata.get("brand"))
+    return nested[:BRAND_NAME_LENGTH] if nested else None
+
+
 # 상품명에서 중량을 읽을 때 쓰는 표기. 앞에 오는 수치와 짝지어 봅니다.
 _MASS_UNITS = {"kg": 1000, "킬로": 1000, "g": 1, "그램": 1}
 _VOLUME_UNITS = ("l", "리터", "ml", "밀리")
@@ -284,6 +314,7 @@ def _append_products(rows: CatalogRows, dataset: RawDataset) -> None:
                 price,
                 _text(payload.get("product_type")) or "RAW_MATERIAL",
                 _text(payload.get("category_path")),
+                _brand_name(payload),
                 _storage_type(payload.get("storage_type"), rows),
                 _text(payload.get("origin_country")),
                 _weight_grams(payload.get("weight_g"), name),
