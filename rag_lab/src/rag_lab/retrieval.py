@@ -100,6 +100,7 @@ def distance_to_score(distance: float, metric: str) -> float:
     cosine 거리는 0~2 범위라 `1 - distance` 가 곧 코사인 유사도입니다.
     l2 는 상한이 없어 `1 / (1 + distance)` 로 눌러 씁니다.
     inner_product 는 pgvector 가 음수 내적을 주므로 부호만 뒤집습니다.
+    (데이터베이스 인덱스는 언제나 오름차순(가장 작은 거리부터)으로 정렬할 때 가장 빠르다)
     """
     if metric == "cosine":
         return 1.0 - distance
