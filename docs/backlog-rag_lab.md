@@ -2,7 +2,10 @@
 
 담당: `rag_lab` 담당자 + openLeeWorld(추천 문구) · 기준일 2026-09-16
 
-# 팀원 권고 사항?
+# 팀원 권고 사항? (보류 — 아래 조사 결과 참고)
+
+> **이 지시는 2026-09-16 조사로 보류됐습니다.** 아래 "조사 결과" 가 현재 결론입니다.
+> 원문은 무엇을 요청받았는지 남기려고 그대로 둡니다.
 
 rag_lab에 langfuse cloud관련 세팅하여 연결 & 모니터링하기
 langfuse 버전은 (TODO: 조사중)로 하고, 해당 공식문서 파이썬 SDK를 기반으로 오류없게 구축한다. 또한 ragas 버전 (TODO: 조사중)을 기반으로 llm-as-a-judge based on golden dataset, ragas 라이브러리의 표준 평가 지표를 따라 rag 평가도 병행하므로 세팅한다. -> 팀원에게 전달
@@ -25,7 +28,8 @@ langfuse 버전은 (TODO: 조사중)로 하고, 해당 공식문서 파이썬 SD
 `AspectCritic` 은 *"이 응답이 <정의>를 만족하는가"* 를 LLM 에 한 번 묻는 것이고,
 `rag_lab.recommendation.score_reason()` 이 같은 일을 8항목으로 합니다. 그 함수의
 입력(`RecommendationCase` + 문구)과 출력(`RubricScore`)을 고정해 뒀으니
-**안쪽만 `RubricsScore` 나 `AspectCritic` 여러 개로 교체해도 실험 코드는 그대로입니다.**
+**안쪽만 ragas 의 `RubricsScore`(우리 `RubricScore` 와 다른 클래스입니다) 나
+`AspectCritic` 여러 개로 교체해도 실험 코드는 그대로입니다.**
 
 ### 도입 조건 (이때는 넣으세요)
 

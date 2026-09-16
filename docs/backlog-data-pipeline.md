@@ -22,7 +22,7 @@
 | `recipe_product` | **0** | 큐레이션 값이라 자동 생성 안 함 |
 | `embedding` 컬럼 (recipe/product/ingredient) | NULL 0행 | `embed` 명령. `--refresh` 로 갱신 |
 
-alembic head: `0010_bubble_view_perf`. 누적 API 비용 약 $3.7
+alembic head: `0011_product_brand_name`. 누적 API 비용 약 $3.9
 (임베딩 한 바퀴는 $0.002 로 무시할 수준).
 
 ---

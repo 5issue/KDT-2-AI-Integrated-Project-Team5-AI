@@ -15,7 +15,11 @@
 
 - NEVER disclose or leak passwords, private API keys, or database credentials.
 - Mask any PII (Personally Identifiable Information) before processing.
-- Always ask for human confirmation before executing any shell commands or modifying system files. 단, uv run pyright, uv run ruff 등 정적 체크는 알아서 실행 후 오류 사항 수정
+- Always ask for human confirmation before executing any shell commands or modifying system files.
+  **무엇이 "확인이 필요한" 명령인지는 아래 12절의 다섯 문항이 정합니다** (2026-09-16 추가).
+  12절이 이 줄보다 **구체적이고 우선합니다** - 다섯 문항이 전부 '아니오' 인 명령
+  (읽기 전용 조회, 로컬 분석, 테스트, 레포 안 파일 수정, `uv run pyright`/`ruff` 같은 정적 체크)은
+  확인 없이 실행합니다. 하나라도 '예' 면 이 줄대로 먼저 묻습니다.
 - Refer to these security protocols for every code generation task.
 
 ### 1. PR 설명은 8섹션 템플릿 사용
@@ -160,6 +164,9 @@ scratchpad 의 분석 스크립트가 다시 쓸 만하면 `scripts/` 나 테스
 ## 12. 실행 전 자기 점검 (자동 모드에서도)
 
 권한 모드가 자동이어도 **모든 명령이 자동으로 정당해지지는 않습니다.**
+이 절이 **0절의 "쉘 명령 실행 전 확인" 을 구체화한 것**이고, 같은 명령에 대해서는
+0절보다 우선합니다.
+
 아래 다섯 개 중 **하나라도 '예' 면 실행하지 말고 먼저 묻습니다.**
 
 1. **비밀에 닿는가** — 자격증명 저장소·키 파일을 읽거나, 토큰을 꺼내 다른 호출에 붙이는가 (§10-1)
