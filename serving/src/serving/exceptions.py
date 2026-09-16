@@ -12,7 +12,7 @@ from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from serving.envelope import ApiResponse, ErrorCode
@@ -49,7 +49,20 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
     return _envelope_response(422, ErrorCode.INVALID_INPUT_VALUE)
 
 
+async def _handle_unexpected(request: Request, exc: Exception) -> Response:
+    """처리되지 않은 예외의 마지막 방어선.
+
+    예외 메시지에 DSN 등이 들어 있을 수 있어 응답에는 아무 상세도 싣지 않습니다.
+    트레이스백은 응답 후 재발생(re-raise)되어 서버 로그에 남습니다.
+    """
+    if not _is_api_request(request):
+        return PlainTextResponse("Internal Server Error", status_code=500)
+
+    return _envelope_response(500, ErrorCode.INTERNAL_SERVER_ERROR)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """앱에 envelope 변환 핸들러를 붙입니다."""
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _handle_validation_error)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, _handle_unexpected)
