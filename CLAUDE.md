@@ -22,6 +22,22 @@ raw 데이터 적재 -> 추천 SQL -> RAG 실험 -> API 서빙까지를 한 워�
 - Work in small cycles: ≤5–6 files per change(maximum 10 files), then verify and report.
 - Commit/PR tone is collaborative, no emoji in PR titles/bodies; PRs use the 8-section template in `.github/pull_request_template.md`.
 - Security (`.github/copilot-instructions.md`, `.claudeignore`): never read `.env*`, `*.tfvars`, `*.pem`/keys; no hardcoded secrets; mask PII.
+- **Secret stores count as secret files** (AGENTS.md 10-1). Never extract credentials from the
+  OS keychain (`git credential fill`), `gh auth token`, `aws configure get`, or any command that
+  prints a token — even to pass it as a shell variable you never display. A tool using stored
+  auth internally (e.g. `git push`) is fine; *you* pulling the token out to attach it elsewhere
+  is privilege escalation.
+- **When a specified means is unavailable, stop and ask** (AGENTS.md 10-2). Approval of an
+  outcome is not a blank cheque on the method. Report the blocker and the options; do not
+  substitute a mechanism with different security properties. Reporting afterwards is not consent.
+- **Scratchpad hygiene** (AGENTS.md 11). `/private/tmp/claude-<uid>/…` is a path humans never
+  read. Never write credentials or `.env` copies there; keep DB result dumps to the minimum.
+  Delete a task's venvs/build artefacts when that task ends — but **propose the `rm`, don't run
+  it**, and report what you left behind and how big it is.
+- **Pre-execution self-check** (AGENTS.md 12). Auto-approval mode does not make every command
+  legitimate. Ask first if any of these is yes: touches secrets / irreversible / leaves the repo /
+  differs from the means you were told to use / the user can't predict the outcome. If all five
+  are no, just proceed — read-only queries, local analysis and tests need no confirmation.
 
 ## Repository layout
 
