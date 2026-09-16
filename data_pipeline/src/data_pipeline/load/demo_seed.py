@@ -294,7 +294,19 @@ async def run_demo_seed(
 
     같은 대역의 기존 데모 행을 먼저 지우므로 몇 번을 돌려도 결과가 같습니다.
     실제 사용자 데이터는 대역이 달라 건드리지 않습니다.
+
+    `users` 는 1 이상 `DEMO_USER_MAX - DEMO_USER_BASE` 이하여야 합니다. 양끝을 막는
+    이유가 서로 다릅니다.
+
+    - **0 이면 지우기만 합니다.** 기존 데모 행을 먼저 삭제하는데 새로 넣을 것이 없어,
+      `--users 0 --apply` 가 데모 데이터를 조용히 비웁니다.
+    - **상한을 넘으면 정리가 안 됩니다.** 삭제 조건이 닫힌 구간이라, 대역 밖으로 나간
+      사용자는 다음 실행에서도 지워지지 않고 계속 쌓입니다.
     """
+    max_users = DEMO_USER_MAX - DEMO_USER_BASE
+    if not 1 <= users <= max_users:
+        raise ValueError(f"users 는 1 이상 {max_users:,} 이하여야 합니다 (받은 값: {users}).")
+
     settings = settings or get_settings()
     now = datetime.now(UTC)
     report = DemoReport()

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from data_pipeline.load.demo_seed import (
     DEMO_USER_BASE,
     DEMO_USER_MAX,
@@ -15,6 +17,7 @@ from data_pipeline.load.demo_seed import (
     DemoReport,
     build_rows,
     build_stock_rows,
+    run_demo_seed,
 )
 
 NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
@@ -167,3 +170,29 @@ def test_demo_band_is_closed_at_both_ends() -> None:
 def test_demo_band_has_room_for_more_users_than_we_seed() -> None:
     """상한이 너무 빡빡하면 `--users` 를 늘리는 순간 대역을 넘습니다."""
     assert DEMO_USER_BASE + 1000 <= DEMO_USER_MAX
+
+
+@pytest.mark.asyncio
+async def test_zero_users_is_rejected_before_any_delete() -> None:
+    """`--users 0 --apply` 는 기존 데모 행을 지우고 아무것도 넣지 않습니다.
+
+    삭제가 먼저라 조용히 데모 데이터가 비워집니다. DB 를 열기 전에 막습니다.
+    """
+    with pytest.raises(ValueError, match="1 이상"):
+        await run_demo_seed(users=0)
+
+
+@pytest.mark.asyncio
+async def test_users_beyond_the_demo_band_is_rejected() -> None:
+    """상한을 넘으면 생성된 id 가 삭제 구간 밖으로 나가 다음 실행에서도 안 지워집니다."""
+    with pytest.raises(ValueError, match="이하여야"):
+        await run_demo_seed(users=DEMO_USER_MAX - DEMO_USER_BASE + 1)
+
+
+def test_allowed_user_range_matches_the_delete_band() -> None:
+    """허용 상한은 삭제 구간의 폭과 같아야 합니다.
+
+    둘이 어긋나면 만들 수 있는데 지울 수 없는 사용자가 생깁니다. 경계값을 실제로
+    생성해 보는 것은 100만 행이라 느려서, 상수 관계만 고정합니다.
+    """
+    assert DEMO_USER_MAX - DEMO_USER_BASE == 1_000_000
