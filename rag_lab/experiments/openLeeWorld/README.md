@@ -10,10 +10,10 @@
 | --- | --- | --- |
 | 상황 세트 | `experiments/openLeeWorld/cases.jsonl` | `experiments/<다른 id>/` |
 | 결과 | `experiments/openLeeWorld/results/` | 위와 같음 |
-| 코드 | `src/rag_lab/recommendation.py` (신규) | `graph.py`, `retrieval.py`, `experiment.py` |
+| 코드 | `src/rag_lab/recommendation/` 4개 모듈 (신규) | `graph.py`, `retrieval.py`, `experiment.py` |
 | 명령 | `rag-lab recommend` | `rag-lab ask`, `rag-lab experiment` |
 
-**추천 문구 실험 코드를 `experiment.py` 에 넣지 않았습니다.** 그 파일은 라우팅·검색
+**추천 문구 실험 코드를 `rag_lab/experiment.py` 에 넣지 않았습니다.** 그 파일은 라우팅·검색
 실험을 하는 쪽이 계속 고치는 파일이라, 같은 파일을 양쪽에서 건드리면 충돌합니다.
 결과 JSONL 형식과 파라미터 스냅샷 규칙(`snapshot_params`)은 그대로 씁니다.
 
@@ -43,7 +43,7 @@ JUDGE_MODEL=openai/gpt-4.1 uv run rag-lab recommend --name v5 --judge --cases ..
 | `edge_*` | 3 | 빈 냉장고, 한 글자 재료, 긴 레시피 이름 |
 | `inject_*` | 1 | `note` 에 지시문을 심음. 프롬프트 인젝션 |
 
-`test_recommendation.py::test_case_file_loads_and_covers_the_required_edges` 가
+`test_reco_experiment.py::test_case_file_loads_and_covers_the_required_edges` 가
 이 경계들이 실제로 파일에 있는지 고정합니다.
 
 ## 평가 기준: 루브릭 8항목, 평균 7.5점 통과
