@@ -125,3 +125,39 @@ class LlmChatClient:
             ],
         )
         return response.choices[0].message.content or ""
+
+
+class LlmJudgeClient:
+    """평가용 chat completions 어댑터. **생성과 다른 모델을 씁니다.**
+
+    `LlmChatClient` 와 같은 `ChatClient` 프로토콜이라 쓰는 쪽 코드는 같습니다.
+    다른 것은 어느 설정을 읽느냐뿐입니다(`JUDGE_*`).
+
+    `require_judge_model()` 이 자가 평가를 조립 시점에 막습니다. 생성 모델과
+    (공급자, 모델, 주소)가 전부 같으면 여기서 실패합니다.
+
+    **온도를 0 으로 고정합니다.** 채점은 재현돼야 합니다. 같은 문구를 두 번 재서
+    다른 점수가 나오면 프롬프트 비교를 할 수 없습니다.
+    """
+
+    def __init__(self, settings: Settings | None = None, client: AsyncOpenAI | None = None) -> None:
+        self._settings = settings or get_settings()
+        self.model = self._settings.require_judge_model()
+        self.provider = get_provider(self._settings.judge_provider_name)
+        self._client = client or _build_client(
+            api_key=self._settings.require_judge_api_key(),
+            provider=self.provider,
+            base_url=resolve_base_url(self.provider, self._settings.judge_base_url),
+        )
+
+    async def complete(self, system: str, user: str) -> str:
+        """한 번 호출하고 텍스트만 꺼냅니다."""
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0,
+        )
+        return response.choices[0].message.content or ""
