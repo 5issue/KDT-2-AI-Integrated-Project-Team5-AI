@@ -18,13 +18,13 @@ from rag_lab.config import get_settings
 from rag_lab.db import check_connection, engine_scope
 from rag_lab.experiment import load_cases, run_experiment
 from rag_lab.graph import RagDependencies, make_ask, route_question
-from rag_lab.recommendation import (
-    RUBRIC_ITEMS,
+from rag_lab.recommendation.experiment import (
     load_reasons,
     load_recommendation_cases,
     rescore_experiment,
     run_reason_experiment,
 )
+from rag_lab.recommendation.judge import RUBRIC_ITEMS
 
 
 def command_check_db(args: argparse.Namespace) -> int:
