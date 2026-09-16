@@ -19,9 +19,11 @@ from rag_lab.recommendation import (
     build_situation,
     check_reason,
     collect_vocabulary,
+    load_reasons,
     load_recommendation_cases,
     parse_rubric,
     recommendation_reason,
+    rescore_experiment,
     run_reason_experiment,
     score_reason,
 )
@@ -412,3 +414,52 @@ def test_real_pear_is_still_caught() -> None:
     """위 예외 때문에 진짜 `배` 환각을 놓치면 안 됩니다."""
     situation = case(recipe="구운 바나나", have=["바나나"], missing=[])
     assert "환각_재료" in failed(situation, "배를 곁들이면 더 좋습니다.", vocabulary={"배"})
+
+
+# --- 판정자 교차 검증 (재채점) ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rescore_does_not_regenerate(tmp_path: Path) -> None:
+    """판정자를 비교하려면 **같은 문구**를 다시 재야 합니다.
+
+    새로 생성하면 문구 차이와 판정자 차이가 섞여 무엇 때문에 점수가 바뀌었는지
+    알 수 없습니다.
+    """
+    cases = [case(case_id="a"), case(case_id="b")]
+    first = await run_reason_experiment(
+        "first",
+        cases,
+        chat=FakeChatClient("두부가 있어 맛있게 즐기실 수 있습니다."),
+        judge=FakeChatClient(rubric_json()),
+    )
+    path = first.write_jsonl(tmp_path)
+
+    judge = FakeChatClient(rubric_json(6))
+    again = await rescore_experiment("again", cases, load_reasons(path), judge=judge)
+
+    assert [r.reason for r in again.results] == [r.reason for r in first.results]
+    assert again.mean_score == pytest.approx(6.0)
+    assert again.params["rescored"] is True
+
+
+def test_load_reasons_skips_the_metadata_line(tmp_path: Path) -> None:
+    """결과 파일 첫 줄은 메타데이터입니다. 케이스로 세면 개수가 하나 늘어납니다."""
+    path = tmp_path / "r.jsonl"
+    meta = json.dumps({"name": "x", "params": {}}, ensure_ascii=False)
+    row = json.dumps({"case_id": "a", "reason": "문구"}, ensure_ascii=False)
+    path.write_text(f"{meta}\n{row}\n", encoding="utf-8")
+
+    assert load_reasons(path) == {"a": "문구"}
+
+
+@pytest.mark.asyncio
+async def test_rescore_rejects_a_case_missing_from_the_previous_run(tmp_path: Path) -> None:
+    """상황 세트를 고친 뒤 옛 결과로 재채점하면 조용히 일부만 채점됩니다."""
+    path = tmp_path / "r.jsonl"
+    path.write_text(json.dumps({"case_id": "a", "reason": "문구"}, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="지난 결과에 없는"):
+        await rescore_experiment(
+            "x", [case(case_id="a"), case(case_id="b")], load_reasons(path), judge=FakeChatClient(rubric_json())
+        )

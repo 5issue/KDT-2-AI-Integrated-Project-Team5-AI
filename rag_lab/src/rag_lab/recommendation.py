@@ -622,3 +622,78 @@ async def run_reason_experiment(
         report.results.append(result)
 
     return report
+
+
+def load_reasons(path: Path) -> dict[str, str]:
+    """지난 결과 JSONL 에서 `case_id -> 문구` 를 꺼냅니다.
+
+    **판정자를 비교하려면 같은 문구를 다시 재야 합니다.** 생성은 매번 달라지므로,
+    판정자만 바꿔 새로 돌리면 문구 차이와 판정자 차이가 섞여 무엇 때문에 점수가
+    바뀌었는지 알 수 없습니다.
+    """
+    reasons: dict[str, str] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            if line_no == 1 and "results" not in payload and "case_id" not in payload:
+                continue  # 첫 줄은 메타데이터입니다
+            case_id, reason = payload.get("case_id"), payload.get("reason")
+            if case_id and reason:
+                reasons[str(case_id)] = str(reason)
+    if not reasons:
+        raise ValueError(f"문구가 들어 있지 않습니다: {path}")
+    return reasons
+
+
+async def rescore_experiment(
+    name: str,
+    cases: Sequence[RecommendationCase],
+    reasons: dict[str, str],
+    *,
+    judge: ChatClient,
+    settings: Settings | None = None,
+    max_chars: int = MAX_REASON_CHARS,
+) -> ReasonReport:
+    """이미 만들어 둔 문구를 **다시 채점만** 합니다. 생성 호출이 없습니다.
+
+    판정자 교차 검증용입니다. 점수가 판정자에 얼마나 좌우되는지는 같은 문구를
+    두 판정자에게 보여 줘야만 알 수 있습니다.
+    """
+    settings = settings or get_settings()
+    vocabulary = collect_vocabulary(cases)
+    report = ReasonReport(
+        name=name,
+        started_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        params={
+            **snapshot_params(settings),
+            "max_chars": max_chars,
+            "judge_model": settings.judge_model or None,
+            "judge_provider": settings.judge_provider_name if settings.judge_model else None,
+            "pass_mean_score": PASS_MEAN_SCORE,
+            # 생성을 안 했다는 것을 기록에 남깁니다. 지연 수치가 채점만의 값입니다.
+            "rescored": True,
+        },
+    )
+
+    missing = [case.case_id for case in cases if case.case_id not in reasons]
+    if missing:
+        raise ValueError(f"지난 결과에 없는 케이스입니다: {', '.join(missing[:5])}")
+
+    for case in cases:
+        reason = reasons[case.case_id]
+        started = time.perf_counter()
+        rubric = await score_reason(case, reason, chat=judge)
+        report.results.append(
+            ReasonResult(
+                case_id=case.case_id,
+                recipe=case.recipe,
+                reason=reason,
+                elapsed_ms=(time.perf_counter() - started) * 1000,
+                checks=check_reason(case, reason, vocabulary=vocabulary, max_chars=max_chars),
+                rubric=rubric,
+            )
+        )
+    return report

@@ -18,7 +18,13 @@ from rag_lab.config import get_settings
 from rag_lab.db import check_connection, engine_scope
 from rag_lab.experiment import load_cases, run_experiment
 from rag_lab.graph import RagDependencies, make_ask, route_question
-from rag_lab.recommendation import RUBRIC_ITEMS, load_recommendation_cases, run_reason_experiment
+from rag_lab.recommendation import (
+    RUBRIC_ITEMS,
+    load_reasons,
+    load_recommendation_cases,
+    rescore_experiment,
+    run_reason_experiment,
+)
 
 
 def command_check_db(args: argparse.Namespace) -> int:
@@ -87,7 +93,9 @@ def command_experiment(args: argparse.Namespace) -> int:
     return asyncio.run(run_experiment_command(args.name, Path(args.cases), out_dir))
 
 
-async def run_reason_command(name: str, cases_path: Path, out_dir: Path | None, *, judge: bool) -> int:
+async def run_reason_command(
+    name: str, cases_path: Path, out_dir: Path | None, *, judge: bool, rescore: Path | None = None
+) -> int:
     """상황 세트로 추천 문구를 만들고 검사합니다.
 
     **DB 를 열지 않습니다.** 추천 문구의 입력은 `my_recipe_candidates` 가 이미 준
@@ -105,7 +113,13 @@ async def run_reason_command(name: str, cases_path: Path, out_dir: Path | None, 
     if scorer is not None:
         print(f"판정 모델: {scorer.provider.name} / {scorer.model}\n")
 
-    report = await run_reason_experiment(name, cases, chat=chat, judge=scorer, settings=settings)
+    if rescore is not None:
+        # 판정자 교차 검증. 문구를 새로 만들지 않고 지난 결과를 다시 채점만 합니다.
+        if scorer is None:
+            raise RuntimeError("--rescore 는 --judge 와 함께 써야 합니다. 채점만 하는 명령입니다.")
+        report = await rescore_experiment(name, cases, load_reasons(rescore), judge=scorer, settings=settings)
+    else:
+        report = await run_reason_experiment(name, cases, chat=chat, judge=scorer, settings=settings)
 
     print(report.render())
     print()
@@ -134,7 +148,8 @@ async def run_reason_command(name: str, cases_path: Path, out_dir: Path | None, 
 def command_recommend(args: argparse.Namespace) -> int:
     """추천 문구 실험을 실행합니다."""
     out_dir = Path(args.out) if args.out else None
-    return asyncio.run(run_reason_command(args.name, Path(args.cases), out_dir, judge=args.judge))
+    rescore = Path(args.rescore) if args.rescore else None
+    return asyncio.run(run_reason_command(args.name, Path(args.cases), out_dir, judge=args.judge, rescore=rescore))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -165,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
     recommend.add_argument("--cases", required=True, help="상황 세트 JSONL 경로")
     recommend.add_argument("--out", help="결과를 저장할 디렉터리 (기본: experiments/<owner>/results)")
     recommend.add_argument("--judge", action="store_true", help="루브릭 채점까지 (JUDGE_MODEL 필요, 호출 2배)")
+    recommend.add_argument("--rescore", help="지난 결과 JSONL 의 문구를 다시 채점만 (판정자 교차 검증)")
     recommend.set_defaults(func=command_recommend)
 
     return parser
