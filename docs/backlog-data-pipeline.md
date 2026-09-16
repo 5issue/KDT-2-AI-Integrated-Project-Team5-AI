@@ -1,6 +1,6 @@
 # data_pipeline 남은 일
 
-담당: 공통 (각자 돌리고 각자 스키마를 검증) · 기준일 2026-09-11
+담당: 공통 (각자 돌리고 각자 스키마를 검증) · 기준일 2026-09-15
 
 앞으로 이 폴더의 역할은 **스키마 검증과 적재**입니다. LLM 3단계는 한 바퀴 돌았고,
 지금 필요한 것은 (1) 적재분의 구멍 메우기, (2) 스키마가 바뀔 때 따라가기입니다.
@@ -9,21 +9,20 @@
 
 | 테이블 | 행수 | 비고 |
 | --- | --- | --- |
-| `ingredient` | 1,028 | K-FIND 큐레이션. `ingredient_category_id` 963행 연결 |
-| `recipe` | 1,086 | `cooking_method` 624행(14종), `difficulty` 25%, `description` 54% |
-| `recipe_ingredient` | 8,393 | |
-| `recipe_step` | 5,542 | |
+| `ingredient` | 1,028 | K-FIND 771 / K-FIND-P 247 / TEAM-BASIC 10 |
+| `recipe` | **2,242** | COOKRCP01 1,156 / 영문 1,004 / 테스트 52 / 기존 한국어 30 |
+| `recipe_ingredient` | **18,948** | 재료 연결률 79.2% (2절 참고) |
+| `recipe_step` | **12,259** | |
 | `storage_guideline` | 935 | 한국어 열거값. 중복 337행 남음 |
-| `product` | 2,553 | `storage_type` 1,002행. `image_url` 컬럼 없음 |
+| `product` | 2,553 | `storage_type` 1,002행. `brand_name` 2,094행. `stock_quantity` 2,553행. `image_url` 컬럼 없음 |
 | `product_ingredient` | 2,422 | 전부 PRIMARY. 미연결 상품 295건 |
-| `category` | 220+ | |
+| `category` | 265 | |
+| `app_user` / `user_fridge` | **20 / 113** | `seed-demo` (9,200,000,000 대역) |
+| `user_product_affinity` / `product_popularity` | **211 / 300** | 같음 |
 | `recipe_product` | **0** | 큐레이션 값이라 자동 생성 안 함 |
-| `product_popularity` | **0** | 주문·조회 로그 없음 |
-| `user_product_affinity` | **0** | 같음 |
-| `app_user` / `user_fridge` | **0** | 데모 계정 필요 |
-| `embedding` 컬럼 (recipe/product/ingredient) | 4,667 / 4,667 | 2026-09-15 채움. `embed` 명령 |
+| `embedding` 컬럼 (recipe/product/ingredient) | NULL 0행 | `embed` 명령. `--refresh` 로 갱신 |
 
-alembic head: `0010_bubble_view_perf`. 누적 API 비용 약 $3.4
+alembic head: `0010_bubble_view_perf`. 누적 API 비용 약 $3.7
 (임베딩 한 바퀴는 $0.002 로 무시할 수준).
 
 ---
@@ -83,9 +82,37 @@ stamp 라 alembic 밖에서 Neon 에 직접 만든 것입니다. PR 이 라이�
 | `product_ingredient` 미연결 | 295건 (상품의 12%) | 상품명·카테고리 매칭으로 안 잡히는 것들. 별칭 보강 or 수기 |
 | `ingredient_category_id` | 1,028 중 963 | 나머지 65행은 K-FIND 대분류가 없는 큐레이션 재료 |
 | `product.image_url` | 컬럼 없음 | 크롤 원본에 있는지 확인 → 있으면 컬럼 추가 |
+| `product.storage_type` | 1,551행 NULL (60.8%) | **난수 금지.** 같은 카테고리에 값 있는 형제가 1,551행 전부에 있음. 보관기준으로도 1,118행 유도 가능 |
+| ~~`product.brand_id`~~ | **해결** (alembic `0011`) | `brand_name VARCHAR(100)` 으로 바꾸고 `metadata->>'brand'` 에서 2,094행 백필. `brand` 표는 만들지 않음 |
+| ~~`product.stock_quantity`~~ | **해결** (`seed-demo`) | 2,553행 채움(품절 72 / 한 자리 270). **이 파이프라인에서 유일하게 지어낸 값입니다** |
+| `recipe_ingredient` 미연결 | 2,685줄 (20.8%) | **대부분 마스터 공백이 아닙니다.** 아래 2-1 |
 | `recipe.description` | 54% | 원문에 없는 경우가 많음 |
 | `recipe.difficulty` | 25% | 원문에 난이도 표기가 거의 없음. 2단계 재실행해도 크게 안 오름 |
 | `dish_type` | 스키마에 없음 | 버블 `혼자 먹기 딱 좋은 한 그릇` 에 필요 |
+
+### 2-1. 미매칭 20.8% 의 원인은 배치 재제출 버그입니다
+
+전수로 세어 본 결과입니다. 자세한 것은
+`ai_context/aI가 쓴 문서/재료 마스터 공백 메우기 검토.md`.
+
+| 원인 | 줄 | 전체 12,879줄 대비 |
+| --- | --- | --- |
+| **배치에 물었는데 응답이 안 옴** | **2,003** | **15.6%p** |
+| LLM 이 "마스터에 없다" 판정 | 662 | 5.1%p |
+| 물어본 적 없음 | 20 | 0.2%p |
+
+`batch/client.py` 의 `pending_parts()` 가 **파일 이름만** 보고 재제출을 판정합니다.
+`BatchJob` 에 입력 내용의 지문이 없어서, 같은 이름의 입력 파일을 다시 만들면
+옛 배치가 살아 있다고 보고 건너뜁니다. 그 상태로 `collect` 하면 **새 입력에 옛 출력**을
+짝지어 요청 일부가 조용히 증발합니다. r2 에서 63 요청 중 34 가 그렇게 사라졌습니다.
+
+매니페스트는 `"status": "completed"`, `"error_file_id": null` 이라 이상이 안 보입니다.
+
+**고칠 것 둘:**
+- `BatchJob.input_sha256` 추가. `pending_parts` 가 (이름, 해시) 로 비교
+- `collect` 에서 요청 수 != 응답 수 이면 보고서에 경고. 지금은 조용합니다
+
+고치기 전에 재제출하면 같은 이름이라 또 건너뜁니다. 새 job 이름(`r5`)은 우회일 뿐입니다.
 
 ### 2단계 재실행이 필요한 것 (약 $3)
 
@@ -147,5 +174,11 @@ stamp 라 alembic 밖에서 Neon 에 직접 만든 것입니다. PR 이 라이�
 - **임베딩은 `embed` 명령이 채웁니다.** `rag_lab` 의 pgvector 검색이 여기에 의존하고,
   비어 있으면 RAG 가 통째로 멈춥니다. `--apply` 없이 돌리면 대상 수와 추정 비용만 봅니다.
   `embedding IS NULL` 인 행만 처리하므로 중간에 끊겨도 이어서 돌리면 됩니다.
-- **적재는 재현 가능합니다.** Neon 브랜치를 갈아도 `data/artifacts/` 의 3단계 산출물로
-  다시 적재하면 같은 상태가 됩니다.
+  **임베딩 본문이 바뀌면 `--refresh` 로 다시 만들어야 합니다.** 레시피 임베딩에는
+  재료명이 들어가므로, 재료 연결이 늘면 기존 임베딩이 낡습니다.
+- **적재 재현은 `data/artifacts/` 가 있는 기기에서만 됩니다.** `data_pipeline/data/` 가
+  `.gitignore` 에 걸려 있어서 `ingredient_matches.json`(443 KB)이 저장소에 없습니다.
+  이 파일이 **매칭률 16.4%p 를 혼자 들고 있습니다** — 없이 `load-recipes` 를 돌리면
+  79.2% 가 아니라 **62.8%** 가 나옵니다. 지우지 마세요.
+  제대로 고치려면 매칭 결과를 `ingredient.aliases` 로 승격해야 합니다
+  (`fetch_match_lookup()` 이 이미 `aliases` 를 읽으므로 읽는 쪽 코드는 그대로).

@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from data_pipeline.load.demo_seed import DEMO_USER_BASE, DemoReport, build_rows
+from data_pipeline.load.demo_seed import (
+    DEMO_USER_BASE,
+    STOCK_LOW_RANGE,
+    STOCK_NORMAL_RANGE,
+    DemoReport,
+    build_rows,
+    build_stock_rows,
+)
 
 NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 CANDIDATES = [(1000 + index, 2000 + index) for index in range(40)]
@@ -86,3 +93,57 @@ def test_report_says_whether_it_applied() -> None:
     assert "안 함(dry-run)" in report.render()
     report.applied = True
     assert "완료" in report.render()
+
+
+# --- 재고 (`product.stock_quantity`) -----------------------------------------
+#
+# 이 파이프라인에서 유일하게 지어내는 값이라, 무엇을 보장하는지 여기 못박아 둡니다.
+
+PRODUCT_IDS = list(range(1, 501))
+
+
+def test_stock_is_reproducible() -> None:
+    """시연 중에 품절 상품이 바뀌면 설명할 수가 없습니다."""
+    assert build_stock_rows(PRODUCT_IDS) == build_stock_rows(PRODUCT_IDS)
+
+
+def test_stock_does_not_depend_on_input_order() -> None:
+    """상품 조회 순서는 DB 가 정합니다. 그것 때문에 재고가 달라지면 안 됩니다."""
+    shuffled = list(reversed(PRODUCT_IDS))
+    assert build_stock_rows(shuffled) == build_stock_rows(PRODUCT_IDS)
+
+
+def test_stock_covers_every_product() -> None:
+    """남는 NULL 이 있으면 상품 상세 화면만 값이 비어 갈립니다."""
+    rows, _ = build_stock_rows(PRODUCT_IDS)
+    assert [product_id for product_id, _ in rows] == PRODUCT_IDS
+
+
+def test_some_products_are_sold_out() -> None:
+    """품절이 하나도 없으면 `stock_quantity > 0` 분기가 한 번도 실행되지 않습니다."""
+    rows, sold_out = build_stock_rows(PRODUCT_IDS)
+
+    zeros = [product_id for product_id, quantity in rows if quantity == 0]
+    assert len(zeros) == sold_out
+    assert 0 < sold_out < len(PRODUCT_IDS) // 10, "품절이 너무 많으면 데모 화면이 비어 보입니다"
+
+
+def test_stock_quantities_stay_in_range() -> None:
+    """음수가 들어가면 `> 0` 조건은 통과시키지 않지만 화면에 그대로 나갑니다."""
+    rows, _ = build_stock_rows(PRODUCT_IDS)
+    assert all(0 <= quantity <= STOCK_NORMAL_RANGE[1] for _, quantity in rows)
+
+
+def test_low_stock_products_exist() -> None:
+    """'품절 임박' 을 보여 줄 구간이 있어야 합니다."""
+    rows, _ = build_stock_rows(PRODUCT_IDS)
+    low = [q for _, q in rows if STOCK_LOW_RANGE[0] <= q <= STOCK_LOW_RANGE[1]]
+    assert low, "재고가 한 자리인 상품이 하나도 없습니다"
+
+
+def test_stock_seed_is_independent_of_user_count() -> None:
+    """`--users` 만 바꿨는데 품절 상품이 달라지면 데모가 흔들립니다."""
+    before, _ = build_stock_rows(PRODUCT_IDS)
+    build_rows(CANDIDATES, users=50, now=NOW)
+    after, _ = build_stock_rows(PRODUCT_IDS)
+    assert before == after

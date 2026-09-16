@@ -24,6 +24,20 @@ ko_KR 로케일이 채울 자리가 없습니다. 나머지 표도 전부 정수
 - 기한이 지난 재료만 가진 사용자 (보유로 치면 안 되는 경우)
 - 재료가 많아 여러 레시피가 걸리는 사용자
 
+## 재고(`product.stock_quantity`)도 여기서 채웁니다
+
+**이 파이프라인에서 유일하게 지어내는 값입니다.** 우리는 쇼핑몰을 운영하지 않으므로
+재고에는 참값이 없고, 크롤 원천에도 0% 들어 있습니다. 그런데
+`reorder_candidates` 와 `missing_ingredient_products` 가 이 컬럼으로 거르기 때문에
+전부 NULL 이면 "품절" 경로가 한 번도 실행되지 않습니다.
+
+`storage_type` 이나 `brand_name` 은 지어내지 않습니다. 그쪽은 유도하거나
+원천에서 꺼낼 수 있습니다. 검토는 `ai_context/aI가 쓴 문서/가짜 데이터 생성 도입 검토.md` 6절.
+
+> **의미가 바뀝니다.** 팀 정규화 가이드 4.3 이 `stock_quantity` NULL 을 "수량 미상"
+> 으로 정의하고, 쿼리가 `IS NULL OR > 0` 으로 판매 가능하게 봅니다. 숫자를 채우면
+> 그 분기가 더는 안 타고 0 인 상품이 실제로 빠집니다. 그게 이 작업의 목적입니다.
+
 ## 재현 가능합니다
 
 난수 시드를 고정합니다. 같은 `--users` 로 다시 돌리면 같은 데이터가 나옵니다.
@@ -57,6 +71,20 @@ AFFINITY_MIN, AFFINITY_MAX = 5, 15
 # 인기도를 매길 상위 상품 수. 전체에 매기면 의미가 없어 롱테일 앞부분만 만듭니다.
 POPULARITY_PRODUCTS = 300
 
+# 재고 분포. 합이 1.0 이어야 합니다.
+#
+# 품절을 일부러 넣습니다. 안 넣으면 `stock_quantity > 0` 조건이 늘 참이라
+# 그 분기가 테스트되지 않습니다. 반대로 많이 넣으면 데모 화면이 비어 보입니다.
+# 3% 면 2,553 상품 중 70~80 개 정도입니다.
+STOCK_SOLD_OUT_RATIO = 0.03
+STOCK_LOW_RATIO = 0.12
+STOCK_LOW_RANGE = (1, 9)
+STOCK_NORMAL_RANGE = (10, 400)
+
+# 재고용 난수 스트림을 따로 씁니다. 같은 스트림을 쓰면 `--users` 를 바꿀 때마다
+# 상품 재고까지 통째로 달라져, 사용자 수만 늘렸는데 품절 상품이 바뀝니다.
+STOCK_SEED = RANDOM_SEED + 1
+
 
 @dataclass(slots=True)
 class DemoReport:
@@ -66,6 +94,8 @@ class DemoReport:
     fridge_rows: int = 0
     affinity_rows: int = 0
     popularity_rows: int = 0
+    stock_rows: int = 0
+    stock_sold_out: int = 0
     edge_cases: dict[str, int] = field(default_factory=dict)
     applied: bool = False
 
@@ -76,6 +106,7 @@ class DemoReport:
             f"냉장고        {self.fridge_rows}행",
             f"구매이력      {self.affinity_rows}행",
             f"인기도        {self.popularity_rows}행",
+            f"재고          {self.stock_rows}행 (품절 {self.stock_sold_out}개)",
         ]
         if self.edge_cases:
             detail = ", ".join(f"{name} {count}명" for name, count in sorted(self.edge_cases.items()))
@@ -178,6 +209,50 @@ def build_rows(
     return app_users, fridge, affinity, popularity, edge_cases
 
 
+def build_stock_rows(product_ids: list[int]) -> tuple[list[tuple[int, int]], int]:
+    """(상품 id, 재고 수량) 목록과 품절 개수. DB 를 건드리지 않아 테스트가 쉽습니다.
+
+    `product_ids` 를 정렬해 두고 고정 시드를 쓰므로, 같은 상품 집합이면 몇 번을 돌려도
+    같은 상품이 품절이 됩니다. 시연 중에 품절 상품이 바뀌면 설명하기 어렵습니다.
+    """
+    rng = random.Random(STOCK_SEED)
+    rows: list[tuple[int, int]] = []
+    sold_out = 0
+
+    for product_id in sorted(product_ids):
+        draw = rng.random()
+        if draw < STOCK_SOLD_OUT_RATIO:
+            quantity = 0
+            sold_out += 1
+        elif draw < STOCK_SOLD_OUT_RATIO + STOCK_LOW_RATIO:
+            quantity = rng.randint(*STOCK_LOW_RANGE)
+        else:
+            quantity = rng.randint(*STOCK_NORMAL_RANGE)
+        rows.append((product_id, quantity))
+
+    return rows, sold_out
+
+
+async def apply_stock(conn: asyncpg.Connection, rows: list[tuple[int, int]]) -> None:
+    """재고를 한 문장으로 반영합니다.
+
+    2,500 행에 UPDATE 를 한 번씩 보내면 Neon 왕복이 2,500 번입니다. 배열 두 개로
+    묶어 보내면 한 번입니다.
+    """
+    if not rows:
+        return
+    await conn.execute(
+        """
+        UPDATE product p
+        SET stock_quantity = v.quantity, updated_at = NOW()
+        FROM UNNEST($1::bigint[], $2::int[]) AS v(product_id, quantity)
+        WHERE p.product_id = v.product_id
+        """,
+        [product_id for product_id, _ in rows],
+        [quantity for _, quantity in rows],
+    )
+
+
 async def run_demo_seed(
     *,
     users: int = 20,
@@ -199,10 +274,18 @@ async def run_demo_seed(
             raise RuntimeError("재료가 연결된 상품이 없습니다. 먼저 `load-catalog --apply` 로 상품을 적재하세요.")
 
         app_users, fridge, affinity, popularity, edge_cases = build_rows(candidates, users=users, now=now)
+
+        # 재고는 냉장고 후보가 아니라 **전체 상품**에 매깁니다. 재료가 안 붙은 295개도
+        # 상품 상세와 검색에는 나오므로, 거기만 NULL 로 남으면 화면이 갈립니다.
+        all_product_ids = [row["product_id"] for row in await conn.fetch("SELECT product_id FROM product")]
+        stock, sold_out = build_stock_rows(all_product_ids)
+
         report.users = len(app_users)
         report.fridge_rows = len(fridge)
         report.affinity_rows = len(affinity)
         report.popularity_rows = len(popularity)
+        report.stock_rows = len(stock)
+        report.stock_sold_out = sold_out
         report.edge_cases = edge_cases
 
         if dry_run:
@@ -244,6 +327,7 @@ async def run_demo_seed(
                 "popularity_score",
             ],
         )
+        await apply_stock(conn, stock)
         report.applied = True
 
     return report
