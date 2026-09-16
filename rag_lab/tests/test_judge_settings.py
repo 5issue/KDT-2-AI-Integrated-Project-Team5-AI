@@ -41,10 +41,26 @@ def test_a_different_model_on_the_same_provider_is_allowed() -> None:
     assert settings(judge_model="openai/gpt-4.1").require_judge_model() == "openai/gpt-4.1"
 
 
-def test_same_model_name_on_a_different_provider_is_allowed() -> None:
-    """같은 모델명이라도 다른 공급자면 다른 서버입니다."""
-    resolved = settings(judge_provider="openai", judge_model="openai/gpt-4.1-mini", judge_api_key="sk-judge")
-    assert resolved.require_judge_model() == "openai/gpt-4.1-mini"
+def test_same_model_on_a_different_provider_is_still_rejected() -> None:
+    """**서버가 달라도 모델이 같으면 자가 평가입니다.**
+
+    `openai/gpt-4.1-mini`(OpenRouter 경유)와 `gpt-4.1-mini`(OpenAI 직접)는 경로만 다를 뿐
+    같은 모델이라 self-preference bias 가 그대로 걸립니다. 처음에는 (공급자, 모델, 주소)가
+    전부 같을 때만 막았는데 그건 빠져나갈 구멍이었습니다.
+    """
+    with pytest.raises(RuntimeError, match="생성 모델과 같습니다"):
+        settings(judge_provider="openai", judge_model="gpt-4.1-mini", judge_api_key="sk-judge").require_judge_model()
+
+    with pytest.raises(RuntimeError, match="생성 모델과 같습니다"):
+        settings(
+            judge_provider="openai", judge_model="openai/gpt-4.1-mini", judge_api_key="sk-judge"
+        ).require_judge_model()
+
+
+def test_model_identity_ignores_case_and_vendor_prefix() -> None:
+    """`GPT-4.1-MINI` 로 적어도 같은 모델입니다."""
+    with pytest.raises(RuntimeError, match="생성 모델과 같습니다"):
+        settings(judge_model="OpenAI/GPT-4.1-Mini").require_judge_model()
 
 
 def test_whitespace_does_not_sneak_past_the_guard() -> None:

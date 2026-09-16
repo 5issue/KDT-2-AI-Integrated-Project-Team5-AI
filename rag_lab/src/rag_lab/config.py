@@ -20,6 +20,16 @@ DISTANCE_OPERATORS: dict[str, str] = {
 }
 
 
+def _model_identity(name: str) -> str:
+    """공급자 접두사를 뗀 모델 식별자.
+
+    `openai/gpt-4.1-mini` 와 `gpt-4.1-mini` 는 같은 모델입니다. OpenRouter 는
+    `<vendor>/<model>` 로 쓰고 OpenAI 직접 호출은 접두사가 없습니다. 판정자가
+    생성 모델과 같은지 볼 때는 이 값을 비교합니다.
+    """
+    return name.strip().rsplit("/", 1)[-1].strip().lower()
+
+
 class Settings(BaseSettings):
     """rag_lab 이 쓰는 환경변수 전체."""
 
@@ -177,13 +187,14 @@ class Settings(BaseSettings):
                 "JUDGE_MODEL 이 비어 있습니다. 판정에는 생성과 다른 모델을 쓰세요. "
                 "(예: JUDGE_PROVIDER=openrouter / JUDGE_MODEL=openai/gpt-4.1)"
             )
-        same_model = model == self.llm_model.strip()
-        same_provider = self.judge_provider_name == self.llm_provider
-        same_base = self.judge_base_url.strip() == self.llm_base_url.strip()
-        if same_model and same_provider and same_base:
+        # **공급자는 보지 않습니다.** `openai/gpt-4.1-mini`(OpenRouter 경유)와
+        # `gpt-4.1-mini`(OpenAI 직접)는 경로만 다를 뿐 같은 모델이라, self-preference
+        # bias 가 그대로 걸립니다. 처음에는 (공급자, 모델, 주소)가 전부 같을 때만
+        # 막았는데 그건 빠져나갈 구멍이었습니다.
+        if _model_identity(model) == _model_identity(self.llm_model):
             raise RuntimeError(
-                f"JUDGE_MODEL 이 생성 모델과 같습니다({model}). 자기 답을 자기가 채점하면 "
-                "self-preference bias 로 점수를 믿을 수 없습니다. 다른(가능하면 상위) 모델을 쓰세요."
+                f"JUDGE_MODEL 이 생성 모델과 같습니다({model} vs {self.llm_model}). 공급자가 달라도 "
+                "같은 모델이면 자기 답을 자기가 채점하는 것입니다. 다른(가능하면 상위) 모델을 쓰세요."
             )
         return model
 

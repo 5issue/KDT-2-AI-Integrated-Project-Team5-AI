@@ -17,6 +17,7 @@ from rag_lab.recommendation import (
     RUBRIC_ITEMS,
     RecommendationCase,
     build_situation,
+    case_fingerprint,
     check_reason,
     collect_vocabulary,
     load_reasons,
@@ -450,7 +451,9 @@ def test_load_reasons_skips_the_metadata_line(tmp_path: Path) -> None:
     row = json.dumps({"case_id": "a", "reason": "문구"}, ensure_ascii=False)
     path.write_text(f"{meta}\n{row}\n", encoding="utf-8")
 
-    assert load_reasons(path) == {"a": "문구"}
+    prior = load_reasons(path)
+    assert set(prior) == {"a"}
+    assert prior["a"].reason == "문구"
 
 
 @pytest.mark.asyncio
@@ -463,3 +466,68 @@ async def test_rescore_rejects_a_case_missing_from_the_previous_run(tmp_path: Pa
         await rescore_experiment(
             "x", [case(case_id="a"), case(case_id="b")], load_reasons(path), judge=FakeChatClient(rubric_json())
         )
+
+
+# --- 코드래빗 리뷰 반영 (#14) ------------------------------------------------
+
+
+def test_recipe_name_only_exempts_its_own_span() -> None:
+    """레시피 이름 안의 글자를 **문구 전체에서** 면제하면 정탐까지 막힙니다.
+
+    `치즈토마토 가지구이` 상황에서 보유하지 않은 `치즈` 를 "치즈가 있으니" 라고 말해도
+    통과했습니다. 오탐을 막으려다 진짜 환각을 놓친 것입니다.
+    """
+    situation = case(recipe="치즈토마토 가지구이", have=["가지", "토마토"], missing=[])
+    vocabulary = {"치즈", "가지", "토마토"}
+
+    # 이름 안에 든 것은 재료 언급이 아닙니다.
+    assert failed(situation, "치즈토마토 가지구이를 오늘 저녁으로 올려보세요.", vocabulary=vocabulary) == []
+    # 이름 밖에서 말하면 환각입니다.
+    assert "환각_재료" in failed(situation, "치즈가 있으니 바로 만드세요.", vocabulary=vocabulary)
+
+
+def test_flip_check_also_ignores_the_recipe_name_span() -> None:
+    """`새우 두부 계란찜` 이라는 이름 자체가 `새우 보유 주장` 으로 읽히면 안 됩니다."""
+    situation = case(recipe="새우 두부 계란찜", have=["달걀"], missing=["새우"])
+    assert failed(situation, "달걀이 있으니 새우 두부 계란찜에 새우만 더하세요.") == []
+
+
+def test_case_fingerprint_changes_with_content() -> None:
+    """id 를 그대로 둔 채 내용을 고치면 지문이 달라져야 합니다."""
+    base = case()
+    assert case_fingerprint(base) == case_fingerprint(case())
+    assert case_fingerprint(base) != case_fingerprint(case(missing=["참기름", "간장"]))
+    assert case_fingerprint(base) != case_fingerprint(case(cook_time_min=20))
+    assert case_fingerprint(base) != case_fingerprint(case(recipe="다른레시피"))
+
+
+def test_ingredient_order_does_not_change_the_fingerprint() -> None:
+    """목록 순서는 의미가 없습니다. 순서만 바뀌었다고 재채점을 막으면 안 됩니다."""
+    assert case_fingerprint(case(have=["두부", "달걀"])) == case_fingerprint(case(have=["달걀", "두부"]))
+
+
+@pytest.mark.asyncio
+async def test_rescore_rejects_a_case_whose_content_changed(tmp_path: Path) -> None:
+    """id 가 같아도 상황이 바뀌었으면 옛 문구를 새 상황으로 채점하게 됩니다."""
+    original = [case(case_id="a")]
+    first = await run_reason_experiment(
+        "first",
+        original,
+        chat=FakeChatClient("두부가 있어 맛있게 즐기실 수 있습니다."),
+        judge=FakeChatClient(rubric_json()),
+    )
+    path = first.write_jsonl(tmp_path)
+
+    edited = [case(case_id="a", missing=["참기름", "간장", "설탕"])]
+    with pytest.raises(ValueError, match="상황이 바뀐"):
+        await rescore_experiment("again", edited, load_reasons(path), judge=FakeChatClient(rubric_json()))
+
+
+@pytest.mark.asyncio
+async def test_rescore_records_whether_it_could_verify(tmp_path: Path) -> None:
+    """옛 결과 파일에는 지문이 없습니다. 확인 못 했다는 사실을 기록에 남깁니다."""
+    path = tmp_path / "old.jsonl"
+    path.write_text(json.dumps({"case_id": "a", "reason": "옛 문구"}, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    report = await rescore_experiment("x", [case(case_id="a")], load_reasons(path), judge=FakeChatClient(rubric_json()))
+    assert report.params["case_hash_verified"] is False

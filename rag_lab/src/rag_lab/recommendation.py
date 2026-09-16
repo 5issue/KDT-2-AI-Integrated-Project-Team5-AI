@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -178,6 +179,28 @@ class RecommendationCase:
         return {*self.have, *self.missing, *self.pantry}
 
 
+def case_fingerprint(case: RecommendationCase) -> str:
+    """상황의 내용 지문. 재채점이 같은 상황인지 확인하는 데 씁니다.
+
+    `case_id` 만 보면, id 를 그대로 둔 채 재료나 조리시간을 고쳤을 때 **옛 문구를 새
+    상황으로 채점**합니다. 그 점수는 판정자 비교에 쓸 수 없는데 겉보기에는 멀쩡합니다.
+    """
+    payload = json.dumps(
+        {
+            "recipe": case.recipe,
+            "match_rate": round(case.match_rate, 4),
+            "have": sorted(case.have),
+            "missing": sorted(case.missing),
+            "pantry": sorted(case.pantry),
+            "cook_time_min": case.cook_time_min,
+            "note": case.note,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass(slots=True)
 class Check:
     """자동 검사 하나의 결과."""
@@ -267,20 +290,27 @@ def _mentions(reason: str, name: str, verb_group: str) -> bool:
     return re.search(pattern, reason) is not None
 
 
-def _is_part_of_known(word: str, known: set[str], recipe: str) -> bool:
-    """`word` 가 이 상황에 이미 등장하는 이름의 조각인가.
+def _is_part_of_known(word: str, known: set[str]) -> bool:
+    """`word` 가 이 상황의 재료 이름 안에 든 조각인가.
 
-    두 가지를 막습니다.
-
-    - `방울토마토` 를 가진 상황에서 다른 케이스의 `토마토` 가 침입자로 잡히는 것
-    - **레시피 이름에 든 글자가 재료로 잡히는 것.** 첫 베이스라인에서 실제로 걸렸습니다 -
-      `물파래콩전` 안의 `물`, `치즈토마토 가지구이` 안의 `치즈` 가 환각으로 보고됐고,
-      환각 3건이 전부 이 오탐이었습니다. 레시피 이름은 상황이 준 값이라 문구에
-      그대로 나오는 것이 정상입니다.
+    `방울토마토` 를 가진 상황에서 다른 케이스의 `토마토` 가 침입자로 잡히는 것을 막습니다.
     """
-    if word in recipe:
-        return True
     return any(word != name and word in name for name in known)
+
+
+def _mask_recipe_name(reason: str, recipe: str) -> str:
+    """문구에서 **레시피 이름이 나온 자리만** 지웁니다.
+
+    레시피 이름은 상황이 준 값이라 문구에 그대로 나오는 것이 정상입니다. 그런데 그
+    이름 안에 재료명이 들어 있으면(`물파래콩전` 의 `물`, `치즈토마토 가지구이` 의 `치즈`)
+    환각으로 잡힙니다. 첫 베이스라인의 환각 3건이 전부 이 오탐이었습니다.
+
+    **이름이 나온 구간만 지우고 나머지는 그대로 검사합니다.** 처음에는 "이름에 든
+    글자면 통과" 로 두었는데, 그러면 `치즈토마토 가지구이` 상황에서 보유하지도 않은
+    `치즈` 를 "치즈가 있으니 바로 만드세요" 라고 말해도 통과했습니다. 오탐을 막으려다
+    정탐까지 막은 것입니다.
+    """
+    return reason.replace(recipe, " ") if recipe else reason
 
 
 def _appears_as_ingredient(word: str, reason: str) -> bool:
@@ -312,27 +342,28 @@ def check_reason(
     """
     checks: list[Check] = []
     known = case.known_ingredients
+    # 레시피 이름이 나온 자리를 지우고 검사합니다. 이름 안의 글자는 재료 언급이 아닙니다.
+    # 이름 **밖**의 언급은 그대로 검사 대상입니다.
+    scannable = _mask_recipe_name(reason, case.recipe)
 
     # 1. 환각 - 이 상황에 없는 재료를 말했는가
     intruders = sorted(
         word
         for word in vocabulary
-        if word not in known
-        and not _is_part_of_known(word, known, case.recipe)
-        and _appears_as_ingredient(word, reason)
+        if word not in known and not _is_part_of_known(word, known) and _appears_as_ingredient(word, scannable)
     )
     checks.append(Check("환각_재료", not intruders, f"상황에 없는 재료: {', '.join(intruders)}" if intruders else ""))
 
     # 2. 보유/부족 뒤집힘 - 없는 것을 있다고, 있는 것을 없다고
-    flipped = [name for name in case.missing if _mentions(reason, name, _HAS_WORDS)]
-    flipped += [name for name in case.have if _mentions(reason, name, _LACKS_WORDS)]
+    flipped = [name for name in case.missing if _mentions(scannable, name, _HAS_WORDS)]
+    flipped += [name for name in case.have if _mentions(scannable, name, _LACKS_WORDS)]
     checks.append(Check("보유_뒤집힘", not flipped, f"뒤집힌 재료: {', '.join(flipped)}" if flipped else ""))
 
     # 3. 상비재료를 사라고 했는가
     #
     # 상비재료는 `missing` 에 들어 있어도 장바구니 대상이 아닙니다. 소금을 사라고 하면
     # 데모에서 바로 눈에 띕니다.
-    pushed = [name for name in case.pantry if _mentions(reason, name, _BUY_WORDS)]
+    pushed = [name for name in case.pantry if _mentions(scannable, name, _BUY_WORDS)]
     checks.append(Check("상비재료_구매유도", not pushed, f"사라고 한 상비재료: {', '.join(pushed)}" if pushed else ""))
 
     # 4. 없는 조리시간을 지어냈는가
@@ -453,6 +484,8 @@ class ReasonResult:
     recipe: str
     reason: str
     elapsed_ms: float
+    # 이 문구를 만들 때의 상황 지문. 재채점이 같은 상황인지 확인합니다.
+    case_hash: str = ""
     checks: list[Check] = field(default_factory=list)
     rubric: RubricScore | None = None
 
@@ -615,6 +648,7 @@ async def run_reason_experiment(
             recipe=case.recipe,
             reason=reason,
             elapsed_ms=elapsed_ms,
+            case_hash=case_fingerprint(case),
             checks=check_reason(case, reason, vocabulary=vocabulary, max_chars=max_chars),
         )
         if judge is not None:
@@ -624,14 +658,23 @@ async def run_reason_experiment(
     return report
 
 
-def load_reasons(path: Path) -> dict[str, str]:
-    """지난 결과 JSONL 에서 `case_id -> 문구` 를 꺼냅니다.
+@dataclass(slots=True)
+class PriorReason:
+    """지난 실행이 남긴 문구 하나."""
+
+    reason: str
+    # 그때의 상황 지문. 옛 결과 파일에는 없어서 빈 문자열일 수 있습니다.
+    case_hash: str = ""
+
+
+def load_reasons(path: Path) -> dict[str, PriorReason]:
+    """지난 결과 JSONL 에서 `case_id -> 문구(+상황 지문)` 를 꺼냅니다.
 
     **판정자를 비교하려면 같은 문구를 다시 재야 합니다.** 생성은 매번 달라지므로,
     판정자만 바꿔 새로 돌리면 문구 차이와 판정자 차이가 섞여 무엇 때문에 점수가
     바뀌었는지 알 수 없습니다.
     """
-    reasons: dict[str, str] = {}
+    reasons: dict[str, PriorReason] = {}
     with path.open(encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
             line = line.strip()
@@ -642,7 +685,7 @@ def load_reasons(path: Path) -> dict[str, str]:
                 continue  # 첫 줄은 메타데이터입니다
             case_id, reason = payload.get("case_id"), payload.get("reason")
             if case_id and reason:
-                reasons[str(case_id)] = str(reason)
+                reasons[str(case_id)] = PriorReason(str(reason), str(payload.get("case_hash") or ""))
     if not reasons:
         raise ValueError(f"문구가 들어 있지 않습니다: {path}")
     return reasons
@@ -651,7 +694,7 @@ def load_reasons(path: Path) -> dict[str, str]:
 async def rescore_experiment(
     name: str,
     cases: Sequence[RecommendationCase],
-    reasons: dict[str, str],
+    reasons: dict[str, PriorReason],
     *,
     judge: ChatClient,
     settings: Settings | None = None,
@@ -678,21 +721,41 @@ async def rescore_experiment(
         },
     )
 
-    missing = [case.case_id for case in cases if case.case_id not in reasons]
-    if missing:
+    if missing := [case.case_id for case in cases if case.case_id not in reasons]:
         raise ValueError(f"지난 결과에 없는 케이스입니다: {', '.join(missing[:5])}")
 
+    # **id 가 같아도 내용이 바뀌었으면 거부합니다.** id 를 그대로 둔 채 재료나
+    # 조리시간을 고치면, 옛 문구를 새 상황으로 채점하게 됩니다. 그 점수는 판정자
+    # 비교에 쓸 수 없는데 결과 파일만 보면 멀쩡해 보입니다.
+    drifted = [
+        case.case_id
+        for case in cases
+        if reasons[case.case_id].case_hash and reasons[case.case_id].case_hash != case_fingerprint(case)
+    ]
+    if drifted:
+        raise ValueError(
+            f"상황이 바뀐 케이스입니다: {', '.join(drifted[:5])}. "
+            "지난 문구는 다른 상황에서 나온 것이라 다시 채점해도 비교할 수 없습니다. "
+            "문구를 새로 만들거나(--rescore 없이), 케이스를 원래대로 되돌리세요."
+        )
+
+    # 옛 결과 파일에는 지문이 없습니다. 그때는 확인할 방법이 없으므로 그 사실을
+    # 기록에 남깁니다. 조용히 통과시키면 나중에 그 결과를 믿게 됩니다.
+    verified = all(reasons[case.case_id].case_hash for case in cases)
+    report.params["case_hash_verified"] = verified
+
     for case in cases:
-        reason = reasons[case.case_id]
+        prior = reasons[case.case_id]
         started = time.perf_counter()
-        rubric = await score_reason(case, reason, chat=judge)
+        rubric = await score_reason(case, prior.reason, chat=judge)
         report.results.append(
             ReasonResult(
                 case_id=case.case_id,
                 recipe=case.recipe,
-                reason=reason,
+                reason=prior.reason,
                 elapsed_ms=(time.perf_counter() - started) * 1000,
-                checks=check_reason(case, reason, vocabulary=vocabulary, max_chars=max_chars),
+                case_hash=prior.case_hash or case_fingerprint(case),
+                checks=check_reason(case, prior.reason, vocabulary=vocabulary, max_chars=max_chars),
                 rubric=rubric,
             )
         )

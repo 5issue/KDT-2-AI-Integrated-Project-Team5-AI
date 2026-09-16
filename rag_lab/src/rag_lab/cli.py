@@ -104,7 +104,6 @@ async def run_reason_command(
     """
     settings = get_settings()
     cases = load_recommendation_cases(cases_path)
-    chat = LlmChatClient(settings)
 
     # 판정자는 **생성과 다른 모델**입니다. `JUDGE_MODEL` 이 비었거나 생성 모델과
     # 같으면 여기서 실패합니다 - 자기 답을 자기가 채점하면 점수를 믿을 수 없습니다
@@ -115,11 +114,14 @@ async def run_reason_command(
 
     if rescore is not None:
         # 판정자 교차 검증. 문구를 새로 만들지 않고 지난 결과를 다시 채점만 합니다.
+        #
+        # **생성 클라이언트를 만들지 않습니다.** 만들면 `LLM_API_KEY` 를 요구해서,
+        # 판정용 키만 가진 사람이 재채점을 못 돌립니다. 이 경로는 생성 호출이 없습니다.
         if scorer is None:
             raise RuntimeError("--rescore 는 --judge 와 함께 써야 합니다. 채점만 하는 명령입니다.")
         report = await rescore_experiment(name, cases, load_reasons(rescore), judge=scorer, settings=settings)
     else:
-        report = await run_reason_experiment(name, cases, chat=chat, judge=scorer, settings=settings)
+        report = await run_reason_experiment(name, cases, chat=LlmChatClient(settings), judge=scorer, settings=settings)
 
     print(report.render())
     print()
