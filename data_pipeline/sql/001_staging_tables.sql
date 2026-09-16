@@ -130,6 +130,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_embedding (
 -- staging 스키마가 바뀌면 CREATE IF NOT EXISTS 로는 컬럼이 추가되지 않습니다.
 -- 이미 만들어진 테이블을 따라잡기 위한 보정입니다. staging 은 언제든 다시 채울 수 있으므로
 -- 컬럼을 더하는 것만으로 충분합니다.
+ALTER TABLE staging_product ADD COLUMN IF NOT EXISTS brand_name TEXT;
 ALTER TABLE staging_product_ingredient ADD COLUMN IF NOT EXISTS ingredient_id BIGINT;
 ALTER TABLE staging_recipe ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE staging_ingredient_master ADD COLUMN IF NOT EXISTS is_pantry BOOLEAN NOT NULL DEFAULT FALSE;

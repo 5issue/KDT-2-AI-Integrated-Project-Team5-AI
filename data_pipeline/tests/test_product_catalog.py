@@ -320,3 +320,13 @@ def test_korean_storage_type_passes_through(tmp_path: Path) -> None:
     index = catalog.PRODUCT_COLUMNS.index("storage_type")
     assert rows.products[0][index] == "냉장"
     assert rows.unknown_storage_types == {}
+
+
+def test_product_upsert_merges_metadata_instead_of_replacing() -> None:
+    """`metadata = sp.metadata` 로 통째로 대입하면 raw 에 없는 키가 매 적재마다 사라집니다.
+
+    `seed-demo` 가 남기는 `stock_source` 가 그렇게 지워지면 재고 소유권을 잃고,
+    다음 시드가 그 행을 "남이 채운 값" 으로 보고 건너뜁니다.
+    """
+    sql = (Path(__file__).resolve().parents[1] / "sql" / "007_insert_product.sql").read_text(encoding="utf-8")
+    assert "metadata       = COALESCE(p.metadata, '{}'::jsonb) || sp.metadata" in sql

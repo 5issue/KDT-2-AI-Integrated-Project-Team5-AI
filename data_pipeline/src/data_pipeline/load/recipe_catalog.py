@@ -39,6 +39,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -211,6 +212,66 @@ def _unit(quantity: str) -> str | None:
     return unit[:30] or None
 
 
+# 유니코드 분수 기호. 원천이 `½큰술` 처럼 쓰는 일이 있습니다.
+_VULGAR_FRACTIONS = {
+    "⅓": Fraction(1, 3),
+    "⅔": Fraction(2, 3),
+    "¼": Fraction(1, 4),
+    "½": Fraction(1, 2),
+    "¾": Fraction(3, 4),
+}
+
+# **순서가 중요합니다.** 대분수 -> 분수 -> 소수 순으로 시도합니다.
+# 소수를 먼저 보면 `1/2` 의 `1` 만 먹고 분수를 놓칩니다(실제로 그렇게 틀렸습니다).
+_MIXED_NUMBER = re.compile(r"^(\d+)\s+(\d+)\s*/\s*(\d+)")
+_FRACTION = re.compile(r"^(\d+)\s*/\s*(\d+)")
+_PLAIN_NUMBER = re.compile(r"^(\d+(?:\.\d+)?)")
+
+
+def _quantity(raw: str) -> Decimal | None:
+    """수량 표기에서 숫자만. **분수를 분수로 계산합니다.**
+
+    예전에는 `re.sub(r"[^\\d.]", "", raw)` 로 숫자가 아닌 글자를 전부 지웠습니다.
+    그러면 `1/2알` 에서 `/` 까지 사라져 `"12"` 가 남고, 수량이 **12** 로 저장됐습니다.
+    COOKRCP01 5,813개 수량 표기 중 2건이 실제로 그렇게 들어갔습니다.
+
+    계산이 안 되면 **`None` 을 돌려줍니다.** 원문은 `raw_text` 에 그대로 남으므로
+    틀린 숫자를 남기는 것보다 비우는 편이 낫습니다(`모르는 값은 지어내지 않는다`).
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+
+    total = Fraction(0)
+    found = False
+    for symbol, value in _VULGAR_FRACTIONS.items():
+        if symbol in text:
+            total += value
+            text = text.replace(symbol, " ")
+            found = True
+
+    text = text.lstrip()
+    if match := _MIXED_NUMBER.match(text):
+        whole, numerator, denominator = (int(value) for value in match.groups())
+        if denominator == 0:
+            return None
+        total += whole + Fraction(numerator, denominator)
+        found = True
+    elif match := _FRACTION.match(text):
+        numerator, denominator = (int(value) for value in match.groups())
+        if denominator == 0:
+            return None
+        total += Fraction(numerator, denominator)
+        found = True
+    elif match := _PLAIN_NUMBER.match(text):
+        total += Fraction(match.group(1))
+        found = True
+
+    if not found:
+        return None
+    return Decimal(str(round(float(total), 2)))
+
+
 def _decimal(value: Any) -> Decimal | None:
     """NUMERIC 컬럼용. 숫자가 아니면 None."""
     text = _text(value)
@@ -346,7 +407,7 @@ def build_recipe_rows(datasets: list[RawDataset], lookup: dict[str, int]) -> Rec
                         f"{ingredient_name} {quantity}".strip(),
                         ingredient_name,
                         key,
-                        _decimal(re.sub(r"[^\d.]", "", quantity)),
+                        _quantity(quantity),
                         _unit(quantity),
                         # 원천이 필수/선택을 구분하지 않습니다. 전부 필수로 둡니다.
                         True,

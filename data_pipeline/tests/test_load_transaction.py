@@ -190,3 +190,57 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
     async with load_connection_scope() as conn:
         assert await conn.fetchval("SELECT COUNT(*) FROM recipe WHERE source_type = $1", SOURCE_TYPE) == 0
         assert await conn.fetchval("SELECT COUNT(*) FROM storage_guideline WHERE source_item_id = 'pytest_item_1'") == 0
+
+
+async def test_apply_stock_skips_products_it_does_not_own() -> None:
+    """재고 가드. **남이 채운 값을 덮지 않는지**를 실제 스키마에서 확인하고 되돌립니다.
+
+    `seed-demo` 가 운영 DB 를 가리켜도 카탈로그 전체의 재고를 합성값으로 날리면 안 됩니다.
+    NULL(수량 미상)과 우리 표식이 붙은 행만 건드립니다.
+    """
+    from data_pipeline.load.demo_seed import STOCK_SOURCE, apply_stock
+
+    with pytest.raises(RollbackError):
+        async with load_connection_scope() as conn:
+            rows = await conn.fetch("SELECT product_id FROM product ORDER BY product_id LIMIT 3")
+            assert len(rows) == 3, "product 가 비어 있습니다."
+            owned, foreign, unknown = (int(row["product_id"]) for row in rows)
+
+            # 셋을 서로 다른 상태로 만듭니다.
+            await conn.execute(
+                "UPDATE product SET stock_quantity = 111, "
+                "metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('stock_source', $2::text) "
+                "WHERE product_id = $1",
+                owned,
+                STOCK_SOURCE,
+            )
+            await conn.execute(
+                "UPDATE product SET stock_quantity = 222, metadata = (COALESCE(metadata,'{}'::jsonb) - 'stock_source') "
+                "WHERE product_id = $1",
+                foreign,
+            )
+            await conn.execute(
+                "UPDATE product SET stock_quantity = NULL, "
+                "metadata = (COALESCE(metadata,'{}'::jsonb) - 'stock_source') WHERE product_id = $1",
+                unknown,
+            )
+
+            updated = await apply_stock(conn, [(owned, 7), (foreign, 7), (unknown, 7)])
+            assert updated == 2, "우리 것과 NULL 만 갱신해야 합니다."
+
+            after = {
+                int(row["product_id"]): row["stock_quantity"]
+                for row in await conn.fetch(
+                    "SELECT product_id, stock_quantity FROM product WHERE product_id = ANY($1::bigint[])",
+                    [owned, foreign, unknown],
+                )
+            }
+            assert after[owned] == 7, "우리가 쓴 행은 갱신됩니다."
+            assert after[unknown] == 7, "NULL 은 수량 미상이라 덮어도 됩니다."
+            assert after[foreign] == 222, "남이 채운 값은 건드리면 안 됩니다."
+
+            # --reset-stock 은 그 보호를 명시적으로 끕니다.
+            assert await apply_stock(conn, [(foreign, 9)], reset=True) == 1
+            assert (await conn.fetchval("SELECT stock_quantity FROM product WHERE product_id = $1", foreign)) == 9
+
+            raise RollbackError

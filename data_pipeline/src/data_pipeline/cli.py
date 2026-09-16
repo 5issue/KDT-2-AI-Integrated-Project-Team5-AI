@@ -439,7 +439,14 @@ def command_load_recipes(args: argparse.Namespace) -> int:
 
 def command_seed_demo(args: argparse.Namespace) -> int:
     """데모 사용자·냉장고·구매이력·인기도를 넣습니다."""
-    report = asyncio.run(run_demo_seed(users=args.users, settings=get_settings(), dry_run=not args.apply))
+    report = asyncio.run(
+        run_demo_seed(
+            users=args.users,
+            settings=get_settings(),
+            dry_run=not args.apply,
+            reset_stock=args.reset_stock,
+        )
+    )
     print(report.render())
     if not args.apply:
         print("\n실제로 넣으려면 --apply 를 붙이세요.", file=sys.stderr)
@@ -535,6 +542,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("seed-demo", help="데모 사용자/냉장고/구매이력/인기도 시드")
     demo.add_argument("--users", type=int, default=20, help="만들 사용자 수")
     demo.add_argument("--apply", action="store_true", help="실제로 DB 에 반영")
+    demo.add_argument(
+        "--reset-stock",
+        action="store_true",
+        help="표식 없이 이미 채워진 재고까지 덮어씀 (기본은 NULL 이거나 seed-demo 가 쓴 행만)",
+    )
     demo.set_defaults(func=command_seed_demo)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")

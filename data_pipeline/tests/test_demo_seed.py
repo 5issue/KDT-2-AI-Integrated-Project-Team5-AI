@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from data_pipeline.load.demo_seed import (
     DEMO_USER_BASE,
+    DEMO_USER_MAX,
     STOCK_LOW_RANGE,
     STOCK_NORMAL_RANGE,
     DemoReport,
@@ -147,3 +148,22 @@ def test_stock_seed_is_independent_of_user_count() -> None:
     build_rows(CANDIDATES, users=50, now=NOW)
     after, _ = build_stock_rows(PRODUCT_IDS)
     assert before == after
+
+
+# --- 데모 대역 경계 (코드래빗 리뷰 반영) --------------------------------------
+
+
+def test_demo_band_is_closed_at_both_ends() -> None:
+    """`>= BASE` 만 쓰면 대역 위쪽이 열려 있어, 실제 사용자 id 가 그 위로 올라오면
+    남의 냉장고·구매이력을 지웁니다."""
+    assert DEMO_USER_MAX > DEMO_USER_BASE
+    app_users, fridge, affinity, _, _ = seed(users=50)
+
+    assert all(DEMO_USER_BASE <= user_id <= DEMO_USER_MAX for user_id, _ in app_users)
+    assert all(DEMO_USER_BASE <= row[1] <= DEMO_USER_MAX for row in fridge)
+    assert all(DEMO_USER_BASE <= row[0] <= DEMO_USER_MAX for row in affinity)
+
+
+def test_demo_band_has_room_for_more_users_than_we_seed() -> None:
+    """상한이 너무 빡빡하면 `--users` 를 늘리는 순간 대역을 넘습니다."""
+    assert DEMO_USER_BASE + 1000 <= DEMO_USER_MAX

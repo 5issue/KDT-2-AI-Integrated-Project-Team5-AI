@@ -193,6 +193,15 @@ async def run_embedding(
     async with load_connection_scope(settings) as conn:
         await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
 
+        # **이번 실행 것만 남깁니다.** `020_update_embedding.sql` 이 staging 전체를 읽기
+        # 때문에, 비우지 않으면 지난 실행에서 남은 다른 target 의 벡터까지 본 테이블에
+        # 다시 씁니다. 임베딩 모델을 바꾸고 한 target 만 `--refresh` 했을 때, 나머지가
+        # 조용히 옛 모델 벡터로 되돌아갑니다.
+        #
+        # staging 은 UNLOGGED 스크래치라 비워도 잃을 것이 없습니다.
+        if not dry_run:
+            await conn.execute("TRUNCATE staging_embedding")
+
         for target in targets:
             where = "TRUE" if refresh else f"{_ALIAS[target]}.embedding IS NULL"
             total_rows = await conn.fetchval(f"SELECT COUNT(*) FROM {_FROM[target]} WHERE {where}")

@@ -59,6 +59,12 @@ from data_pipeline.load.bulk_insert import load_connection_scope
 # 시드 픽스처(`recsys_sql.fixtures`)와 같은 대역. 실제 데이터와 섞이지 않습니다.
 DEMO_USER_BASE = 9_200_000_000
 
+# 데모 대역의 **위쪽 경계**. 삭제 조건을 `>= BASE` 로만 두면 열린 구간이라,
+# 실제 사용자 id 가 이 위로 올라오는 날 그 사용자의 냉장고·구매이력까지 지웁니다.
+# 저장소에 production DDL 이 없어(`0001_baseline`) "실제 id 는 항상 더 작다" 를
+# 확인할 방법이 없으므로, 우리가 쓸 만큼만 닫아 둡니다.
+DEMO_USER_MAX = DEMO_USER_BASE + 1_000_000
+
 # 난수 시드. 바꾸지 마세요. 바꾸면 같은 명령이 다른 데이터를 만듭니다.
 RANDOM_SEED = 20260915
 
@@ -81,6 +87,10 @@ STOCK_LOW_RATIO = 0.12
 STOCK_LOW_RANGE = (1, 9)
 STOCK_NORMAL_RANGE = (10, 400)
 
+# 우리가 쓴 재고임을 표시하는 값. `product.metadata->>'stock_source'` 에 들어갑니다.
+# 이 표식이 없는 행은 남이 채운 값으로 보고 건드리지 않습니다.
+STOCK_SOURCE = "seed-demo"
+
 # 재고용 난수 스트림을 따로 씁니다. 같은 스트림을 쓰면 `--users` 를 바꿀 때마다
 # 상품 재고까지 통째로 달라져, 사용자 수만 늘렸는데 품절 상품이 바뀝니다.
 STOCK_SEED = RANDOM_SEED + 1
@@ -96,6 +106,7 @@ class DemoReport:
     popularity_rows: int = 0
     stock_rows: int = 0
     stock_sold_out: int = 0
+    stock_applied: int = 0
     edge_cases: dict[str, int] = field(default_factory=dict)
     applied: bool = False
 
@@ -106,7 +117,7 @@ class DemoReport:
             f"냉장고        {self.fridge_rows}행",
             f"구매이력      {self.affinity_rows}행",
             f"인기도        {self.popularity_rows}행",
-            f"재고          {self.stock_rows}행 (품절 {self.stock_sold_out}개)",
+            f"재고          {self.stock_rows}행 중 {self.stock_applied}행 반영 (품절 {self.stock_sold_out}개)",
         ]
         if self.edge_cases:
             detail = ", ".join(f"{name} {count}명" for name, count in sorted(self.edge_cases.items()))
@@ -233,24 +244,43 @@ def build_stock_rows(product_ids: list[int]) -> tuple[list[tuple[int, int]], int
     return rows, sold_out
 
 
-async def apply_stock(conn: asyncpg.Connection, rows: list[tuple[int, int]]) -> None:
-    """재고를 한 문장으로 반영합니다.
+async def apply_stock(conn: asyncpg.Connection, rows: list[tuple[int, int]], *, reset: bool = False) -> int:
+    """재고를 한 문장으로 반영하고, 실제로 바뀐 행수를 돌려줍니다.
 
     2,500 행에 UPDATE 를 한 번씩 보내면 Neon 왕복이 2,500 번입니다. 배열 두 개로
     묶어 보내면 한 번입니다.
+
+    ## 남의 재고를 덮지 않습니다
+
+    기본값은 **비어 있거나(NULL) 우리가 쓴 행**만 갱신합니다. 이 명령이 데모용 DB 를
+    가리킨다는 보장이 코드에 없어서(폴더별 `.env` 뿐입니다), 조건 없이 전부 덮으면
+    운영 DB 를 가리킨 순간 카탈로그 전체의 재고가 합성값으로 날아갑니다.
+
+    NULL 은 "수량 미상" 이라 덮어도 잃을 것이 없고, `metadata.stock_source` 가 우리
+    표식인 행은 우리가 지난번에 쓴 값입니다. 그 둘만 건드립니다.
+
+    `reset=True` 는 **그 보호를 끄는 명시적 선택**입니다. 표식 없이 이미 채워진 값을
+    우리 것으로 가져올 때만 쓰세요.
     """
     if not rows:
-        return
-    await conn.execute(
+        return 0
+    result = await conn.execute(
         """
         UPDATE product p
-        SET stock_quantity = v.quantity, updated_at = NOW()
+        SET stock_quantity = v.quantity,
+            metadata = COALESCE(p.metadata, '{}'::jsonb) || jsonb_build_object('stock_source', $3::text),
+            updated_at = NOW()
         FROM UNNEST($1::bigint[], $2::int[]) AS v(product_id, quantity)
         WHERE p.product_id = v.product_id
+          AND ($4::boolean OR p.stock_quantity IS NULL OR p.metadata ->> 'stock_source' = $3::text)
         """,
         [product_id for product_id, _ in rows],
         [quantity for _, quantity in rows],
+        STOCK_SOURCE,
+        reset,
     )
+    # asyncpg 는 "UPDATE <n>" 을 돌려줍니다.
+    return int(result.rsplit(" ", 1)[-1] or 0)
 
 
 async def run_demo_seed(
@@ -258,6 +288,7 @@ async def run_demo_seed(
     users: int = 20,
     settings: Settings | None = None,
     dry_run: bool = False,
+    reset_stock: bool = False,
 ) -> DemoReport:
     """데모 데이터를 만들고 DB 에 넣습니다.
 
@@ -292,9 +323,10 @@ async def run_demo_seed(
             return report
 
         # 자식부터 지웁니다. FK 가 걸려 있습니다.
-        await conn.execute("DELETE FROM user_fridge WHERE user_id >= $1", DEMO_USER_BASE)
-        await conn.execute("DELETE FROM user_product_affinity WHERE user_id >= $1", DEMO_USER_BASE)
-        await conn.execute("DELETE FROM app_user WHERE user_id >= $1", DEMO_USER_BASE)
+        # **닫힌 구간입니다.** `>= BASE` 만 쓰면 대역 위쪽이 열려 있어, 실제 사용자 id 가
+        # 그 위로 올라오면 남의 데이터를 지웁니다.
+        for table in ("user_fridge", "user_product_affinity", "app_user"):
+            await conn.execute(f"DELETE FROM {table} WHERE user_id BETWEEN $1 AND $2", DEMO_USER_BASE, DEMO_USER_MAX)
         # 인기도는 사용자와 무관합니다. 같은 기간 것만 갈아끼웁니다.
         await conn.execute(
             "DELETE FROM product_popularity WHERE period_start = $1 AND period_end = $2",
@@ -327,7 +359,7 @@ async def run_demo_seed(
                 "popularity_score",
             ],
         )
-        await apply_stock(conn, stock)
+        report.stock_applied = await apply_stock(conn, stock, reset=reset_stock)
         report.applied = True
 
     return report

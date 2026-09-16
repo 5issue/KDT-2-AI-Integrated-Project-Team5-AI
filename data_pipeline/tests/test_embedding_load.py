@@ -134,3 +134,32 @@ def test_default_still_skips_filled_rows() -> None:
     """기본값까지 다시 만들면 중간에 끊겼을 때 돈이 두 배로 듭니다."""
     for target in embedding.TARGETS:
         assert "embedding IS NULL" in embedding.select_sql(target), target
+
+
+def test_apply_sql_reads_the_whole_staging_table() -> None:
+    """`020_update_embedding.sql` 이 target 으로 거르지 않고 staging 전체를 읽습니다.
+
+    그래서 `run_embedding` 이 실행 시작에 staging 을 비워야 합니다. 안 비우면 임베딩
+    모델을 바꾸고 한 target 만 `--refresh` 했을 때, 나머지 target 이 조용히 옛 모델
+    벡터로 되돌아갑니다. 이 테스트는 그 전제(=전체를 읽는다)를 고정합니다.
+    """
+    sql = (Path(__file__).resolve().parents[1] / "sql" / "020_update_embedding.sql").read_text(encoding="utf-8")
+    assert sql.count("FROM staging_embedding") == 3
+    assert "TRUNCATE" not in sql, "비우는 책임은 run_embedding 에 있습니다"
+
+
+def test_run_embedding_truncates_staging_before_use() -> None:
+    """위 전제에 대한 짝. 소스에 TRUNCATE 가 남아 있는지 봅니다."""
+    source = (Path(__file__).resolve().parents[1] / "src" / "data_pipeline" / "load" / "embedding.py").read_text(
+        encoding="utf-8"
+    )
+    assert "TRUNCATE staging_embedding" in source
+
+
+def test_staging_product_gains_brand_name_on_existing_databases() -> None:
+    """`CREATE TABLE IF NOT EXISTS` 는 기존 테이블 스키마를 바꾸지 않습니다.
+
+    ALTER 가 없으면 이미 파이프라인을 돌린 환경에서 상품 COPY 가 컬럼 없음으로 죽습니다.
+    """
+    sql = (Path(__file__).resolve().parents[1] / "sql" / "001_staging_tables.sql").read_text(encoding="utf-8")
+    assert "ALTER TABLE staging_product ADD COLUMN IF NOT EXISTS brand_name" in sql

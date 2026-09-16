@@ -65,7 +65,11 @@ SET name           = LEFT(sp.name, 255),
     weight_g       = COALESCE(sp.weight_g, p.weight_g),
     unit_count     = COALESCE(sp.unit_count, p.unit_count),
     stock_quantity = COALESCE(sp.stock_quantity, p.stock_quantity),
-    metadata       = sp.metadata,
+    -- **덮어쓰지 않고 병합합니다.** 통째로 대입하면 raw 에 없는 키가 매 적재마다
+    -- 사라집니다. `seed-demo` 가 남기는 `stock_source` 처럼 다른 단계가 붙인 주석이
+    -- 조용히 지워지고, 그러면 재고 소유권을 잃어 다음 시드가 그 행을 건너뜁니다.
+    -- raw 쪽 키는 덧쓰기로 최신값이 이깁니다(키 삭제만 전파되지 않습니다).
+    metadata       = COALESCE(p.metadata, '{}'::jsonb) || sp.metadata,
     updated_at     = NOW()
 FROM normalized sp
 LEFT JOIN category cat ON cat.metadata ->> 'path' = sp.category_path

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from data_pipeline.load import recipe_catalog as rc
 
 
@@ -99,3 +101,37 @@ def test_html_tags_are_stripped() -> None:
 
     assert names(raw) == ["떡", "어묵", "부추"]
     assert "<br>" not in names(raw)
+
+
+# --- 수량 파싱 (코드래빗 리뷰 반영) -------------------------------------------
+
+
+def test_fraction_quantity_is_computed_not_concatenated() -> None:
+    """예전에는 숫자 아닌 글자를 전부 지워 `1/2알` 이 `12` 로 저장됐습니다.
+
+    COOKRCP01 5,813개 수량 표기 중 2건이 실제로 그렇게 들어갔습니다.
+    """
+    assert rc._quantity("1/2알") == Decimal("0.5")
+    assert rc._quantity("2/3작은술") == Decimal("0.67")
+
+
+def test_mixed_number_is_supported() -> None:
+    assert rc._quantity("1 1/2컵") == Decimal("1.5")
+
+
+def test_vulgar_fraction_symbols_are_supported() -> None:
+    """원천이 `½큰술` 처럼 유니코드 기호를 씁니다."""
+    assert rc._quantity("½큰술") == Decimal("0.5")
+    assert rc._quantity("1¼개") == Decimal("1.25")
+
+
+def test_plain_numbers_still_work() -> None:
+    assert rc._quantity("75g") == Decimal("75")
+    assert rc._quantity("2.5큰술") == Decimal("2.5")
+
+
+def test_unparseable_quantity_is_null_not_a_guess() -> None:
+    """틀린 숫자를 남기는 것보다 비우는 편이 낫습니다. 원문은 raw_text 에 남습니다."""
+    assert rc._quantity("약간") is None
+    assert rc._quantity("") is None
+    assert rc._quantity("1/0개") is None, "0 으로 나누면 안 됩니다"
