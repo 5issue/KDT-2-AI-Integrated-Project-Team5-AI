@@ -31,7 +31,7 @@ async def test_db_health_returns_503_without_pool(offline_client: AsyncClient) -
 
 async def test_recommendation_endpoint_returns_503_without_pool(offline_client: AsyncClient) -> None:
     """DB 가 필요한 엔드포인트도 마찬가지입니다."""
-    response = await offline_client.get("/users/1/recipe-recommendations")
+    response = await offline_client.get("/api/v1/users/1/recipe-recommendations")
 
     assert response.status_code == 503
 
@@ -39,10 +39,10 @@ async def test_recommendation_endpoint_returns_503_without_pool(offline_client: 
 @pytest.mark.parametrize(
     ("path", "params"),
     [
-        ("/users/1/recipe-recommendations", {"min_coverage": "1.5"}),
-        ("/users/1/recipe-recommendations", {"limit": "999"}),
-        ("/users/0/reorder-candidates", {}),
-        ("/users/1/reorder-candidates", {"days_since": "0"}),
+        ("/api/v1/users/1/recipe-recommendations", {"min_coverage": "1.5"}),
+        ("/api/v1/users/1/recipe-recommendations", {"limit": "999"}),
+        ("/api/v1/users/0/reorder-candidates", {}),
+        ("/api/v1/users/1/reorder-candidates", {"days_since": "0"}),
     ],
 )
 async def test_query_parameters_are_validated(
