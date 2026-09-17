@@ -22,7 +22,7 @@ DB 도 파일도 보지 않습니다. 문자열을 넣으면 문자열과 숫자
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from fractions import Fraction
 from typing import Any
 
@@ -199,14 +199,3 @@ def _quantity(raw: str) -> Decimal | None:
     if not found:
         return None
     return Decimal(str(round(float(total), 2)))
-
-
-def _decimal(value: Any) -> Decimal | None:
-    """NUMERIC 컬럼용. 숫자가 아니면 None."""
-    text = _text(value)
-    if not text:
-        return None
-    try:
-        return Decimal(str(round(float(text), 2)))
-    except (ValueError, InvalidOperation):
-        return None
