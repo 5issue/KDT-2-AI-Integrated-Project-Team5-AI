@@ -34,13 +34,17 @@ from data_pipeline.batch.client import DEAD_STATUSES, TERMINAL_STATUSES, BatchRu
 from data_pipeline.batch.raw_source import discover_datasets, preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
-from data_pipeline.load import catalog, ingredient_master
+from data_pipeline.load import catalog, ingredient_master, recipe_catalog
 from data_pipeline.load.bulk_insert import (
     collect_rows,
     load_connection_scope,
     run_load,
     run_sql_file,
 )
+from data_pipeline.load.demo_seed import run_demo_seed
+from data_pipeline.load.embedding import TARGETS as EMBEDDING_TARGETS
+from data_pipeline.load.embedding import run_embedding
+from data_pipeline.load.recipe_catalog import run_recipe_load
 from data_pipeline.stages import (
     STAGE_EXTRACT,
     STAGE_PROFILE,
@@ -377,6 +381,78 @@ def command_load_catalog(args: argparse.Namespace) -> int:
     return asyncio.run(load_catalog_async(get_settings(), apply=args.apply))
 
 
+def command_embed(args: argparse.Namespace) -> int:
+    """embedding 컬럼을 채웁니다. rag_lab 의 pgvector 검색이 여기에 의존합니다."""
+    settings = get_settings()
+    targets = list(EMBEDDING_TARGETS) if args.target == "all" else [args.target]
+    report = asyncio.run(run_embedding(targets, settings=settings, dry_run=not args.apply, refresh=args.refresh))
+    print(report.render())
+    if not args.apply:
+        print("\n실제로 채우려면 --apply 를 붙이세요.", file=sys.stderr)
+    return 0
+
+
+async def load_recipes_async(settings: Settings, *, apply: bool) -> int:
+    """구조화된 한국어 레시피(COOKRCP01)를 적재합니다. LLM 을 거치지 않습니다."""
+    datasets = [
+        dataset
+        for dataset in discover_datasets(settings.raw_dir)
+        if set(recipe_catalog.REQUIRED_COLUMNS) <= set(dataset.columns)
+    ]
+    if not datasets:
+        print("COOKRCP01 데이터셋을 찾지 못했습니다.", file=sys.stderr)
+        return 1
+
+    # 3단계가 읽을 재료명을 남깁니다. `resolve` 를 돌리기 전에 이 파일이 있어야 합니다.
+    records_path = recipe_catalog.write_records(datasets, settings)
+
+    lookup = await resolve.fetch_match_lookup(settings)
+    # 3단계를 이미 돌렸다면 그 결과를 얹습니다. 마스터 정확 일치로 안 붙던 이름
+    # (`후춧가루`, `닭가슴살` 같은 것)이 여기서 붙습니다.
+    try:
+        llm_matches = resolve.load_matches(settings)
+    except FileNotFoundError:
+        llm_matches = {}
+    else:
+        print(f"3단계 매칭 {len(llm_matches)}종을 함께 씁니다.")
+    lookup = {**lookup, **llm_matches}
+
+    rows = recipe_catalog.build_recipe_rows(datasets, lookup)
+    print(f"재료명 산출물: {records_path.name}")
+    print(rows.render())
+    if rows.is_empty():
+        return 1
+    if not apply:
+        print("\n실제로 적재하려면 --apply 를 붙이세요.", file=sys.stderr)
+        return 0
+
+    report = await run_recipe_load(rows, settings=settings)
+    print()
+    print(report.render())
+    return 0
+
+
+def command_load_recipes(args: argparse.Namespace) -> int:
+    """레시피 적재 진입점."""
+    return asyncio.run(load_recipes_async(get_settings(), apply=args.apply))
+
+
+def command_seed_demo(args: argparse.Namespace) -> int:
+    """데모 사용자·냉장고·구매이력·인기도를 넣습니다."""
+    report = asyncio.run(
+        run_demo_seed(
+            users=args.users,
+            settings=get_settings(),
+            dry_run=not args.apply,
+            reset_stock=args.reset_stock,
+        )
+    )
+    print(report.render())
+    if not args.apply:
+        print("\n실제로 넣으려면 --apply 를 붙이세요.", file=sys.stderr)
+    return 0
+
+
 def command_load(args: argparse.Namespace) -> int:
     """중간 산출물을 staging 에 COPY 하고 타깃 테이블에 반영합니다."""
     settings = get_settings()
@@ -448,6 +524,30 @@ def build_parser() -> argparse.ArgumentParser:
     cat = sub.add_parser("load-catalog", help="category / product / product_ingredient 적재")
     cat.add_argument("--apply", action="store_true", help="실제로 DB 에 반영 (없으면 집계만)")
     cat.set_defaults(func=command_load_catalog)
+
+    embed = sub.add_parser("embed", help="recipe / product / ingredient 의 embedding 채우기")
+    embed.add_argument("--target", default="all", choices=["all", *EMBEDDING_TARGETS])
+    embed.add_argument("--apply", action="store_true", help="실제로 API 를 부르고 DB 에 반영")
+    embed.add_argument(
+        "--refresh",
+        action="store_true",
+        help="이미 채워진 행도 다시 만듭니다 (재료 연결이 바뀐 뒤)",
+    )
+    embed.set_defaults(func=command_embed)
+
+    recipes = sub.add_parser("load-recipes", help="구조화된 한국어 레시피(COOKRCP01) 적재")
+    recipes.add_argument("--apply", action="store_true", help="실제로 DB 에 반영")
+    recipes.set_defaults(func=command_load_recipes)
+
+    demo = sub.add_parser("seed-demo", help="데모 사용자/냉장고/구매이력/인기도 시드")
+    demo.add_argument("--users", type=int, default=20, help="만들 사용자 수")
+    demo.add_argument("--apply", action="store_true", help="실제로 DB 에 반영")
+    demo.add_argument(
+        "--reset-stock",
+        action="store_true",
+        help="표식 없이 이미 채워진 재고까지 덮어씀 (기본은 NULL 이거나 seed-demo 가 쓴 행만)",
+    )
+    demo.set_defaults(func=command_seed_demo)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")

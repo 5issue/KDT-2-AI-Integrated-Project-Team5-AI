@@ -49,9 +49,11 @@ ranked AS (
                               AND pi.role = 'PRIMARY'
     JOIN product p             ON p.product_id = pi.product_id
                               AND p.is_active
-                              -- stock_quantity 는 실제 스키마에서 NULL 허용이라 COALESCE 가 필요합니다.
-                              -- NULL > 0 은 NULL 이라 조건이 조용히 거짓이 됩니다.
-                              AND COALESCE(p.stock_quantity, 0) > 0
+-- stock_quantity 는 NULL 허용입니다. **NULL 은 품절이 아니라 "수량을 모른다" 입니다**
+                              -- (정규화 가이드 4.3: 품절이 명시된 경우만 0 으로 저장).
+                              -- COALESCE(..., 0) > 0 으로 거르면 모르는 상품이 전부 품절 취급되는데,
+                              -- 지금 적재분은 2,553개가 전부 NULL 이라 결과가 항상 빈손이 됩니다.
+                              AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
     -- recipe_product 의 PK 는 (recipe_id, ingredient_id, product_id) 입니다.
     -- 우선순위가 '어느 재료 자리의 상품인가'까지 포함하므로 ingredient_id 도 조인합니다.
     LEFT JOIN recipe_product rp ON rp.recipe_id = :recipe_id
