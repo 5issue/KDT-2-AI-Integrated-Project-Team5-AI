@@ -57,6 +57,16 @@ def build_catalog_rows(datasets: list[RawDataset]) -> CatalogRows:
     rows.categories = [row for row in rows.categories if row[0] not in seen and not seen.add(row[0])]
     seen = set()
     rows.products = [row for row in rows.products if row[:2] not in seen and not seen.add(row[:2])]
+
+    # 구성 재료도 같이 걷어내야 합니다. `_append_product_ingredients` 의 중복 제거는
+    # 레코드 하나 안에서만 돕니다. 같은 상품이 raw 에 두 번 들어오면 상품은 위에서
+    # 하나로 접히지만 구성 재료는 두 벌 남아, staging_product_ingredient 의
+    # PK(source_type, source_product_id, normalized_name) 에서 COPY 가 터집니다.
+    seen = set()
+    rows.product_ingredients = [
+        row for row in rows.product_ingredients if row[:3] not in seen and not seen.add(row[:3])
+    ]
+
     rows.products = _dedupe_sku(rows.products)
     return rows
 
