@@ -16,10 +16,38 @@ from typing import Any
 from data_pipeline.batch.client import BatchRunner
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.domain import ingredient_match_key
-from data_pipeline.schemas import IngredientMatchBatch
+from data_pipeline.schemas import IngredientMatch, IngredientMatchBatch
 from data_pipeline.stages import STAGE_RESOLVE
 from data_pipeline.stages.resolve.models import MatchResult, ResolveReport
 from data_pipeline.stages.resolve.report import save_report
+
+
+def _allowed_master_ids(runner: BatchRunner, job_name: str) -> set[int] | None:
+    """이 작업의 요청에 후보로 제시한 마스터 id 집합.
+
+    `run_resolve` 가 요청을 만들 때 남깁니다. 옛 작업에는 파일이 없으므로 그때는
+    `None` 을 돌려주고 검사를 건너뜁니다(있는 결과를 못 쓰게 만들지 않습니다).
+    """
+    path = runner.requests_dir / f"{job_name}_master_ids.json"
+    if not path.exists():
+        return None
+    return {int(value) for value in json.loads(path.read_text(encoding="utf-8"))}
+
+
+def _rejection(match: IngredientMatch, allowed: set[int] | None, min_confidence: float) -> str | None:
+    """채택하지 않을 이유. 채택해도 되면 `None`.
+
+    id 검사가 필요한 이유는 스키마가 임의의 정수를 허용하기 때문입니다. 제시하지 않은
+    id 가 통과하면 `ingredient_matches.json` 을 거쳐 `recipe_ingredient` 까지 내려가
+    **엉뚱한 재료에 조용히 연결**됩니다. (코드래빗 리뷰 PR #16)
+    """
+    if match.ingredient_id is None:
+        return "매칭 없음"
+    if match.confidence < min_confidence:
+        return "확신도 미달"
+    if allowed is not None and match.ingredient_id not in allowed:
+        return f"후보에 없는 ingredient_id({match.ingredient_id})"
+    return None
 
 
 def _build_aliases(runner: BatchRunner, job_name: str, requested: set[str]) -> dict[str, str]:
@@ -107,6 +135,7 @@ def collect(
     key_map = json.loads((runner.requests_dir / f"{job_name}_keys.json").read_text(encoding="utf-8"))
     requested = {name for names in key_map.values() for name in names}
     aliases = _build_aliases(runner, job_name, requested)
+    allowed = _allowed_master_ids(runner, job_name)
     occurrences = {item["normalized_name"]: item.get("occurrence", 0) for item in report.unmatched}
 
     outcome = runner.parse(job_name, IngredientMatchBatch)
@@ -123,7 +152,9 @@ def collect(
             if name not in requested or name in decided:
                 continue
             decided.add(name)
-            if match.ingredient_id is not None and match.confidence >= settings.match_min_confidence:
+            reason = _rejection(match, allowed, settings.match_min_confidence)
+            # id 조건은 `_rejection` 이 이미 봅니다. 여기 한 번 더 두는 것은 타입 좁히기용입니다.
+            if reason is None and match.ingredient_id is not None:
                 report.llm.append(
                     MatchResult(
                         normalized_name=name,
@@ -139,7 +170,7 @@ def collect(
                         "normalized_name": name,
                         "occurrence": occurrences.get(name, 0),
                         "confidence": match.confidence,
-                        "reason": match.reason,
+                        "reason": match.reason or reason,
                     }
                 )
 

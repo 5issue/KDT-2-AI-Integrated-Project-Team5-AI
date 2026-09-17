@@ -66,10 +66,10 @@ async def run_resolve(job_name: str, settings: Settings) -> int:
             for item in remaining
         ],
     )
-    save_report(report, settings)
     print(f"재료명 {len(names)}종 / 정확 일치 {len(exact) - len(gained)}종 / 클러스터 전파 {len(gained)}종")
 
     if not remaining:
+        save_report(report, settings)
         print("LLM 매칭이 필요 없습니다. 바로 load 로 넘어가세요.")
         return 0
 
@@ -89,6 +89,16 @@ async def run_resolve(job_name: str, settings: Settings) -> int:
     (runner.requests_dir / f"{job_name}_delegates.json").write_text(
         json.dumps(delegate, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    # 이 요청에 후보로 제시한 마스터 id. `collect` 가 이 집합 밖의 id 를 거부합니다.
+    # 스키마(`IngredientMatchBatch`)는 아무 정수나 통과시키므로, 제시하지 않은 id 가
+    # 확정 매칭으로 저장되면 엉뚱한 재료에 조용히 연결됩니다.
+    (runner.requests_dir / f"{job_name}_master_ids.json").write_text(
+        json.dumps(sorted(int(row["ingredient_id"]) for row in master), indent=2), encoding="utf-8"
+    )
+
+    # **리포트는 여기서 갈아끼웁니다.** 위 산출물 쓰기가 하나라도 실패하면 옛 LLM
+    # 결과만 사라지고 새 배치는 없는 상태가 됩니다. 한 트랜잭션이 아니기 때문입니다.
+    save_report(report, settings)
     for path in paths:
         print(f"생성: {path.name} (마스터 {len(master)}행을 후보로 첨부)")
     return 0
