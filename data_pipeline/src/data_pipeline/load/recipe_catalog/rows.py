@@ -21,7 +21,6 @@ DB 에 닿지 않습니다. 적재는 `loader` 가 합니다.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +32,7 @@ from data_pipeline.load.recipe_catalog.parsing import (
     _quantity,
     _text,
     _unit,
+    clean_step,
     match_candidates,
     parse_ingredients,
 )
@@ -172,9 +172,8 @@ def build_recipe_rows(datasets: list[RawDataset], lookup: dict[str, int]) -> Rec
                 instruction = _text(payload.get(f"MANUAL{index:02d}"))
                 if not instruction:
                     continue
-                # 원문이 `1. 손질된 새우를...a` 처럼 번호와 꼬리 문자를 답니다.
-                instruction = re.sub(r"^\d+\.\s*", "", instruction)
-                instruction = re.sub(r"[a-z]$", "", instruction).strip()
+                # 원문이 `1. 손질된 새우를...a` 처럼 번호와 꼬리 표식을 답니다.
+                instruction = clean_step(instruction)
                 rows.steps.append(
                     (
                         SOURCE_TYPE,

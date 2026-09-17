@@ -22,6 +22,7 @@ import recipe_catalog` 뒤 `recipe_catalog.<이름>`)를 그대로 쓸 수 있�
 from data_pipeline.load.recipe_catalog.loader import run_load_recipes, run_recipe_load
 from data_pipeline.load.recipe_catalog.parsing import (
     _quantity,
+    clean_step,
     match_candidates,
     parse_ingredients,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "RecipeRows",
     "_quantity",
     "build_recipe_rows",
+    "clean_step",
     "match_candidates",
     "parse_ingredients",
     "run_load_recipes",

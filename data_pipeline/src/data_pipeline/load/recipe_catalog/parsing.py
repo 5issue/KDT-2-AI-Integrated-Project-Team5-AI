@@ -1,4 +1,4 @@
-"""COOKRCP01 의 재료 문자열 파서. **순수 함수만 있습니다.**
+"""COOKRCP01 의 문자열 파서(재료줄과 조리단계). **순수 함수만 있습니다.**
 
 DB 도 파일도 보지 않습니다. 문자열을 넣으면 문자열과 숫자가 나옵니다.
 그래서 이 파일의 테스트는 픽스처도 커넥션도 필요 없습니다.
@@ -47,6 +47,22 @@ _SECTION_TITLE = re.compile(r"^[^:：]{1,14}\s*[:：]\s*")
 
 # 수량이 아니라 상태를 적은 꼬리. 재료명에서 뗍니다.
 _TRAILING = re.compile(r"\s*(약간|적당량|조금|소량)$")
+
+
+# 조리단계 머리의 번호(`1. 손질된 새우를...`).
+_STEP_NUMBER = re.compile(r"^\d+\.\s*")
+
+# 조리단계 꼬리의 원천 표식. **마침표 바로 뒤에 붙은 소문자 한 글자만** 지웁니다.
+#
+# 마침표 조건 없이 `[a-z]$` 로 지우면 `... 200g` 의 `g` 까지 먹습니다.
+# 실측 근거: cookrcp01_all.parquet 1,156건의 조리단계 6,717개 중 소문자로 끝나는 것이
+# 17개인데 **17개 전부** `...건진다.a` 처럼 마침표 뒤였습니다(a 5 / b 5 / c 6 / d 1).
+_STEP_MARKER = re.compile(r"(?<=\.)[a-z]$")
+
+
+def clean_step(instruction: str) -> str:
+    """조리단계 한 줄에서 머리 번호와 꼬리 표식을 뗍니다."""
+    return _STEP_MARKER.sub("", _STEP_NUMBER.sub("", instruction)).strip()
 
 
 def _text(value: Any) -> str:
