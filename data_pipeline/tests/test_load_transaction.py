@@ -123,11 +123,18 @@ async def test_load_scope_rolls_back_on_error() -> None:
 async def test_full_load_sql_runs_against_live_schema() -> None:
     """001~004 를 실제 스키마에서 돌리고 되돌립니다. 컬럼/제약 불일치를 잡습니다."""
     settings = get_settings()
+    async with load_connection_scope(settings) as conn:
+        ingredient_id = await conn.fetchval("SELECT ingredient_id FROM ingredient ORDER BY ingredient_id LIMIT 1")
+        assert ingredient_id is not None, "ingredient 마스터가 비어 있습니다."
+        storage_guideline_count_before = await conn.fetchval(
+            "SELECT COUNT(*) FROM storage_guideline "
+            "WHERE ingredient_id = $1 AND storage_location = '냉장' "
+            "AND storage_context = '구매후'",
+            ingredient_id,
+        )
 
     with pytest.raises(RollbackError):
         async with load_connection_scope(settings) as conn:
-            ingredient_id = await conn.fetchval("SELECT ingredient_id FROM ingredient ORDER BY ingredient_id LIMIT 1")
-            assert ingredient_id is not None, "ingredient 마스터가 비어 있습니다."
             before = await conn.fetchval("SELECT COUNT(*) FROM ingredient")
 
             await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
@@ -195,15 +202,13 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
 
     async with load_connection_scope() as conn:
         assert await conn.fetchval("SELECT COUNT(*) FROM recipe WHERE source_type = $1", SOURCE_TYPE) == 0
-        assert (
-            await conn.fetchval(
-                "SELECT COUNT(*) FROM storage_guideline "
-                "WHERE ingredient_id = $1 AND storage_location = '냉장' "
-                "AND storage_context = '구매후'",
-                ingredient_id,
-            )
-            == 0
+        storage_guideline_count_after = await conn.fetchval(
+            "SELECT COUNT(*) FROM storage_guideline "
+            "WHERE ingredient_id = $1 AND storage_location = '냉장' "
+            "AND storage_context = '구매후'",
+            ingredient_id,
         )
+        assert storage_guideline_count_after == storage_guideline_count_before
 
 
 async def test_apply_stock_skips_products_it_does_not_own() -> None:
