@@ -57,6 +57,5 @@ dev = [
     "pytest-cov>=7.1.0",
     "python-dotenv>=1.2.2",
     # pre-commit 훅(.pre-commit-config.yaml 의 ruff-pre-commit rev)과 같은 버전으로 고정합니다.
-    # 버전이 갈리면 훅이 통과시킨 포맷을 CI 의 `ruff format --check .` 가 거부합니다.
-    "ruff==0.4.4",
+    "ruff==0.16.8",
 ]
