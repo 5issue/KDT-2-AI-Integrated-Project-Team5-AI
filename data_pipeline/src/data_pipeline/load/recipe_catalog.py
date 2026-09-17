@@ -37,13 +37,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from data_pipeline.batch.raw_source import RawDataset, iter_records
+from data_pipeline.batch.raw_source import RawDataset, discover_datasets, iter_records
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.domain import ingredient_match_key, normalize_cooking_method
 from data_pipeline.load.bulk_insert import (
@@ -465,3 +467,42 @@ async def run_recipe_load(rows: RecipeRows, *, settings: Settings | None = None)
             report.row_counts[table] = int(count or 0)
 
     return report
+
+
+async def run_load_recipes(
+    settings: Settings, *, apply: bool, load_lookup: Callable[[], Awaitable[dict[str, int]]]
+) -> int:
+    """`load-recipes` 명령 본체. 구조화된 한국어 레시피(COOKRCP01)를 적재합니다.
+
+    `load_lookup` 은 `매칭키 -> ingredient_id` 를 주는 것입니다. 마스터 조회와
+    3단계 결과 병합이 `stages.resolve` 에 있어서, 적재 계층이 단계 계층을
+    끌어오지 않도록 **부르는 쪽이 넣어 줍니다.**
+
+    **재료명 산출물을 먼저 쓰고 나서 부릅니다.** `write_records` 는 3단계가 읽을
+    입력이라 DB 와 무관하게 남아야 하고, 데이터셋이 없으면 그 전에 빠져나갑니다.
+    """
+    datasets = [
+        dataset for dataset in discover_datasets(settings.raw_dir) if set(REQUIRED_COLUMNS) <= set(dataset.columns)
+    ]
+    if not datasets:
+        print("COOKRCP01 데이터셋을 찾지 못했습니다.", file=sys.stderr)
+        return 1
+
+    # 3단계가 읽을 재료명을 남깁니다. `resolve` 를 돌리기 전에 이 파일이 있어야 합니다.
+    records_path = write_records(datasets, settings)
+
+    lookup = await load_lookup()
+
+    rows = build_recipe_rows(datasets, lookup)
+    print(f"재료명 산출물: {records_path.name}")
+    print(rows.render())
+    if rows.is_empty():
+        return 1
+    if not apply:
+        print("\n실제로 적재하려면 --apply 를 붙이세요.", file=sys.stderr)
+        return 0
+
+    report = await run_recipe_load(rows, settings=settings)
+    print()
+    print(report.render())
+    return 0

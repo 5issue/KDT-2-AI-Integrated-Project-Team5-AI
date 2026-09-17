@@ -23,12 +23,15 @@
 
 from __future__ import annotations
 
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from data_pipeline.batch.raw_source import RawDataset, iter_records
+from data_pipeline.batch.raw_source import RawDataset, discover_datasets, iter_records
+from data_pipeline.config import Settings
 from data_pipeline.domain import ingredient_match_key
+from data_pipeline.load.bulk_insert import load_connection_scope, run_sql_file
 
 # 원재료성식품 / 가공식품 / 음식 구분. `데이터구분코드` 값입니다.
 RAW_MATERIAL_CODE = "R"
@@ -261,3 +264,60 @@ def render(rows: list[MasterRow]) -> str:
         f"  별칭이 있는 재료 {with_alias}종, 별칭 총 {alias_total}개\n"
         f"  상비재료(is_pantry) {pantry}종"
     )
+
+
+async def run_sync_master(settings: Settings, *, apply: bool) -> int:
+    """`sync-master` 명령 본체. 공공 영양성분 데이터로 재료 마스터를 보강합니다.
+
+    `apply` 가 거짓이면 집계만 하고 DB 에 닿지 않습니다. 기본값이 거짓인 이유는
+    이 명령이 `ingredient` 를 upsert 하기 때문입니다.
+    """
+    datasets = discover_datasets(settings.raw_dir)
+    rows = build_master_rows(datasets)
+    if not rows:
+        print("영양성분 데이터셋을 찾지 못했습니다. raw 에 대표식품 컬럼이 있는 파일이 필요합니다.", file=sys.stderr)
+        return 1
+
+    print(render(rows))
+    if not apply:
+        print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
+        return 0
+
+    records = to_staging_tuples(rows)
+    async with load_connection_scope(settings) as conn:
+        await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
+        await conn.execute("TRUNCATE staging_ingredient_master, staging_category")
+
+        # 재료 분류(K-FIND 식품대분류)를 카테고리로 먼저 만들고 재료를 붙입니다.
+        categories = build_category_rows(rows)
+        if categories:
+            await conn.copy_records_to_table(
+                "staging_category",
+                records=categories,
+                columns=["path", "parent_path", "category_type", "name", "depth", "metadata"],
+            )
+        before = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
+        for start in range(0, len(records), settings.copy_chunk_size):
+            await conn.copy_records_to_table(
+                "staging_ingredient_master",
+                records=records[start : start + settings.copy_chunk_size],
+                columns=[
+                    "source_identity_key",
+                    "name",
+                    "normalized_name",
+                    "is_raw_material",
+                    "aliases",
+                    "is_pantry",
+                    "category_path",
+                ],
+            )
+        await run_sql_file(conn, settings.sql_dir / "006_insert_category.sql")
+        await run_sql_file(conn, settings.sql_dir / "010_upsert_ingredient_master.sql")
+        after = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
+        with_alias = int(await conn.fetchval("SELECT count(*) FROM ingredient WHERE aliases <> '{}'") or 0)
+        linked = int(
+            await conn.fetchval("SELECT count(*) FROM ingredient WHERE ingredient_category_id IS NOT NULL") or 0
+        )
+    print(f"\n재료 마스터 {before} -> {after}행 (신규 {after - before}), 별칭 있는 행 {with_alias}개")
+    print(f"재료 분류 연결: {linked}행")
+    return 0
