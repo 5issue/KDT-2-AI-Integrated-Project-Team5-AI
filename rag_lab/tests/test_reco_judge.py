@@ -87,3 +87,15 @@ async def test_situation_and_reason_both_reach_the_judge() -> None:
     assert judge.last_user is not None
     assert "<situation>" in judge.last_user
     assert "<reason>" in judge.last_user
+
+
+def test_non_finite_scores_are_a_scoring_failure() -> None:
+    """`json.loads` 는 NaN/Infinity 를 float 로 받습니다. 숫자 검사를 통과한 뒤
+    `round()` 에서 터지면 **판정자 응답 하나 때문에 실험 전체가 중단되고** JSONL 도
+    안 남습니다. 25건을 돌린 비용이 통째로 날아갑니다."""
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        raw = "{" + ", ".join(f'"{key}": {literal}' for key, _, _ in RUBRIC_ITEMS) + ', "comment": "x"}'
+        score = parse_rubric(raw)
+        assert score.error, literal
+        assert score.mean is None
+        assert score.passed is None

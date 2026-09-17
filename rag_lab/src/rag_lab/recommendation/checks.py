@@ -129,7 +129,12 @@ def check_reason(
     checks.append(Check("환각_재료", not intruders, f"상황에 없는 재료: {', '.join(intruders)}" if intruders else ""))
 
     # 2. 보유/부족 뒤집힘 - 없는 것을 있다고, 있는 것을 없다고
-    flipped = [name for name in case.missing if _mentions(scannable, name, _HAS_WORDS)]
+    #
+    # **상비 재료는 뺍니다.** `missing` 에 들어 있어도 집에 있다고 보는 것들이라
+    # (프롬프트도 그렇게 지시합니다), `소금이 있으니` 는 맞는 말입니다.
+    # 빼지 않으면 올바른 문구가 뒤집힘으로 잡힙니다.
+    lacking = [name for name in case.missing if name not in case.pantry]
+    flipped = [name for name in lacking if _mentions(scannable, name, _HAS_WORDS)]
     flipped += [name for name in case.have if _mentions(scannable, name, _LACKS_WORDS)]
     checks.append(Check("보유_뒤집힘", not flipped, f"뒤집힌 재료: {', '.join(flipped)}" if flipped else ""))
 

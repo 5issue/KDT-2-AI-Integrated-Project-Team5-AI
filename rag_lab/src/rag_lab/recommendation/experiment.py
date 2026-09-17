@@ -220,10 +220,12 @@ async def run_reason_experiment(
         params={
             **snapshot_params(settings),
             "max_chars": max_chars,
-            # 판정 모델을 기록에 남깁니다. 어느 채점자의 점수인지 모르면 실험 간
-            # 비교가 안 됩니다(같은 문구도 채점자가 다르면 점수가 다릅니다).
-            "judge_model": settings.judge_model or None,
-            "judge_provider": settings.judge_provider_name if settings.judge_model else None,
+            # **설정이 아니라 실제로 주입된 클라이언트를 적습니다.**
+            # 클라이언트는 밖에서 받으므로 `Settings` 와 다를 수 있고, 그러면 결과
+            # 파일이 돌지도 않은 모델 이름을 달고 남습니다. 판정자 비교가 이 이름에
+            # 기대고 있어서 틀리면 비교 자체가 무의미해집니다.
+            "chat_model": chat.model_id,
+            "judge_model": judge.model_id if judge is not None else None,
             "pass_mean_score": PASS_MEAN_SCORE if judge is not None else None,
         },
     )
@@ -303,8 +305,10 @@ async def rescore_experiment(
         params={
             **snapshot_params(settings),
             "max_chars": max_chars,
-            "judge_model": settings.judge_model or None,
-            "judge_provider": settings.judge_provider_name if settings.judge_model else None,
+            # 재채점은 생성을 안 하므로 `chat_model` 은 지난 실행의 값이 아니라
+            # **비워 둡니다.** 설정값을 적으면 이번에 그 모델이 돈 것처럼 읽힙니다.
+            "chat_model": None,
+            "judge_model": judge.model_id,
             "pass_mean_score": PASS_MEAN_SCORE,
             # 생성을 안 했다는 것을 기록에 남깁니다. 지연 수치가 채점만의 값입니다.
             "rescored": True,

@@ -22,6 +22,8 @@ class StubJudge:
     """`LlmJudgeClient` 자리에 끼우는 가짜. 항상 만점을 줍니다."""
 
     model = "stub-judge"
+    # 결과에 그대로 찍힙니다. 가짜라는 것이 기록에 남아야 합니다.
+    model_id = "stub/stub-judge"
 
     class provider:  # noqa: N801 - 실제 클라이언트의 속성 모양을 흉내 냅니다
         name = "stub"

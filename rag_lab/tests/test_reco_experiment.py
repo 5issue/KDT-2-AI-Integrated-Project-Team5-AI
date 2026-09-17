@@ -215,3 +215,40 @@ async def test_unverified_rescore_does_not_mint_a_fingerprint(tmp_path: Path) ->
         judge=FakeChatClient(rubric_json()),
     )
     assert again.params["case_hash_verified"] is False, "미검증이 세탁되면 안 됩니다"
+
+
+# --- 실행 기록의 정직성 (코드래빗 4차) ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_result_records_the_client_that_actually_ran(tmp_path: Path) -> None:
+    """클라이언트는 밖에서 주입받습니다. 설정값을 적으면 돌지도 않은 모델 이름이 남습니다.
+
+    판정자 비교가 이 이름에 기대고 있어서, 틀리면 비교 자체가 무의미해집니다.
+    """
+    report = await run_reason_experiment(
+        "t",
+        [case(case_id="a")],
+        chat=FakeChatClient("문구", model_id="fake/generator"),
+        judge=FakeChatClient(rubric_json(), model_id="fake/scorer"),
+    )
+
+    assert report.params["chat_model"] == "fake/generator"
+    assert report.params["judge_model"] == "fake/scorer"
+
+    meta = json.loads(report.write_jsonl(tmp_path).read_text(encoding="utf-8").splitlines()[0])
+    assert meta["params"]["chat_model"] == "fake/generator"
+
+
+@pytest.mark.asyncio
+async def test_rescore_leaves_the_generation_model_empty(tmp_path: Path) -> None:
+    """재채점은 생성을 하지 않습니다. 설정값을 적으면 그 모델이 돈 것처럼 읽힙니다."""
+    prior = tmp_path / "prior.jsonl"
+    prior.write_text(json.dumps({"case_id": "a", "reason": "문구"}, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    report = await rescore_experiment(
+        "t", [case(case_id="a")], load_reasons(prior), judge=FakeChatClient(rubric_json(), model_id="fake/scorer")
+    )
+
+    assert report.params["chat_model"] is None
+    assert report.params["judge_model"] == "fake/scorer"

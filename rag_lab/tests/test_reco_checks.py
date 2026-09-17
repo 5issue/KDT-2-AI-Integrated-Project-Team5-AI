@@ -191,3 +191,18 @@ def test_vocabulary_comes_from_the_case_file_only() -> None:
 
 
 # --- 실험에서 드러난 오탐 (회귀 방지) ---------------------------------------
+
+
+def test_pantry_item_called_available_is_not_a_flip() -> None:
+    """상비 재료는 `missing` 에 있어도 집에 있다고 봅니다(프롬프트도 그렇게 지시).
+
+    빼지 않으면 `소금이 있으니` 같은 **올바른 문구가 뒤집힘으로 잡힙니다.**
+    """
+    situation = case(recipe="삼색계란찜", have=["달걀"], missing=["소금"], pantry=["소금"])
+    assert failed(situation, "달걀과 소금이 있으니 바로 만드실 수 있어요.") == []
+
+
+def test_a_genuine_flip_is_still_caught_when_pantry_exists() -> None:
+    """상비재료를 빼 준다고 진짜 뒤집힘까지 놓치면 안 됩니다."""
+    situation = case(recipe="두부조림", have=["두부"], missing=["소금", "참기름"], pantry=["소금"])
+    assert "보유_뒤집힘" in failed(situation, "참기름이 있으니 바로 만들 수 있어요.")

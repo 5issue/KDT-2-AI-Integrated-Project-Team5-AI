@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -124,6 +125,12 @@ def parse_rubric(raw: str) -> RubricScore:
         value = payload.get(key)
         if not isinstance(value, int | float) or isinstance(value, bool):
             return RubricScore(error=f"항목 {key} 의 점수가 숫자가 아닙니다: {value!r}")
+        # `json.loads` 는 기본 설정에서 `NaN` 과 `Infinity` 를 float 로 받아 줍니다.
+        # 위 숫자 검사를 통과한 뒤 `round()` 에서 ValueError/OverflowError 가 터지는데,
+        # 그러면 **판정자 응답 하나 때문에 실험 전체가 중단되고 JSONL 도 안 남습니다.**
+        # 25건을 돌린 비용이 통째로 날아갑니다. 여기서 채점 실패로 돌려보냅니다.
+        if not math.isfinite(value):
+            return RubricScore(error=f"항목 {key} 의 점수가 유한하지 않습니다: {value!r}")
         # 범위를 벗어난 값은 잘라 둡니다. 12점을 그대로 받으면 평균이 부풀어
         # 통과선이 의미를 잃습니다.
         scores[key] = max(0, min(10, round(float(value))))
