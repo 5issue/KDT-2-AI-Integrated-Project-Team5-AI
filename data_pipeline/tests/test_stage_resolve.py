@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -352,3 +353,102 @@ def test_count_llm_matches_reads_saved_report(tmp_settings: Settings) -> None:
     )
 
     assert resolve.count_llm_matches(tmp_settings) == 2
+
+
+def _write_match_job(
+    settings: Settings, job: str, matches: list[dict[str, object]], *, master_ids: list[int] | None
+) -> None:
+    """요청 메타데이터와 배치 응답 한 벌을 만듭니다."""
+    requests_dir = settings.stage_dir(STAGE_RESOLVE) / "requests"
+    requests_dir.mkdir(parents=True, exist_ok=True)
+    names = [str(m["source_name"]) for m in matches]
+    (requests_dir / f"{job}_keys.json").write_text(
+        json.dumps({"match-0000": names}, ensure_ascii=False), encoding="utf-8"
+    )
+    if master_ids is not None:
+        (requests_dir / f"{job}_master_ids.json").write_text(json.dumps(master_ids), encoding="utf-8")
+    write_batch_results(
+        settings.stage_dir(STAGE_RESOLVE) / "results", job, [batch_output_line("match-0000", {"matches": matches})]
+    )
+
+
+def _report_for(names: list[str]) -> resolve.ResolveReport:
+    return resolve.ResolveReport(
+        total_names=len(names),
+        unmatched=[{"normalized_name": name, "occurrence": 1, "confidence": 0.0} for name in names],
+    )
+
+
+def test_ingredient_id_outside_the_offered_master_is_rejected(tmp_settings: Settings) -> None:
+    """스키마는 아무 정수나 통과시킵니다.
+
+    제시하지 않은 id 가 확정 매칭으로 저장되면 ingredient_matches.json 을 거쳐
+    recipe_ingredient 까지 내려가 엉뚱한 재료에 조용히 연결됩니다.
+    (코드래빗 리뷰 PR #16)
+    """
+    matches = [
+        {"source_name": "두부", "ingredient_id": 41, "matched_name": "두부", "confidence": 0.95, "reason": ""},
+        {"source_name": "버터", "ingredient_id": 999_999, "matched_name": "버터", "confidence": 0.99, "reason": ""},
+    ]
+    _write_match_job(tmp_settings, "r1", matches, master_ids=[41, 156])
+
+    result = resolve.collect("r1", report=_report_for(["두부", "버터"]), settings=tmp_settings)
+
+    assert [item.normalized_name for item in result.llm] == ["두부"]
+    assert [item["normalized_name"] for item in result.unmatched] == ["버터"]
+    assert "999999" in result.unmatched[0]["reason"]
+
+
+def test_old_jobs_without_the_master_id_file_still_collect(tmp_settings: Settings) -> None:
+    """파일이 없던 시절의 작업 결과를 못 쓰게 만들면 안 됩니다. 검사만 건너뜁니다."""
+    matches = [
+        {"source_name": "두부", "ingredient_id": 999_999, "matched_name": "두부", "confidence": 0.95, "reason": ""}
+    ]
+    _write_match_job(tmp_settings, "r2", matches, master_ids=None)
+
+    result = resolve.collect("r2", report=_report_for(["두부"]), settings=tmp_settings)
+
+    assert [item.ingredient_id for item in result.llm] == [999_999]
+
+
+def test_old_report_survives_a_failure_while_building_the_batch(
+    tmp_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """요청 산출물을 다 쓴 뒤에 리포트를 갈아끼웁니다.
+
+    이 둘은 한 트랜잭션이 아닙니다. 리포트를 먼저 덮으면 뒤에서 실패했을 때
+    옛 LLM 결과만 사라지고 새 배치는 없는 상태가 됩니다. 되살리려면 배치를
+    다시 돌려야 합니다(비용). (코드래빗 리뷰 PR #16)
+    """
+    from data_pipeline.stages.resolve import run as run_module
+
+    seed_records(tmp_settings)
+    previous = resolve.ResolveReport(
+        total_names=1,
+        llm=[
+            resolve.MatchResult(
+                normalized_name="버터", ingredient_id=156, matched_name="버터", method="llm", confidence=0.9
+            )
+        ],
+    )
+    resolve.save_report(previous, tmp_settings)
+    before = resolve.matches_path(tmp_settings).read_text(encoding="utf-8")
+
+    async def fake_exact_match(names, settings=None):  # type: ignore[no-untyped-def]
+        return [], list(names)
+
+    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("요청 파일 쓰기 실패")
+
+    monkeypatch.setattr(run_module, "exact_match", fake_exact_match)
+    monkeypatch.setattr(run_module, "fetch_master", lambda settings=None: _empty_master())
+    monkeypatch.setattr(run_module, "build_requests", boom)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(run_module.run_resolve("r9", tmp_settings))
+
+    assert resolve.matches_path(tmp_settings).read_text(encoding="utf-8") == before
+
+
+async def _empty_master() -> list[dict[str, object]]:
+    return []
