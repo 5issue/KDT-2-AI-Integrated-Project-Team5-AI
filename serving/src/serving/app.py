@@ -20,7 +20,7 @@ from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
-from serving.routers import health, home, products, recommendations
+from serving.routers import health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
 
@@ -76,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(recommendations.router, prefix=API_PREFIX)
     app.include_router(home.router, prefix=API_PREFIX)
     app.include_router(products.router, prefix=API_PREFIX)
+    app.include_router(recipes.router, prefix=API_PREFIX)
     return app
 
 

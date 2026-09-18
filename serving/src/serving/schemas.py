@@ -249,3 +249,133 @@ class StorageGuideResponse(BaseModel):
     storage_type: str | None = None
     ingredient_name: str | None = None
     items: list[StorageGuideItem]
+
+
+class RecipeIngredientLine(BaseModel):
+    """레시피 재료 한 줄 (명세 17장 ingredients 항목)."""
+
+    ingredient_id: int
+    name: str
+    quantity: float | None = None
+    unit: str | None = None
+    is_required: bool
+    is_pantry: bool
+    purpose: str | None = None
+
+
+class RecipeStep(BaseModel):
+    """조리 단계 한 줄."""
+
+    step_no: int
+    instruction: str
+    image_url: str | None = None
+
+
+class RecipeDetailResponse(BaseModel):
+    """레시피 상세 (명세 17장 data).
+
+    nutrition 은 원본(jsonb) 키를 그대로 냅니다. 원본마다 채워진 항목이 달라
+    (protein_g, sodium_mg 등) 명세 17장의 calories/protein/carbs/fat 로 펴면
+    대부분 null 이 됩니다. 키 통일은 명세 조정 협의 대상입니다.
+    steps 는 명세 17장에 없지만 상세 화면이 항상 함께 쓰는 값이라 냅니다.
+    """
+
+    recipe_id: int
+    name: str
+    description: str | None = None
+    image_url: str | None = None
+    difficulty: str | None = None
+    prep_time_min: int | None = None
+    cook_time_min: int | None = None
+    servings: int | None = None
+    cooking_method: str | None = None
+    nutrition: dict[str, Any] | None = None
+    ingredients: list[RecipeIngredientLine]
+    steps: list[RecipeStep]
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> RecipeDetailResponse:
+        def parse(value: Any) -> Any:
+            return json.loads(value) if isinstance(value, str) else value
+
+        return cls(
+            recipe_id=row["recipe_id"],
+            name=row["name"],
+            description=row["description"],
+            image_url=row["image_url"],
+            difficulty=row["difficulty"],
+            prep_time_min=row["prep_time_min"],
+            cook_time_min=row["cook_time_min"],
+            servings=row["servings"],
+            cooking_method=row["cooking_method"],
+            nutrition=parse(row["nutrition"]),
+            ingredients=[RecipeIngredientLine.model_validate(i) for i in parse(row["ingredients"])],
+            steps=[RecipeStep.model_validate(s) for s in parse(row["steps"])],
+        )
+
+
+class BaseProductRef(BaseModel):
+    """부족 재료 계산의 기준 상품 (명세 18장 base_product)."""
+
+    product_id: int
+    name: str
+
+
+class IngredientAvailability(BaseModel):
+    """필수 재료 보유 집계 (명세 18장 ingredients 객체)."""
+
+    total: int
+    available: int
+    missing: int
+
+
+class MissingIngredientItem(BaseModel):
+    """부족 재료 한 건 (명세 18장 missing_items 항목)."""
+
+    ingredient_id: int
+    name: str
+    quantity: float | None = None
+    unit: str | None = None
+    status: str
+
+
+class MissingIngredientsResponse(BaseModel):
+    """부족 재료 계산 결과 (명세 18장 data).
+
+    집계와 missing_items 는 필수 재료(is_required) 기준입니다. SQL 은 선택 재료와
+    BASE/IN_FRIDGE/PANTRY 상태까지 내므로, 화면이 더 필요해지면 여기서 넓힙니다.
+    """
+
+    recipe_id: int
+    base_product: BaseProductRef | None = None
+    ingredients: IngredientAvailability
+    missing_items: list[MissingIngredientItem]
+
+    @classmethod
+    def from_rows(
+        cls,
+        recipe_id: int,
+        base_product: BaseProductRef | None,
+        rows: list[dict[str, Any]],
+    ) -> MissingIngredientsResponse:
+        required = [r for r in rows if r["is_required"]]
+        missing = [r for r in required if r["status"] == "MISSING"]
+        return cls(
+            recipe_id=recipe_id,
+            base_product=base_product,
+            ingredients=IngredientAvailability(
+                total=len(required),
+                available=len(required) - len(missing),
+                missing=len(missing),
+            ),
+            missing_items=[
+                MissingIngredientItem(
+                    ingredient_id=r["ingredient_id"],
+                    name=r["ingredient_name"],
+                    quantity=float(r["quantity"]) if r["quantity"] is not None else None,
+                    unit=r["unit"],
+                    status=r["status"],
+                )
+                for r in missing
+            ],
+        )

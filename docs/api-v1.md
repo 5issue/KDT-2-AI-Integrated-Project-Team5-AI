@@ -65,8 +65,8 @@ Base URL: `/api/v1`
 | PROD-01 | 상품 상세 | GET | `/products/{productId}` | 구현됨 |
 | PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{productId}/recipes` | 구현됨 |
 | PROD-03 | 상품 보관 가이드 | GET | `/products/{productId}/storage-guide` | 구현됨 (명세 조정 필요) |
-| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipeId}` | 기획 |
-| RECIPE-02 | 부족 재료 계산 | GET | `/recipes/{recipeId}/missing-ingredients` | 기획 |
+| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipeId}` | 구현됨 (명세 조정 필요) |
+| RECIPE-02 | 부족 재료 계산 | GET | `/recipes/{recipeId}/missing-ingredients` | 구현됨 |
 | RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipeId}/missing-products` | 명세 통일 대기 |
 | FRIDGE-01 | My냉장고 품목 목록 | GET | `/users/me/fridge` | 기획 |
 | FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 기획 |
@@ -80,6 +80,14 @@ Base URL: `/api/v1`
   상황)별 지침이 여러 개라 `items[]` 목록으로 냅니다. 명세 수정 협의가 필요합니다.
 - `HOME-01` 버블은 후보 레시피 수가 하한 미달이면 `enabled=false` 로 내려갑니다.
   `type` 은 현재 `RECIPE` 고정입니다.
+- `RECIPE-01` 의 `nutrition` 은 원본(jsonb) 키를 그대로 냅니다 (`protein_g`,
+  `sodium_mg` 등, 원본마다 채워진 항목이 다름). 명세 17장의 calories/protein/
+  carbs/fat 로 펴면 대부분 null 이 되어 키 통일은 협의 대상입니다. `steps[]` 는
+  명세에 없지만 상세 화면이 항상 함께 쓰는 값이라 냅니다.
+- `RECIPE-02` 는 비로그인 허용입니다. `X-User-Id` 가 없으면 냉장고 갈래 없이
+  계산하고, `base_product_id=0` 이면 기준 상품 갈래를 끕니다. 집계와
+  `missing_items` 는 필수 재료 기준이며, SQL 은 BASE/IN_FRIDGE/PANTRY 상태와
+  선택 재료까지 내므로 화면 요구가 생기면 응답을 넓힙니다.
 - 재구매 추천(`reorder-candidates`)은 보류 결정으로 서빙에서 내렸습니다. SQL 은
   `recsys_sql` 카탈로그(`_template/reorder_candidates.sql`)에 남아 있습니다.
 - My냉장고 CRUD 는 AI 파트가 구현합니다. DELETE 는 HTTP 200 + envelope
