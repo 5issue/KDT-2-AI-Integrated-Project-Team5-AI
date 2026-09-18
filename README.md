@@ -7,13 +7,13 @@ KDT-2-AI-INTEGRATED-PROJECT-TEAM5 팀명: 5이쉬에 AI팀 깃허브입니다.
 `uv` 워크스페이스이고, 루트의 폴더 4개가 각각 워크스페이스 멤버입니다.
 **폴더마다 `.env` 를 따로 둡니다.** 시작할 때 각 폴더의 `.env.example` 을 복사하세요.
 
-| 폴더 | 역할 | 주요 스택 |
-| --- | --- | --- |
+| 폴더                                        | 역할                                                                                          | 주요 스택                                |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | [`data_pipeline/`](data_pipeline/README.md) | raw(스키마 제각각) -> LLM Batch 3단계(프로파일·추출·해석) -> Neon 적재 + 임베딩 + 스키마 검증 | openai, pyarrow, SQLAlchemy 2.0, asyncpg |
-| [`database/`](database/) | 스키마 마이그레이션 (alembic). 워크스페이스 멤버는 아닙니다 | alembic, psycopg 3 |
-| [`recsys_sql/`](recsys_sql/README.md) | 추천 SQL 카탈로그 + 검증. **serving 의 repository layer** | asyncpg, SQLAlchemy 2.0, pytest |
-| [`rag_lab/`](rag_lab/README.md) | RAG 실험 환경 (라우팅 -> 검색 -> 생성) | LangGraph, pgvector, openai |
-| [`serving/`](serving/README.md) | 추천 API 서빙 서버 | FastAPI, asyncpg |
+| [`database/`](database/)                    | 스키마 마이그레이션 (alembic). 워크스페이스 멤버는 아닙니다                                   | alembic, psycopg 3                       |
+| [`recsys_sql/`](recsys_sql/README.md)       | 추천 SQL 카탈로그 + 검증. **serving 의 repository layer**                                     | asyncpg, SQLAlchemy 2.0, pytest          |
+| [`rag_lab/`](rag_lab/README.md)             | RAG 실험 환경 (라우팅 -> 검색 -> 생성)                                                        | LangGraph, pgvector, openai              |
+| [`serving/`](serving/README.md)             | 추천 API 서빙 서버                                                                            | FastAPI, asyncpg                         |
 
 ```
 raw 데이터 ─▶ data_pipeline ─▶ Neon PostgreSQL
@@ -72,12 +72,12 @@ CI 는 DB 없이 도는 테스트만 돌립니다.
 
 ## 담당
 
-| 폴더 | 담당 |
-| --- | --- |
+| 폴더                          | 담당                                       |
+| ----------------------------- | ------------------------------------------ |
 | `data_pipeline/`, `database/` | 공통. 각자 돌리고 각자 스키마를 검증합니다 |
-| `recsys_sql/` | openLeeWorld |
-| `rag_lab/` | 담당자 |
-| `serving/` | 담당자 |
+| `recsys_sql/`                 | openLeeWorld                               |
+| `rag_lab/`                    | subeomsp                                   |
+| `serving/`                    | chaeyeon089                                |
 
 `recsys_sql` 과 `rag_lab` 은 폴더 안에서 다시 개인별로 갈립니다.
 
@@ -92,9 +92,7 @@ rag_lab/experiments/<github_id>/            실험 질문 세트와 결과
 단, **서빙은 `QUERY_OWNER` 와 무관하게 카탈로그 전체를 봅니다.** 그래서 쿼리 이름은
 폴더가 달라도 레포 전체에서 유일해야 합니다. `load_catalog` 이 중복을 막습니다.
 
-**DB 도 각자 Neon 브랜치를 씁니다.** 콘솔에서 `main` 브랜치를 복제해 본인 브랜치를 만들고,
-그 브랜치의 Connection Details 를 `.env` 에 넣으세요. 스키마 실험이나 인덱스 변경이
-서로에게 번지지 않습니다.
+DB 브랜치는 처음에는 갈라졌다가 현재는 dev, production으로 통일한 상황입니다.
 
 ## 이 레포에서 알아두면 좋은 것
 
@@ -114,10 +112,9 @@ DSN 스킴 변환, asyncpg 가 모르는 `sslmode`/`channel_binding` 제거, 그
 같은 처리가 폴더마다 복제되어 있는데, 폴더별로 독립 실행되게 하려는 의도적 선택입니다.
 세 곳 이상에서 내용이 갈리기 시작하면 워크스페이스 멤버로 분리하는 편이 낫습니다.
 
-## 남은 일
+## 각자 작업 및 남은 일 참고
 
-- [docs/backlog-recsys-sql.md](docs/backlog-recsys-sql.md)
-- [docs/backlog-data-pipeline.md](docs/backlog-data-pipeline.md)
+docs/backlog/ 참조
 
 ## 문서
 
