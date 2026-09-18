@@ -20,7 +20,7 @@ from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
-from serving.routers import health, recommendations
+from serving.routers import health, home, products, recommendations
 
 logger = logging.getLogger("serving")
 
@@ -74,6 +74,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 헬스체크는 envelope 적용 대상에서 제외하므로 prefix 밖에 둡니다.
     app.include_router(health.router)
     app.include_router(recommendations.router, prefix=API_PREFIX)
+    app.include_router(home.router, prefix=API_PREFIX)
+    app.include_router(products.router, prefix=API_PREFIX)
     return app
 
 
