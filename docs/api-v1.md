@@ -59,12 +59,12 @@ Base URL: `/api/v1`
 
 | Index | 기능 | 메서드 | 경로 | 상태 |
 | --- | --- | --- | --- | --- |
-| HOME-01 | 홈 버블 목록 | GET | `/home/bubbles` | 기획 |
+| HOME-01 | 홈 버블 목록 | GET | `/home/bubbles` | 구현됨 |
 | RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 기획 |
 | RECO-02 | My냉장고 기반 레시피 추천 | GET | `/recommendations/my-recipes` | 구현됨 |
-| PROD-01 | 상품 상세 | GET | `/products/{productId}` | 기획 |
-| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{productId}/recipes` | 기획 |
-| PROD-03 | 상품 보관 가이드 | GET | `/products/{productId}/storage-guide` | 기획 |
+| PROD-01 | 상품 상세 | GET | `/products/{productId}` | 구현됨 |
+| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{productId}/recipes` | 구현됨 |
+| PROD-03 | 상품 보관 가이드 | GET | `/products/{productId}/storage-guide` | 구현됨 (명세 조정 필요) |
 | RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipeId}` | 기획 |
 | RECIPE-02 | 부족 재료 계산 | GET | `/recipes/{recipeId}/missing-ingredients` | 기획 |
 | RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipeId}/missing-products` | 명세 통일 대기 |
@@ -75,6 +75,11 @@ Base URL: `/api/v1`
 
 - `RECIPE-03` 은 명세 30장 목록에는 있으나 본문 정의가 없어, `missing-ingredients`
   와의 통일 결정을 기다립니다.
+- `PROD-03` 응답은 명세 22장과 다릅니다. 원천(FoodKeeper)에 `temperature_min/max`,
+  `instruction_text` 가 없고 `tips` 는 단일 텍스트입니다. 같은 상품에 (보관 장소,
+  상황)별 지침이 여러 개라 `items[]` 목록으로 냅니다. 명세 수정 협의가 필요합니다.
+- `HOME-01` 버블은 후보 레시피 수가 하한 미달이면 `enabled=false` 로 내려갑니다.
+  `type` 은 현재 `RECIPE` 고정입니다.
 - 재구매 추천(`reorder-candidates`)은 보류 결정으로 서빙에서 내렸습니다. SQL 은
   `recsys_sql` 카탈로그(`_template/reorder_candidates.sql`)에 남아 있습니다.
 - My냉장고 CRUD 는 AI 파트가 구현합니다. DELETE 는 HTTP 200 + envelope
