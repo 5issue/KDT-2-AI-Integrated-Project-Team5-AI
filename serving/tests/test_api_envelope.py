@@ -14,7 +14,7 @@ ENVELOPE_FIELDS = {"status", "message", "data", "error", "timestamp"}
 
 async def test_recommendations_live_under_api_v1(offline_client: AsyncClient) -> None:
     """추천 엔드포인트는 /api/v1 아래에 있고, DB 미연결 503 도 envelope 로 답합니다."""
-    response = await offline_client.get("/api/v1/users/1/recipe-recommendations")
+    response = await offline_client.get("/api/v1/recommendations/my-recipes", headers={"X-User-Id": "1"})
 
     assert response.status_code == 503
     body = response.json()
@@ -33,7 +33,9 @@ async def test_legacy_unprefixed_paths_are_gone(offline_client: AsyncClient) -> 
 
 async def test_validation_error_uses_envelope(validating_client: AsyncClient) -> None:
     """422 도 envelope 로 답하고, 코드는 백엔드 카탈로그의 INVALID_INPUT_VALUE 를 재사용합니다."""
-    response = await validating_client.get("/api/v1/users/1/recipe-recommendations", params={"limit": "999"})
+    response = await validating_client.get(
+        "/api/v1/recommendations/my-recipes", headers={"X-User-Id": "1"}, params={"limit": "999"}
+    )
 
     assert response.status_code == 422
     body = response.json()

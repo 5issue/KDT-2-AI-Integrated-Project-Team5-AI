@@ -37,7 +37,6 @@ ALLOWED_QUERIES = frozenset(
         "product_storage_guideline",
         "recipe_detail",
         "recipe_missing_ingredients",
-        "reorder_candidates",
     }
 )
 

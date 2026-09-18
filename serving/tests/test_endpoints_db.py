@@ -31,34 +31,17 @@ async def test_db_health_does_not_leak_connection_details(live_client: AsyncClie
     assert "password" not in payload.lower()
 
 
-async def test_recipe_recommendations_query_runs(live_client: AsyncClient) -> None:
+async def test_my_recipes_query_runs(live_client: AsyncClient) -> None:
     """promoted SQL 이 실제 스키마에서 문법/컬럼 오류 없이 돕니다."""
     response = await live_client.get(
-        "/api/v1/users/1/recipe-recommendations",
-        params={"min_coverage": 0.5, "limit": 5},
+        "/api/v1/recommendations/my-recipes",
+        headers={"X-User-Id": "1"},
+        params={"min_match_rate": 0.5, "limit": 5},
     )
 
     assert response.status_code == 200
     envelope = response.json()
     assert envelope["status"] == "SUCCESS"
-    body = envelope["data"]
-    assert body["user_id"] == 1
-    assert body["count"] == len(body["items"])
-    for item in body["items"]:
-        assert {"recipe_id", "name", "coverage", "missing_count"} <= set(item)
-
-
-async def test_reorder_candidates_query_runs(live_client: AsyncClient) -> None:
-    """재구매 후보 쿼리도 마찬가지로 실제 스키마에서 확인합니다."""
-    response = await live_client.get(
-        "/api/v1/users/1/reorder-candidates",
-        params={"days_since": 30, "limit": 5},
-    )
-
-    assert response.status_code == 200
-    envelope = response.json()
-    assert envelope["status"] == "SUCCESS"
-    body = envelope["data"]
-    assert body["count"] == len(body["items"])
-    for item in body["items"]:
-        assert {"product_id", "product_name", "affinity_score", "days_elapsed"} <= set(item)
+    for item in envelope["data"]["items"]:
+        assert {"recipe_id", "name", "recommendation_reason", "match", "missing_ingredients"} <= set(item)
+        assert 0.0 <= item["match"]["match_rate"] <= 1.0
