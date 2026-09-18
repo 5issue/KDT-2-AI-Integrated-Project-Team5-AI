@@ -95,9 +95,13 @@ async def run_query(
 
 
 def _shared_blocks(node: dict[str, Any]) -> int:
-    """계획 전체가 읽은 버퍼 블록 수. hit 과 read 를 합칩니다."""
-    total = int(node.get("Shared Hit Blocks", 0)) + int(node.get("Shared Read Blocks", 0))
-    return total + sum(_shared_blocks(child) for child in node.get("Plans", []))
+    """계획 전체가 읽은 버퍼 블록 수. hit 과 read 를 합칩니다.
+
+    **루트 노드만 봅니다.** PostgreSQL 은 버퍼 수치를 상위 노드에 누적해서 보고합니다.
+    루트의 값이 이미 트리 전체의 합입니다. 자식까지 더하면 같은 블록을 깊이만큼 다시
+    세게 되고, 실제로 9배 넘게 부풀었습니다.
+    """
+    return int(node.get("Shared Hit Blocks", 0)) + int(node.get("Shared Read Blocks", 0))
 
 
 def _collect_seq_scans(node: dict[str, Any], found: list[str], rows: dict[str, int]) -> None:

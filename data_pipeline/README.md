@@ -62,12 +62,26 @@ uv run data-pipeline resolve --job r1
 uv run data-pipeline submit  --stage resolve --job r1
 uv run data-pipeline collect --stage resolve --job r1 --wait
 
-# 적재
+# 재료 마스터 보강 (공공 영양성분 데이터. --apply 없으면 집계만)
+uv run data-pipeline sync-master --apply
+
+# 레시피 / 보관기준 적재 (2~3단계 산출물 -> staging -> 타깃)
 uv run data-pipeline load
+
+# 카탈로그 적재 (category / product / product_ingredient. LLM 을 안 씁니다)
+uv run data-pipeline load-catalog --apply
+
+# 임베딩 (pgvector 검색용. rag_lab 이 여기에 의존합니다)
+uv run data-pipeline embed --target all            # dry-run: 대상 수와 추정 비용만
+uv run data-pipeline embed --target all --apply    # 실제로 API 호출 + DB 반영
 ```
 
 Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 두었습니다. `--wait` 없이
 `collect` 를 돌리면 상태만 확인합니다.
+
+**`--apply` 옵션이 있는 명령은 그 옵션을 빼면 dry-run 입니다.** 무엇이 얼마나 바뀔지
+먼저 보고 결정하라는 뜻이고, `--apply` 를 붙여야 실제 API 호출과 DB 반영이 일어납니다.
+`embed` 는 dry-run 에서 추정 비용까지 함께 보여 줍니다.
 
 **처음에는 `EXTRACT_MAX_ENTITIES=5` 로 두고 2단계를 돌려 보세요.** 데이터셋당 5건만
 처리하므로 프롬프트가 의도대로 동작하는지 싸게 확인할 수 있습니다.
@@ -154,7 +168,11 @@ Batch API 는 최대 24시간이 걸릴 수 있어 제출과 수거를 나눠 �
 | `sql/003_insert_recipe_ingredient.sql` | 매칭 결과로 FK 를 채워 `recipe_ingredient` upsert |
 | `sql/004_insert_storage_guideline.sql` | `storage_guideline` upsert |
 | `sql/005_insert_recipe_step.sql` | 조리 단계를 `recipe_step` 으로 upsert (줄어든 뒤쪽 단계는 삭제) |
-| `sql/020_update_embedding.sql` | 임베딩 배치 결과 반영 (선택) |
+| `sql/006_insert_category.sql` | `category` upsert. `metadata->>'path'` 로 부모를 되짚음 |
+| `sql/007_insert_product.sql` | `(source_type, source_product_id)` 기준 `product` 적재 |
+| `sql/008_insert_product_ingredient.sql` | 상품 구성 재료 upsert |
+| `sql/010_upsert_ingredient_master.sql` | 공공 데이터로 재료 마스터 보강 |
+| `sql/020_update_embedding.sql` | `staging_embedding` 을 본 테이블 `embedding` 으로 반영 |
 | `sql/099_truncate_staging.sql` | staging 비우기 |
 
 001~004 는 **한 트랜잭션**입니다. 004 에서 실패하면 002 가 넣은 레시피도 남지 않습니다.
@@ -171,6 +189,33 @@ COPY 와 긴 트랜잭션은 PgBouncer transaction 모드와 맞지 않습니다
 결정적으로 파생됩니다. `domain.SLOT_DERIVATION` 이 DB 의 CHECK 제약과 1:1 로 대응하는
 9개짜리 조회표이고, `tests/test_domain.py` 가 어긋나지 않는지 확인합니다.
 텍스트 패턴 매칭이 아니라 열거형 변환이라 파이썬에 두었습니다.
+
+## 임베딩
+
+`rag_lab` 의 pgvector 검색이 `recipe` / `product` / `ingredient` 의 `embedding` 컬럼을
+씁니다. **비어 있으면 검색이 아무것도 못 찾고, `rag_lab` 은 근거가 없으면 LLM 을 아예
+부르지 않으므로 RAG 전체가 멈춥니다.**
+
+```bash
+uv run data-pipeline embed --target all --apply
+```
+
+| | |
+| --- | --- |
+| 대상 | recipe 1,086 + product 2,553 + ingredient 1,028 = 4,667행 |
+| 비용 | 약 **$0.002** (10.6만 토큰, `text-embedding-3-small`) |
+| 재실행 | `embedding IS NULL` 인 행만 처리합니다. 중간에 끊겨도 이어서 돌리면 됩니다 |
+
+**임베딩 텍스트는 검색 본문과 짝입니다.** `load/embedding.py` 의 `TEXT_SQL` 과
+`rag_lab/src/rag_lab/retrieval.py` 의 `_SOURCES` 를 **같이** 고쳐야 합니다.
+한쪽만 바꾸면 "검색은 됐는데 근거가 비어 있는" 상태가 됩니다.
+
+레시피 임베딩에는 이름·설명뿐 아니라 **재료명**도 넣습니다. 질문이 대개 재료로 들어오고
+("김치랑 돼지고기 있는데"), `recipe.description` 이 54%만 채워져 있어서입니다.
+
+Batch API(50% 할인)를 쓰지 않습니다. 한 바퀴에 $0.002 라 24시간 대기를 감수할 이유가
+없습니다. `EMBEDDING_DIM` 을 바꾸면 `VECTOR(1536)` 컬럼 마이그레이션과 전체 재임베딩이
+함께 필요합니다.
 
 ## 안전장치
 

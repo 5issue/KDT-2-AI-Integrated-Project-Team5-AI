@@ -25,8 +25,11 @@ class FakeEmbeddingClient:
 class FakeChatClient:
     """마지막 프롬프트를 보관하는 가짜 LLM."""
 
-    def __init__(self, answer: str = "가짜 답변 [recipe#1]") -> None:
+    def __init__(self, answer: str = "가짜 답변 [recipe#1]", model_id: str = "fake/stub") -> None:
         self.answer = answer
+        # 실험 결과에 그대로 찍힙니다. **가짜라는 것이 기록에 남아야 합니다** -
+        # 실제 모델 이름이 찍히면 돌지도 않은 모델의 결과처럼 보입니다.
+        self.model_id = model_id
         self.last_system: str | None = None
         self.last_user: str | None = None
 

@@ -18,10 +18,55 @@ from rag_lab.config import DISTANCE_OPERATORS, Settings, get_settings
 SourceTable = Literal["recipe", "product", "ingredient"]
 
 # 검색 대상별로 (테이블, 식별자 컬럼, 제목 컬럼, 본문으로 쓸 표현식)
+#
+# **불변식: 임베딩 텍스트에 든 것은 본문에도 들어 있어야 합니다.**
+# `data_pipeline/src/data_pipeline/load/embedding.py` 의 `TEXT_SQL` 과 같이 봐야 합니다.
+#
+# 방향이 있습니다. 임베딩에만 있고 본문에 없으면 **검색된 이유를 사용자가 볼 수 없습니다**
+# ("검색은 됐는데 근거가 비어 있는" 상태). 반대로 본문에만 있는 것은 그냥 추가 맥락이라
+# 괜찮습니다 - `storage_type` 이 그 경우입니다.
+#
+# 실제로 어긋나 있었습니다. product 임베딩은 재료명을 넣는데 본문에는 없었고,
+# recipe 의 `tags` 도 본문에서 빠져 있었습니다. 둘 다 본문에 넣어 방향을 맞췄습니다.
+# (임베딩을 고치는 쪽으로 맞추면 4,667행 재임베딩이 필요합니다. 본문을 넓히는 쪽이 쌉니다.)
+#
+# 예전에는 product 본문이 `metadata->>'summary'` 였는데 **그런 키가 없습니다**
+# (metadata 에는 brand / crawled_at / source_record_type / source_url 뿐). 상품이 검색돼도
+# 근거가 항상 빈 문자열로 나갔습니다. recipe 도 description 이 54%만 채워져 있어
+# 이름과 재료를 함께 씁니다.
 _SOURCES: dict[str, tuple[str, str, str, str]] = {
-    "recipe": ("recipe", "recipe_id", "name", "COALESCE(description, '')"),
-    "product": ("product", "product_id", "name", "COALESCE(metadata->>'summary', '')"),
-    "ingredient": ("ingredient", "ingredient_id", "name", "normalized_name"),
+    "recipe": (
+        "recipe",
+        "recipe_id",
+        "name",
+        """CONCAT_WS(' / ',
+               NULLIF(description, ''),
+               (SELECT STRING_AGG(i.name, ', ' ORDER BY ri.is_required DESC, i.name)
+                FROM recipe_ingredient ri
+                JOIN ingredient i ON i.ingredient_id = ri.ingredient_id
+                WHERE ri.recipe_id = recipe.recipe_id),
+               NULLIF(ARRAY_TO_STRING(tags, ', '), ''),
+               cooking_method)""",
+    ),
+    "product": (
+        "product",
+        "product_id",
+        "name",
+        """CONCAT_WS(' / ',
+               (SELECT c.name FROM category c WHERE c.category_id = product.category_id),
+               NULLIF(origin_country, ''),
+               (SELECT STRING_AGG(i.name, ', ' ORDER BY i.name)
+                FROM product_ingredient pi
+                JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+                WHERE pi.product_id = product.product_id),
+               storage_type)""",
+    ),
+    "ingredient": (
+        "ingredient",
+        "ingredient_id",
+        "name",
+        "CONCAT_WS(' / ', NULLIF(normalized_name, name), ARRAY_TO_STRING(aliases, ', '))",
+    ),
 }
 
 
@@ -55,6 +100,7 @@ def distance_to_score(distance: float, metric: str) -> float:
     cosine 거리는 0~2 범위라 `1 - distance` 가 곧 코사인 유사도입니다.
     l2 는 상한이 없어 `1 / (1 + distance)` 로 눌러 씁니다.
     inner_product 는 pgvector 가 음수 내적을 주므로 부호만 뒤집습니다.
+    (데이터베이스 인덱스는 언제나 오름차순(가장 작은 거리부터)으로 정렬할 때 가장 빠르다)
     """
     if metric == "cosine":
         return 1.0 - distance
