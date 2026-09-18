@@ -29,14 +29,13 @@ ALLOWED_QUERIES = frozenset(
         "bubble_products",
         "bubble_recipe_candidates",
         "fridge_recipe_match",
-        "missing_ingredient_products",
+        "missing_products",
         "my_fridge_items",
         "my_recipe_candidates",
         "product_detail",
         "product_recipes",
         "product_storage_guideline",
         "recipe_detail",
-        "recipe_missing_ingredients",
     }
 )
 

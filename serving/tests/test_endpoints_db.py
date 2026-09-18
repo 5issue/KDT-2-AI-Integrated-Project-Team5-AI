@@ -79,3 +79,25 @@ async def test_product_endpoints_query_runs(live_client: AsyncClient) -> None:
     if guide.status_code == 200:
         body = guide.json()["data"]
         assert body["items"], "200 이면 지침이 최소 1건이어야 합니다"
+
+
+async def test_recipe_endpoints_query_runs(live_client: AsyncClient) -> None:
+    """레시피 2종이 실제 스키마에서 돕니다."""
+    detail = await live_client.get("/api/v1/recipes/1")
+    assert detail.status_code in (200, 404)
+    if detail.status_code == 200:
+        body = detail.json()["data"]
+        assert {"recipe_id", "name", "ingredients", "steps"} <= set(body)
+
+    missing = await live_client.get(
+        "/api/v1/recipes/1/missing-products",
+        headers={"X-User-Id": "1"},
+        params={"max_per_ingredient": 2},
+    )
+    assert missing.status_code in (200, 404)
+    if missing.status_code == 200:
+        body = missing.json()["data"]
+        assert {"recipe_id", "missing_ingredients"} <= set(body)
+        for item in body["missing_ingredients"]:
+            assert {"ingredient_id", "name", "products"} <= set(item)
+            assert len(item["products"]) <= 2
