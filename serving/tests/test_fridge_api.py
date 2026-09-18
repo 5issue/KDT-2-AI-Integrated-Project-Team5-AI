@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -18,7 +19,7 @@ USER = {"X-User-Id": "1"}
 BODY = {"product_id": 101, "quantity": 500, "unit": "g", "expires_at": "2026-09-30T00:00:00Z"}
 
 
-def _fridge_row() -> dict:
+def _fridge_row() -> dict[str, Any]:
     """my_fridge_items 쿼리가 내는 행 모양."""
     return {
         "user_id": 1,

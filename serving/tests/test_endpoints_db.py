@@ -82,25 +82,31 @@ async def test_product_endpoints_query_runs(live_client: AsyncClient) -> None:
 
 
 async def test_recipe_endpoints_query_runs(live_client: AsyncClient) -> None:
-    """레시피 2종이 실제 스키마에서 돕니다."""
-    detail = await live_client.get("/api/v1/recipes/1")
-    assert detail.status_code in (200, 404)
-    if detail.status_code == 200:
-        body = detail.json()["data"]
-        assert {"recipe_id", "name", "ingredients", "steps"} <= set(body)
+    """레시피 2종이 실제 스키마에서 돕니다. 404 로 우회하지 않도록 실제 레시피를 찾아 200 을 요구합니다."""
+    recipe_id = None
+    # 적재분의 recipe_id 는 1 부터가 아닙니다 (현재 1092~). 앞쪽 구간을 넉넉히 훑습니다.
+    for candidate in list(range(1, 5)) + list(range(1092, 1112)):
+        if (await live_client.get(f"/api/v1/recipes/{candidate}")).status_code == 200:
+            recipe_id = candidate
+            break
+    assert recipe_id is not None, "존재하는 레시피를 찾지 못했습니다"
+
+    detail = await live_client.get(f"/api/v1/recipes/{recipe_id}")
+    assert detail.status_code == 200
+    body = detail.json()["data"]
+    assert {"recipe_id", "name", "ingredients", "steps"} <= set(body)
 
     missing = await live_client.get(
-        "/api/v1/recipes/1/missing-products",
+        f"/api/v1/recipes/{recipe_id}/missing-products",
         headers={"X-User-Id": "1"},
         params={"max_per_ingredient": 2},
     )
-    assert missing.status_code in (200, 404)
-    if missing.status_code == 200:
-        body = missing.json()["data"]
-        assert {"recipe_id", "missing_ingredients"} <= set(body)
-        for item in body["missing_ingredients"]:
-            assert {"ingredient_id", "name", "products"} <= set(item)
-            assert len(item["products"]) <= 2
+    assert missing.status_code == 200
+    body = missing.json()["data"]
+    assert {"recipe_id", "missing_ingredients"} <= set(body)
+    for item in body["missing_ingredients"]:
+        assert {"ingredient_id", "name", "products"} <= set(item)
+        assert len(item["products"]) <= 2
 
 
 async def test_fridge_crud_cycle(live_client: AsyncClient) -> None:
