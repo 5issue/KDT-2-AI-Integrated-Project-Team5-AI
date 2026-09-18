@@ -101,16 +101,32 @@ def test_match_key_collapses_spacing_variants() -> None:
 
 
 def test_match_key_is_shared_by_resolve_and_load() -> None:
-    """staging 두 테이블이 이 값으로 조인합니다. 한쪽만 바뀌면 조인이 통째로 어긋납니다."""
+    """staging 두 테이블이 이 값으로 조인합니다. 한쪽만 바뀌면 조인이 통째로 어긋납니다.
+
+    `resolve` 가 패키지가 된 뒤로 `inspect.getsource` 는 `__init__.py` 만 돌려줍니다.
+    그래서 패키지면 그 아래 .py 를 전부 훑습니다. 공용 키를 **어딘가에서** 쓰면 되고
+    (`models` 처럼 안 쓰는 조각도 있습니다), 옛 정규화는 **어디에도** 없어야 합니다.
+    """
     import inspect
+    from pathlib import Path
+    from types import ModuleType
 
     from data_pipeline.load import bulk_insert
     from data_pipeline.stages import resolve
 
+    def sources(module: ModuleType) -> list[tuple[str, str]]:
+        path = getattr(module, "__path__", None)
+        if path is None:
+            return [(module.__name__, inspect.getsource(module))]
+        root = Path(next(iter(path)))
+        return [(f"{module.__name__}.{f.stem}", f.read_text(encoding="utf-8")) for f in sorted(root.glob("*.py"))]
+
     for module in (bulk_insert, resolve):
-        source = inspect.getsource(module)
-        assert "ingredient_match_key(" in source, f"{module.__name__} 이 공용 키 함수를 쓰지 않습니다"
-        assert ".strip().lower()" not in source, f"{module.__name__} 에 옛 정규화가 남아 있습니다"
+        files = sources(module)
+        uses_shared_key = any("ingredient_match_key(" in text for _, text in files)
+        assert uses_shared_key, f"{module.__name__} 이 공용 키 함수를 쓰지 않습니다"
+        for name, text in files:
+            assert ".strip().lower()" not in text, f"{name} 에 옛 정규화가 남아 있습니다"
 
 
 def test_duration_unit_singular_and_plural_collapse() -> None:

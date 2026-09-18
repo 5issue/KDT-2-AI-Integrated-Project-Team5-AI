@@ -135,3 +135,23 @@ def test_unparseable_quantity_is_null_not_a_guess() -> None:
     assert rc._quantity("약간") is None
     assert rc._quantity("") is None
     assert rc._quantity("1/0개") is None, "0 으로 나누면 안 됩니다"
+
+
+def test_step_number_and_source_marker_are_stripped() -> None:
+    """원문이 `1. ...건진다.a` 처럼 머리 번호와 꼬리 표식을 답니다."""
+    assert rc.clean_step("1. 손질된 새우를 끓는 물에 데쳐 건진다.a") == "손질된 새우를 끓는 물에 데쳐 건진다."
+    assert (
+        rc.clean_step("12. 그릇에 케일을 담고 오미자 드레싱을 끼얹는다.d")
+        == "그릇에 케일을 담고 오미자 드레싱을 끼얹는다."
+    )
+
+
+def test_trailing_unit_is_not_mistaken_for_a_marker() -> None:
+    """마침표 조건 없이 `[a-z]$` 로 지우면 `200g` 이 `200` 이 됩니다.
+
+    실측 근거: 조리단계 6,717개 중 소문자로 끝나는 17개가 전부 마침표 뒤였습니다.
+    표식이 아닌 마지막 소문자는 보존해야 합니다. (코드래빗 리뷰 PR #16)
+    """
+    assert rc.clean_step("2. 돼지고기를 200g") == "돼지고기를 200g"
+    assert rc.clean_step("3. 우유 100ml") == "우유 100ml"
+    assert rc.clean_step("4. 오븐에 넣고 굽는다") == "오븐에 넣고 굽는다"

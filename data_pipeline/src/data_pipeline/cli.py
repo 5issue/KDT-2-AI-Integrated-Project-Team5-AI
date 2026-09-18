@@ -20,36 +20,51 @@
     uv run data-pipeline collect --stage resolve --job r1 --wait
 
     uv run data-pipeline load                         # staging -> 타깃 테이블
+
+## 이 파일이 하는 일은 둘뿐입니다
+
+인자를 읽고(`build_parser`), 도메인 모듈을 부르고 종료코드를 돌려주는 것입니다.
+**명령 본체는 여기 두지 않습니다.** 적재 흐름은 그 데이터를 아는 모듈에 있습니다.
+
+    resolve        -> stages.resolve.run_resolve
+    sync-master    -> load.ingredient_master.run_sync_master
+    load-catalog   -> load.catalog.run_load_catalog
+    load-recipes   -> load.recipe_catalog.run_load_recipes
+    load           -> load.bulk_insert.run_load
+    embed          -> load.embedding.run_embedding
+    seed-demo      -> load.demo_seed.run_demo_seed
+
+예외는 `submit` 과 `collect` 입니다. 둘은 `--stage` 로 세 단계에 나눠 보내는
+디스패치라 어느 한 도메인에 속하지 않습니다.
+
+여기 남는 것은 **의존성 조립**입니다. `load-catalog` 와 `load-recipes` 는 재료 마스터
+조회가 필요한데 그 조회는 `stages.resolve` 에 있습니다. 적재 모듈이 단계 모듈을 직접
+부르면 계층이 거꾸로 물리므로, 조회를 **함수로 넘겨 줍니다**(`load_lookup`).
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
 
 from data_pipeline.batch.client import DEAD_STATUSES, TERMINAL_STATUSES, BatchRunner
-from data_pipeline.batch.raw_source import discover_datasets, preview_raw_source
+from data_pipeline.batch.raw_source import preview_raw_source
 from data_pipeline.config import Settings, get_settings
 from data_pipeline.db import check_connection
 from data_pipeline.load import catalog, ingredient_master, recipe_catalog
 from data_pipeline.load.bulk_insert import (
     collect_rows,
-    load_connection_scope,
     run_load,
-    run_sql_file,
 )
 from data_pipeline.load.demo_seed import run_demo_seed
 from data_pipeline.load.embedding import TARGETS as EMBEDDING_TARGETS
 from data_pipeline.load.embedding import run_embedding
-from data_pipeline.load.recipe_catalog import run_recipe_load
 from data_pipeline.stages import (
     STAGE_EXTRACT,
     STAGE_PROFILE,
     STAGE_RESOLVE,
-    canonical,
     constraints,
     extract,
     profile,
@@ -122,80 +137,9 @@ def command_extract(args: argparse.Namespace) -> int:
     return 0
 
 
-async def resolve_async(job_name: str, settings: Settings) -> int:
-    """3단계: 정확 일치 -> 클러스터 전파 -> 남은 대표만 LLM 요청으로."""
-    records_dir = settings.artifacts_dir / "records"
-    names = resolve.collect_names(records_dir)
-    if not names:
-        print("2단계 산출물에 재료명이 없습니다.", file=sys.stderr)
-        return 1
-
-    # resolve 는 리포트를 처음부터 다시 만듭니다. 마스터가 바뀌면 옛 LLM 답이
-    # 다른 후보 목록을 보고 낸 것이라 그게 맞지만, 조용히 사라지면 매칭률이
-    # 갑자기 떨어진 이유를 알 수 없습니다.
-    previous = resolve.count_llm_matches(settings)
-    if previous:
-        print(f"주의: 기존 LLM 매칭 {previous}종을 버리고 다시 만듭니다. 배치를 새로 돌려야 합니다.")
-
-    exact, remaining = await resolve.exact_match(names, settings)
-
-    # 같은 영문 재료의 한국어 변형끼리 결과를 나눠 씁니다. `eggs` 가 `달걀` 로 붙으면
-    # `계란` 도 같이 붙습니다. 번역이 어느 쪽으로 나왔든 매칭이 흔들리지 않게 하려는 것입니다.
-    clusters = canonical.build_clusters(records_dir)
-    resolved = {item.normalized_name: item.ingredient_id for item in exact}
-    gained = canonical.propagate(clusters, resolved)
-    by_name = {item.normalized_name: item for item in remaining}
-    exact = exact + [
-        resolve.MatchResult(
-            normalized_name=key,
-            ingredient_id=ingredient_id,
-            matched_name=next(m.matched_name for m in exact if m.ingredient_id == ingredient_id),
-            method="cluster",
-            confidence=1.0,
-        )
-        for key, ingredient_id in sorted(gained.items())
-    ]
-    remaining = [item for item in remaining if item.normalized_name not in gained]
-
-    report = resolve.ResolveReport(
-        total_names=len(names),
-        exact=exact,
-        unmatched=[
-            {"normalized_name": item.normalized_name, "occurrence": item.occurrence, "confidence": 0.0}
-            for item in remaining
-        ],
-    )
-    resolve.save_report(report, settings)
-    print(f"재료명 {len(names)}종 / 정확 일치 {len(exact) - len(gained)}종 / 클러스터 전파 {len(gained)}종")
-
-    if not remaining:
-        print("LLM 매칭이 필요 없습니다. 바로 load 로 넘어가세요.")
-        return 0
-
-    # 남은 것 중 같은 클러스터끼리는 대표 하나만 물어봅니다.
-    delegate = canonical.representatives(clusters, {item.normalized_name for item in remaining})
-    heads = sorted({head for head in delegate.values()})
-    ask = [by_name[key] for key in heads if key in by_name]
-    print(canonical.render(clusters, unmatched=len(remaining), delegated=len(ask)))
-
-    master = await resolve.fetch_master(settings)
-    requests, key_map = resolve.build_requests(ask, master, settings=settings)
-    runner = BatchRunner(STAGE_RESOLVE, settings)
-    paths = runner.write_requests(requests, job_name=job_name)
-    (runner.requests_dir / f"{job_name}_keys.json").write_text(
-        json.dumps(key_map, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    (runner.requests_dir / f"{job_name}_delegates.json").write_text(
-        json.dumps(delegate, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    for path in paths:
-        print(f"생성: {path.name} (마스터 {len(master)}행을 후보로 첨부)")
-    return 0
-
-
 def command_resolve(args: argparse.Namespace) -> int:
     """3단계 진입점."""
-    return asyncio.run(resolve_async(args.job, get_settings()))
+    return asyncio.run(resolve.run_resolve(args.job, get_settings()))
 
 
 def command_submit(args: argparse.Namespace) -> int:
@@ -277,108 +221,17 @@ def command_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-async def sync_master_async(settings: Settings, *, apply: bool) -> int:
-    """공공 영양성분 데이터로 재료 마스터를 보강합니다."""
-    datasets = discover_datasets(settings.raw_dir)
-    rows = ingredient_master.build_master_rows(datasets)
-    if not rows:
-        print("영양성분 데이터셋을 찾지 못했습니다. raw 에 대표식품 컬럼이 있는 파일이 필요합니다.", file=sys.stderr)
-        return 1
-
-    print(ingredient_master.render(rows))
-    if not apply:
-        print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
-        return 0
-
-    records = ingredient_master.to_staging_tuples(rows)
-    async with load_connection_scope(settings) as conn:
-        await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
-        await conn.execute("TRUNCATE staging_ingredient_master, staging_category")
-
-        # 재료 분류(K-FIND 식품대분류)를 카테고리로 먼저 만들고 재료를 붙입니다.
-        categories = ingredient_master.build_category_rows(rows)
-        if categories:
-            await conn.copy_records_to_table(
-                "staging_category",
-                records=categories,
-                columns=["path", "parent_path", "category_type", "name", "depth", "metadata"],
-            )
-        before = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
-        for start in range(0, len(records), settings.copy_chunk_size):
-            await conn.copy_records_to_table(
-                "staging_ingredient_master",
-                records=records[start : start + settings.copy_chunk_size],
-                columns=[
-                    "source_identity_key",
-                    "name",
-                    "normalized_name",
-                    "is_raw_material",
-                    "aliases",
-                    "is_pantry",
-                    "category_path",
-                ],
-            )
-        await run_sql_file(conn, settings.sql_dir / "006_insert_category.sql")
-        await run_sql_file(conn, settings.sql_dir / "010_upsert_ingredient_master.sql")
-        after = int(await conn.fetchval("SELECT count(*) FROM ingredient") or 0)
-        with_alias = int(await conn.fetchval("SELECT count(*) FROM ingredient WHERE aliases <> '{}'") or 0)
-        linked = int(
-            await conn.fetchval("SELECT count(*) FROM ingredient WHERE ingredient_category_id IS NOT NULL") or 0
-        )
-    print(f"\n재료 마스터 {before} -> {after}행 (신규 {after - before}), 별칭 있는 행 {with_alias}개")
-    print(f"재료 분류 연결: {linked}행")
-    return 0
-
-
 def command_sync_master(args: argparse.Namespace) -> int:
     """마스터 보강 진입점."""
-    return asyncio.run(sync_master_async(get_settings(), apply=args.apply))
-
-
-async def load_catalog_async(settings: Settings, *, apply: bool) -> int:
-    """상품 카탈로그를 적재합니다. LLM 단계를 거치지 않습니다."""
-    rows = catalog.build_catalog_rows(discover_datasets(settings.raw_dir))
-    if rows.is_empty():
-        print("카테고리/상품 데이터셋을 찾지 못했습니다.", file=sys.stderr)
-        return 1
-
-    # raw 에 구성 재료가 없으면 상품명과 카테고리로 유추합니다. 마스터를 읽어야 해서
-    # 여기서 붙입니다. 이미 들어온 구성 재료는 건드리지 않습니다.
-    lookup = await resolve.fetch_match_lookup(settings)
-    derived = catalog.derive_product_ingredients(rows, lookup)
-    print(catalog.render(rows))
-    if derived:
-        print(f"  (상품명/카테고리로 유추한 것 {derived}건)")
-    if not apply:
-        print("\n--apply 를 붙이면 실제로 반영합니다. 지금은 집계만 했습니다.")
-        return 0
-
-    plan = (
-        ("staging_category", catalog.CATEGORY_COLUMNS, rows.categories),
-        ("staging_product", catalog.PRODUCT_COLUMNS, rows.products),
-        ("staging_product_ingredient", catalog.PRODUCT_INGREDIENT_COLUMNS, rows.product_ingredients),
-    )
-    async with load_connection_scope(settings) as conn:
-        await run_sql_file(conn, settings.sql_dir / "001_staging_tables.sql")
-        await conn.execute("TRUNCATE staging_category, staging_product, staging_product_ingredient")
-        for table, columns, records in plan:
-            for start in range(0, len(records), settings.copy_chunk_size):
-                await conn.copy_records_to_table(
-                    table, records=records[start : start + settings.copy_chunk_size], columns=list(columns)
-                )
-        for name in ("006_insert_category.sql", "007_insert_product.sql", "008_insert_product_ingredient.sql"):
-            await run_sql_file(conn, settings.sql_dir / name)
-        counts = {
-            table: int(await conn.fetchval(f"SELECT count(*) FROM {table}") or 0)
-            for table in ("category", "product", "product_ingredient")
-        }
-    print("\n적재 후:", ", ".join(f"{k} {v}행" for k, v in counts.items()))
-    return 0
+    return asyncio.run(ingredient_master.run_sync_master(get_settings(), apply=args.apply))
 
 
 def command_load_catalog(args: argparse.Namespace) -> int:
-    """카탈로그 적재 진입점."""
-    return asyncio.run(load_catalog_async(get_settings(), apply=args.apply))
+    """카탈로그 적재 진입점. 재료 마스터 조회를 주입합니다."""
+    settings = get_settings()
+    return asyncio.run(
+        catalog.run_load_catalog(settings, apply=args.apply, load_lookup=lambda: resolve.fetch_match_lookup(settings))
+    )
 
 
 def command_embed(args: argparse.Namespace) -> int:
@@ -392,49 +245,31 @@ def command_embed(args: argparse.Namespace) -> int:
     return 0
 
 
-async def load_recipes_async(settings: Settings, *, apply: bool) -> int:
-    """구조화된 한국어 레시피(COOKRCP01)를 적재합니다. LLM 을 거치지 않습니다."""
-    datasets = [
-        dataset
-        for dataset in discover_datasets(settings.raw_dir)
-        if set(recipe_catalog.REQUIRED_COLUMNS) <= set(dataset.columns)
-    ]
-    if not datasets:
-        print("COOKRCP01 데이터셋을 찾지 못했습니다.", file=sys.stderr)
-        return 1
+async def recipe_lookup(settings: Settings) -> dict[str, int]:
+    """마스터 조회에 3단계 매칭 결과를 얹습니다.
 
-    # 3단계가 읽을 재료명을 남깁니다. `resolve` 를 돌리기 전에 이 파일이 있어야 합니다.
-    records_path = recipe_catalog.write_records(datasets, settings)
+    3단계를 이미 돌렸다면 그 결과를 얹습니다. 마스터 정확 일치로 안 붙던 이름
+    (`후춧가루`, `닭가슴살` 같은 것)이 여기서 붙습니다.
 
+    **조립은 CLI 가 합니다.** 적재 모듈이 `stages.resolve` 를 직접 부르면 계층이
+    거꾸로 물립니다. 어느 조회를 쓸지 정하는 것은 부르는 쪽의 몫입니다.
+    """
     lookup = await resolve.fetch_match_lookup(settings)
-    # 3단계를 이미 돌렸다면 그 결과를 얹습니다. 마스터 정확 일치로 안 붙던 이름
-    # (`후춧가루`, `닭가슴살` 같은 것)이 여기서 붙습니다.
     try:
         llm_matches = resolve.load_matches(settings)
     except FileNotFoundError:
         llm_matches = {}
     else:
         print(f"3단계 매칭 {len(llm_matches)}종을 함께 씁니다.")
-    lookup = {**lookup, **llm_matches}
-
-    rows = recipe_catalog.build_recipe_rows(datasets, lookup)
-    print(f"재료명 산출물: {records_path.name}")
-    print(rows.render())
-    if rows.is_empty():
-        return 1
-    if not apply:
-        print("\n실제로 적재하려면 --apply 를 붙이세요.", file=sys.stderr)
-        return 0
-
-    report = await run_recipe_load(rows, settings=settings)
-    print()
-    print(report.render())
-    return 0
+    return {**lookup, **llm_matches}
 
 
 def command_load_recipes(args: argparse.Namespace) -> int:
-    """레시피 적재 진입점."""
-    return asyncio.run(load_recipes_async(get_settings(), apply=args.apply))
+    """레시피 적재 진입점. 마스터 + 3단계 매칭 조회를 주입합니다."""
+    settings = get_settings()
+    return asyncio.run(
+        recipe_catalog.run_load_recipes(settings, apply=args.apply, load_lookup=lambda: recipe_lookup(settings))
+    )
 
 
 def command_seed_demo(args: argparse.Namespace) -> int:
