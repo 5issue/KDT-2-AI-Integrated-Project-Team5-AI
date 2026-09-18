@@ -1,146 +1,33 @@
-"""3단계 산출물을 Neon 에 벌크 적재합니다.
+"""2·3단계 산출물 -> staging 행 튜플. **DB 를 보지 않습니다.**
 
-입력은 파이프라인이 남긴 중간 산출물 두 가지뿐입니다.
-- `artifacts/records/<dataset>.jsonl` : 2단계 추출 결과
-- `artifacts/ingredient_matches.json` : 3단계 매칭 결과
+레코드 하나가 레시피 한 건이고, 거기서 recipe / recipe_ingredient / recipe_step
+세 표의 행이 함께 나옵니다. 보관기준은 슬롯 하나가 행 하나입니다.
 
-적재는 두 단계입니다.
-1. asyncpg COPY 로 UNLOGGED staging 테이블에 밀어넣기 (네트워크 왕복 1회)
-2. `sql/` 의 INSERT ... SELECT 로 본 테이블 반영
+여기서 하는 판단은 둘입니다.
 
-전체가 한 트랜잭션입니다. 중간에 실패하면 아무것도 남지 않습니다.
+- **번역본은 재료 매칭률이 낮으면 버립니다**(`RECIPE_MIN_MATCH_RATE`). 재료가 절반도
+  안 붙은 레시피는 "부족 재료" 계산이 무의미해 데모에 못 씁니다. 한국어 원본에는
+  이 필터를 걸지 않습니다.
+- 수치는 전부 `Decimal` 로 바꿉니다. asyncpg 의 NUMERIC 코덱이 float 를 받지 않습니다.
 
-주의: SQLAlchemy 의 asyncpg 어댑터는 SQLAlchemy 를 거친 첫 실행 전까지 트랜잭션을 시작하지
-않습니다. `engine.begin()` 만 열고 raw 커넥션으로 내려가면 전부 autocommit 이 되므로,
-`load_connection_scope()` 가 asyncpg 트랜잭션을 직접 엽니다.
+`collect_rows` 만 파일을 읽습니다. 나머지는 dict 를 받아 튜플을 냅니다.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import asyncpg
-
 from data_pipeline.config import Settings, get_settings
-from data_pipeline.db import engine_scope
 from data_pipeline.domain import (
     derive_storage_columns,
     ingredient_match_key,
     normalize_cooking_method,
     normalize_duration_unit,
 )
-
-STAGING_RECIPE_COLUMNS = (
-    "source_type",
-    "source_id",
-    "name",
-    "description",
-    "cuisine_type",
-    "difficulty",
-    "prep_time_min",
-    "cook_time_min",
-    "servings",
-    "cooking_method",
-    "nutrition",
-    "tags",
-    "image_url",
-)
-STAGING_RECIPE_STEP_COLUMNS = ("source_type", "source_id", "step_no", "instruction", "image_url")
-STAGING_RECIPE_INGREDIENT_COLUMNS = (
-    "source_type",
-    "source_id",
-    "line_no",
-    "raw_text",
-    "name",
-    "normalized_name",
-    "quantity",
-    "unit",
-    "is_required",
-    "purpose",
-)
-STAGING_STORAGE_COLUMNS = (
-    "source_item_id",
-    "source_food_name",
-    "source_food_subtitle",
-    "normalized_name",
-    "source_slot",
-    "storage_location",
-    "storage_context",
-    "duration_min",
-    "duration_max",
-    "duration_unit",
-    "duration_text",
-    "storage_tips",
-)
-STAGING_MATCH_COLUMNS = ("normalized_name", "ingredient_id", "matched_name", "method", "confidence")
-
-# ON CONFLICT 가 의존하는 유니크 인덱스. 실제 스키마에 이미 있습니다.
-REQUIRED_INDEXES = (
-    "recipe_source_unique_idx",
-    "uq_ingredient_source_identity_key",
-    "uq_storage_guideline_source_rule",
-)
-
-SQL_STEPS = (
-    "001_staging_tables.sql",
-    "002_insert_recipe.sql",
-    "003_insert_recipe_ingredient.sql",
-    "004_insert_storage_guideline.sql",
-    "005_insert_recipe_step.sql",
-)
-
-
-@dataclass(slots=True)
-class StagingRows:
-    """COPY 로 밀어넣을 행 묶음."""
-
-    recipes: list[tuple[Any, ...]] = field(default_factory=list)
-    recipe_ingredients: list[tuple[Any, ...]] = field(default_factory=list)
-    recipe_steps: list[tuple[Any, ...]] = field(default_factory=list)
-    storage: list[tuple[Any, ...]] = field(default_factory=list)
-    matches: list[tuple[Any, ...]] = field(default_factory=list)
-    skipped_ingredients: int = 0
-    skipped_storage: int = 0
-    skipped_steps: int = 0
-    skipped_recipes: int = 0
-
-    def is_empty(self) -> bool:
-        """적재할 것이 하나도 없는지."""
-        return not (self.recipes or self.storage)
-
-
-@dataclass(slots=True)
-class LoadReport:
-    """적재 결과 요약."""
-
-    staged: dict[str, int] = field(default_factory=dict)
-    applied_sql: list[str] = field(default_factory=list)
-    row_counts: dict[str, int] = field(default_factory=dict)
-    skipped_ingredients: int = 0
-    skipped_storage: int = 0
-    skipped_steps: int = 0
-    skipped_recipes: int = 0
-
-    def render(self) -> str:
-        """사람이 읽을 요약."""
-        lines = [f"{name:<28}: {count}행" for name, count in sorted(self.staged.items())]
-        if self.skipped_ingredients:
-            lines.append(f"{'매칭 실패로 건너뛴 재료줄':<28}: {self.skipped_ingredients}행")
-        if self.skipped_storage:
-            lines.append(f"{'매칭 실패로 건너뛴 보관기준':<28}: {self.skipped_storage}행")
-        if self.skipped_steps:
-            lines.append(f"{'내용이 비어 건너뛴 조리단계':<28}: {self.skipped_steps}행")
-        if self.skipped_recipes:
-            lines.append(f"{'재료 매칭률 미달로 뺀 레시피':<28}: {self.skipped_recipes}건")
-        lines.append(f"{'적용한 SQL':<28}: {', '.join(self.applied_sql) or '없음'}")
-        lines.extend(f"{table:<28}: {count}행 (적재 후)" for table, count in sorted(self.row_counts.items()))
-        return "\n".join(lines)
+from data_pipeline.load.bulk_insert.models import StagingRows
 
 
 def _decimal(value: float | int | None, places: int) -> Decimal | None:
@@ -359,110 +246,6 @@ def _duration_triplet(rule: dict[str, Any]) -> tuple[Decimal | None, Decimal | N
     if minimum is None or maximum is None or unit is None:
         return None, None, None
     return minimum, maximum, unit
-
-
-@asynccontextmanager
-async def load_connection_scope(settings: Settings | None = None) -> AsyncIterator[asyncpg.Connection]:
-    """적재용 raw asyncpg 커넥션을 트랜잭션 안에서 내어 줍니다."""
-    async with engine_scope(direct=True, settings=settings) as engine:
-        async with engine.connect() as sa_conn:
-            raw = await sa_conn.get_raw_connection()
-            conn: asyncpg.Connection = raw.driver_connection  # type: ignore[assignment]
-            async with conn.transaction():
-                yield conn
-
-
-async def run_sql_file(conn: asyncpg.Connection, path: Path) -> None:
-    """.sql 파일을 통째로 실행합니다.
-
-    asyncpg 는 인자가 없을 때 simple query 프로토콜을 써서 세미콜론으로 구분된
-    여러 문장을 한 번에 실행할 수 있습니다.
-    """
-    await conn.execute(path.read_text(encoding="utf-8"))
-
-
-async def assert_prerequisites(conn: asyncpg.Connection) -> None:
-    """ON CONFLICT 가 기대는 유니크 인덱스가 있는지 확인합니다."""
-    found = await conn.fetch(
-        "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1::text[]) "
-        "UNION SELECT conname FROM pg_constraint WHERE conname = ANY($1::text[])",
-        list(REQUIRED_INDEXES),
-    )
-    present = {row["indexname"] for row in found}
-    missing = [name for name in REQUIRED_INDEXES if name not in present]
-    if missing:
-        raise RuntimeError(
-            "필요한 유니크 제약이 없습니다: " + ", ".join(missing) + ". 다른 Neon 브랜치에 붙었는지 확인하세요."
-        )
-
-
-async def copy_staging(conn: asyncpg.Connection, rows: StagingRows, *, chunk_size: int) -> dict[str, int]:
-    """staging 테이블에 COPY 로 적재합니다."""
-    plan = (
-        ("staging_ingredient_match", STAGING_MATCH_COLUMNS, rows.matches),
-        ("staging_recipe", STAGING_RECIPE_COLUMNS, rows.recipes),
-        ("staging_recipe_step", STAGING_RECIPE_STEP_COLUMNS, rows.recipe_steps),
-        ("staging_recipe_ingredient", STAGING_RECIPE_INGREDIENT_COLUMNS, rows.recipe_ingredients),
-        ("staging_storage_guideline", STAGING_STORAGE_COLUMNS, rows.storage),
-    )
-    staged: dict[str, int] = {}
-    for table, columns, records in plan:
-        for start in range(0, len(records), chunk_size):
-            await conn.copy_records_to_table(table, records=records[start : start + chunk_size], columns=list(columns))
-        staged[table] = len(records)
-    return staged
-
-
-async def run_load(
-    rows: StagingRows,
-    *,
-    settings: Settings | None = None,
-    truncate_staging_after: bool = False,
-) -> LoadReport:
-    """staging COPY 후 sql/ 의 문장을 순서대로 적용합니다."""
-    settings = settings or get_settings()
-    report = LoadReport(
-        skipped_ingredients=rows.skipped_ingredients,
-        skipped_storage=rows.skipped_storage,
-        skipped_steps=rows.skipped_steps,
-        skipped_recipes=rows.skipped_recipes,
-    )
-
-    if settings.dry_run:
-        report.staged = {
-            "staging_recipe": len(rows.recipes),
-            "staging_recipe_step": len(rows.recipe_steps),
-            "staging_recipe_ingredient": len(rows.recipe_ingredients),
-            "staging_storage_guideline": len(rows.storage),
-            "staging_ingredient_match": len(rows.matches),
-        }
-        report.applied_sql.append("(DRY_RUN: DB 쓰기 생략)")
-        return report
-
-    async with load_connection_scope(settings) as conn:
-        await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
-        await assert_prerequisites(conn)
-        await conn.execute(
-            "TRUNCATE staging_recipe, staging_recipe_step, staging_recipe_ingredient, "
-            "staging_storage_guideline, staging_ingredient_match"
-        )
-        report.applied_sql.append(SQL_STEPS[0])
-
-        report.staged = await copy_staging(conn, rows, chunk_size=settings.copy_chunk_size)
-
-        for name in SQL_STEPS[1:]:
-            await run_sql_file(conn, settings.sql_dir / name)
-            report.applied_sql.append(name)
-
-        for table in ("ingredient", "recipe", "recipe_ingredient", "storage_guideline"):
-            count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
-            report.row_counts[table] = int(count or 0)
-
-        if truncate_staging_after:
-            await run_sql_file(conn, settings.sql_dir / "099_truncate_staging.sql")
-            report.applied_sql.append("099_truncate_staging.sql")
-
-    return report
 
 
 def load_match_metadata(settings: Settings | None = None) -> tuple[dict[str, int], dict[str, dict[str, Any]]]:

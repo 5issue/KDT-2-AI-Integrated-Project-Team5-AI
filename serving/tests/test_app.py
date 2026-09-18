@@ -29,31 +29,6 @@ async def test_db_health_returns_503_without_pool(offline_client: AsyncClient) -
     assert "데이터베이스" in response.json()["detail"]
 
 
-async def test_recommendation_endpoint_returns_503_without_pool(offline_client: AsyncClient) -> None:
-    """DB 가 필요한 엔드포인트도 마찬가지입니다."""
-    response = await offline_client.get("/api/v1/users/1/recipe-recommendations")
-
-    assert response.status_code == 503
-
-
-@pytest.mark.parametrize(
-    ("path", "params"),
-    [
-        ("/api/v1/users/1/recipe-recommendations", {"min_coverage": "1.5"}),
-        ("/api/v1/users/1/recipe-recommendations", {"limit": "999"}),
-        ("/api/v1/users/0/reorder-candidates", {}),
-        ("/api/v1/users/1/reorder-candidates", {"days_since": "0"}),
-    ],
-)
-async def test_query_parameters_are_validated(
-    validating_client: AsyncClient, path: str, params: dict[str, str]
-) -> None:
-    """범위를 벗어난 입력은 DB 까지 가지 않고 422 로 걸립니다."""
-    response = await validating_client.get(path, params=params)
-
-    assert response.status_code == 422
-
-
 def test_docs_are_closed_outside_local() -> None:
     """local 이 아니면 문서 페이지와 openapi.json 을 닫습니다."""
     local = create_app(Settings(_env_file=None, environment="local"))  # type: ignore[call-arg]

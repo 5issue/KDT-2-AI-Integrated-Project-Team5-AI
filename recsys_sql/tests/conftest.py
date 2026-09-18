@@ -10,11 +10,11 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from recsys_fixtures import SeedIds, seed_minimal
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.config import QUERIES_DIR, Settings
 from recsys_sql.db import engine_scope
-from recsys_sql.fixtures import SeedIds, seed_minimal
 
 TEMPLATE_DIR = QUERIES_DIR / "_template"
 

@@ -1,5 +1,9 @@
 """추천 SQL 검증용 테스트 데이터.
 
+**패키지 밖(`tests/`)에 둡니다.** 런타임에 아무도 읽지 않는데 `src/` 에 있으면 휠에
+실립니다. `queries/` 를 패키지 안에 둔 것과는 이유가 다릅니다 - 그건 서빙이 런타임에
+읽어야 해서였습니다.
+
 트랜잭션 안에서만 쓰고 끝나면 롤백하는 것을 전제로 합니다. PK 는 실제 데이터와 겹치지 않도록
 9,100,000,000 대역을 씁니다. 그래도 각자 Neon 브랜치에서 돌리세요.
 
@@ -125,12 +129,13 @@ _INSERT_POPULARITY = text(
 )
 
 
-async def seed_minimal(conn: AsyncConnection) -> SeedIds:
-    """추천 쿼리 검증용 최소 데이터를 넣습니다. 호출한 쪽에서 롤백해야 합니다."""
-    ids = SeedIds()
-
+async def seed_user(conn: AsyncConnection, ids: SeedIds) -> None:
+    """app_user 한 명."""
     await conn.execute(text("INSERT INTO app_user (user_id) VALUES (:id)"), {"id": ids.user})
 
+
+async def seed_ingredients(conn: AsyncConnection, ids: SeedIds) -> None:
+    """재료 5종. **소금만 상비재료(is_pantry)입니다.**"""
     ingredient_seeds = [
         (ids.kimchi, "배추김치", "김치", False),
         (ids.pork, "돼지고기", "돼지고기", False),
@@ -152,6 +157,11 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
         ],
     )
 
+
+async def seed_products(conn: AsyncConnection, ids: SeedIds) -> None:
+    """상품 8종과 그 대표 재료 연결.
+
+    두부C 는 비활성, 참기름A 는 품절입니다. 상품 추천 후보에서 빠져야 합니다."""
     await conn.execute(
         _INSERT_PRODUCT,
         [
@@ -165,7 +175,6 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
             {"id": ids.sesame_c, "sku": "S-C", "name": "참기름C", "price": 9000, "stock": 5, "is_active": True},
         ],
     )
-
     await conn.execute(
         _INSERT_PRODUCT_INGREDIENT,
         [
@@ -180,6 +189,11 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
         ],
     )
 
+
+async def seed_recipes(conn: AsyncConnection, ids: SeedIds) -> None:
+    """레시피 3종 + 재료줄 + 지정 상품.
+
+    `seed_products` 뒤에 불러야 합니다. `recipe_product` 가 상품을 참조합니다."""
     recipe_seeds = [
         (ids.kimchi_stew, "시드 김치찌개", 20),
         (ids.tofu_braise, "시드 두부조림", 15),
@@ -198,7 +212,6 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
             for recipe_id, name, cook_time in recipe_seeds
         ],
     )
-
     # (recipe_id, ingredient_id, quantity, unit, is_required)
     recipe_lines = [
         # 김치찌개: 필수 김치+돼지고기, 선택 두부
@@ -225,7 +238,6 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
             for recipe_id, ingredient_id, quantity, unit, is_required in recipe_lines
         ],
     )
-
     # recipe_product 의 PK 는 (recipe_id, ingredient_id, product_id) 입니다.
     # "이 레시피의 두부 자리에는 두부A 를 우선 추천" 이라는 의미가 됩니다.
     await conn.execute(
@@ -241,6 +253,11 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
         },
     )
 
+
+async def seed_fridge(conn: AsyncConnection, ids: SeedIds) -> None:
+    """냉장고 3칸. **두부는 유통기한이 지났습니다**(days=-1).
+
+    보유하지 않은 것으로 쳐야 합니다. 이 한 줄이 유통기한 테스트의 전부입니다."""
     await conn.execute(
         _INSERT_FRIDGE,
         [
@@ -250,6 +267,9 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
         ],
     )
 
+
+async def seed_history(conn: AsyncConnection, ids: SeedIds) -> None:
+    """구매 이력과 상품 인기도. 재구매 후보와 버블 상품 정렬에 씁니다."""
     await conn.execute(
         _INSERT_AFFINITY,
         [
@@ -259,7 +279,6 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
             {"user_id": ids.user, "product_id": ids.sesame_a, "purchase_count": 2, "days_ago": 90, "score": 0.70},
         ],
     )
-
     await conn.execute(
         _INSERT_POPULARITY,
         [
@@ -268,4 +287,19 @@ async def seed_minimal(conn: AsyncConnection) -> SeedIds:
         ],
     )
 
+
+async def seed_minimal(conn: AsyncConnection) -> SeedIds:
+    """추천 쿼리 검증용 최소 데이터를 전부 넣습니다. 호출한 쪽에서 롤백해야 합니다.
+
+    **순서가 FK 순서입니다.** 상품이 재료를 참조하고, `recipe_product` 가 상품을,
+    냉장고와 구매 이력이 상품을 참조합니다. 일부만 필요하면 위 함수를 직접 부르되
+    이 순서를 지키세요.
+    """
+    ids = SeedIds()
+    await seed_user(conn, ids)
+    await seed_ingredients(conn, ids)
+    await seed_products(conn, ids)
+    await seed_recipes(conn, ids)
+    await seed_fridge(conn, ids)
+    await seed_history(conn, ids)
     return ids

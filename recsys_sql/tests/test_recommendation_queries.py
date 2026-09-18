@@ -9,12 +9,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from recsys_fixtures import SeedIds
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.catalog import SqlQuery, load_catalog
 from recsys_sql.config import QUERIES_DIR, get_settings
-from recsys_sql.fixtures import SeedIds
 from recsys_sql.runner import explain_query, run_query
 
 TEMPLATE_DIR = QUERIES_DIR / "_template"
