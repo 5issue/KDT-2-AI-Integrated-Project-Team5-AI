@@ -12,11 +12,7 @@ from serving.auth import OptionalUserId
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
-from serving.schemas import (
-    BaseProductRef,
-    MissingIngredientsResponse,
-    RecipeDetailResponse,
-)
+from serving.schemas import MissingProductsResponse, RecipeDetailResponse
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
 
@@ -39,37 +35,35 @@ async def read_recipe_detail(
 
 
 @router.get(
-    "/{recipe_id}/missing-ingredients",
-    response_model=ApiResponse[MissingIngredientsResponse],
+    "/{recipe_id}/missing-products",
+    response_model=ApiResponse[MissingProductsResponse],
 )
-async def read_missing_ingredients(
+async def read_missing_products(
     pool: PoolDep,
     user_id: OptionalUserId,
     recipe_id: int = RecipeIdPath,
     base_product_id: int = Query(default=0, ge=0, description="기준 상품 id. 0 이면 미사용"),
-) -> ApiResponse[MissingIngredientsResponse]:
-    """레시피 재료 중 기준 상품·냉장고·상비재료로 채워지지 않는 것을 계산합니다."""
+    max_per_ingredient: int = Query(default=3, ge=1, le=10, description="재료당 추천 상품 수"),
+) -> ApiResponse[MissingProductsResponse]:
+    """부족 재료와 재료별 추천 상품을 냅니다 (18장 + 30장 통일).
+
+    부족 재료가 없으면 빈 목록 성공 응답입니다. 그래서 "레시피 없음" 과 구분하기 위해
+    상세 쿼리로 존재를 먼저 확인하고 404 를 냅니다.
+    """
     async with pool.acquire() as conn:
-        base_product: BaseProductRef | None = None
-        if base_product_id > 0:
-            detail_sql, detail_args = build_query("product_detail", {"product_id": base_product_id})
-            product_row = await conn.fetchrow(detail_sql, *detail_args)
-            if product_row is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="기준 상품을 찾을 수 없습니다.")
-            base_product = BaseProductRef(product_id=product_row["product_id"], name=product_row["name"])
+        detail_sql, detail_args = build_query("recipe_detail", {"recipe_id": recipe_id})
+        if await conn.fetchrow(detail_sql, *detail_args) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="레시피를 찾을 수 없습니다.")
 
         sql, args = build_query(
-            "recipe_missing_ingredients",
-            {"recipe_id": recipe_id, "base_product_id": base_product_id, "user_id": user_id},
+            "missing_products",
+            {
+                "user_id": user_id,
+                "recipe_id": recipe_id,
+                "base_product_id": base_product_id,
+                "max_per_ingredient": max_per_ingredient,
+            },
         )
         rows = await conn.fetch(sql, *args)
 
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="레시피를 찾을 수 없습니다.")
-    return ApiResponse.success(
-        MissingIngredientsResponse.from_rows(
-            recipe_id=recipe_id,
-            base_product=base_product,
-            rows=[dict(row) for row in rows],
-        )
-    )
+    return ApiResponse.success(MissingProductsResponse.from_rows(recipe_id=recipe_id, rows=[dict(row) for row in rows]))

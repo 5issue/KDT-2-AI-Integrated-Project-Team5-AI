@@ -90,12 +90,14 @@ async def test_recipe_endpoints_query_runs(live_client: AsyncClient) -> None:
         assert {"recipe_id", "name", "ingredients", "steps"} <= set(body)
 
     missing = await live_client.get(
-        "/api/v1/recipes/1/missing-ingredients",
+        "/api/v1/recipes/1/missing-products",
         headers={"X-User-Id": "1"},
+        params={"max_per_ingredient": 2},
     )
     assert missing.status_code in (200, 404)
     if missing.status_code == 200:
         body = missing.json()["data"]
-        assert {"recipe_id", "ingredients", "missing_items"} <= set(body)
-        counts = body["ingredients"]
-        assert counts["total"] == counts["available"] + counts["missing"]
+        assert {"recipe_id", "missing_ingredients"} <= set(body)
+        for item in body["missing_ingredients"]:
+            assert {"ingredient_id", "name", "products"} <= set(item)
+            assert len(item["products"]) <= 2

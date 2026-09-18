@@ -314,68 +314,50 @@ class RecipeDetailResponse(BaseModel):
         )
 
 
-class BaseProductRef(BaseModel):
-    """부족 재료 계산의 기준 상품 (명세 18장 base_product)."""
+class MissingProductOption(BaseModel):
+    """부족 재료를 채울 수 있는 상품 한 건."""
 
     product_id: int
     name: str
+    price: float
+    rank: int
 
 
-class IngredientAvailability(BaseModel):
-    """필수 재료 보유 집계 (명세 18장 ingredients 객체)."""
-
-    total: int
-    available: int
-    missing: int
-
-
-class MissingIngredientItem(BaseModel):
-    """부족 재료 한 건 (명세 18장 missing_items 항목)."""
+class MissingIngredientWithProducts(BaseModel):
+    """부족 재료 하나와 그 재료를 채울 상품 목록."""
 
     ingredient_id: int
     name: str
-    quantity: float | None = None
-    unit: str | None = None
-    status: str
+    products: list[MissingProductOption]
 
 
-class MissingIngredientsResponse(BaseModel):
-    """부족 재료 계산 결과 (명세 18장 data).
+class MissingProductsResponse(BaseModel):
+    """부족 재료 상품 추천 (18장 + 30장 통일 명세 data).
 
-    집계와 missing_items 는 필수 재료(is_required) 기준입니다. SQL 은 선택 재료와
-    BASE/IN_FRIDGE/PANTRY 상태까지 내므로, 화면이 더 필요해지면 여기서 넓힙니다.
+    부족 판정은 my-recipes 와 동일 정의(냉장고 PRIMARY + 상비재료)이고, 살 수 있는
+    상품이 없는 재료는 팀 결정대로 목록에 내지 않습니다.
     """
 
     recipe_id: int
-    base_product: BaseProductRef | None = None
-    ingredients: IngredientAvailability
-    missing_items: list[MissingIngredientItem]
+    missing_ingredients: list[MissingIngredientWithProducts]
 
     @classmethod
-    def from_rows(
-        cls,
-        recipe_id: int,
-        base_product: BaseProductRef | None,
-        rows: list[dict[str, Any]],
-    ) -> MissingIngredientsResponse:
-        required = [r for r in rows if r["is_required"]]
-        missing = [r for r in required if r["status"] == "MISSING"]
-        return cls(
-            recipe_id=recipe_id,
-            base_product=base_product,
-            ingredients=IngredientAvailability(
-                total=len(required),
-                available=len(required) - len(missing),
-                missing=len(missing),
-            ),
-            missing_items=[
-                MissingIngredientItem(
-                    ingredient_id=r["ingredient_id"],
-                    name=r["ingredient_name"],
-                    quantity=float(r["quantity"]) if r["quantity"] is not None else None,
-                    unit=r["unit"],
-                    status=r["status"],
+    def from_rows(cls, recipe_id: int, rows: list[dict[str, Any]]) -> MissingProductsResponse:
+        """쿼리 행(재료 x 상품)을 재료별로 묶습니다. 행은 재료, rank 순으로 정렬되어 옵니다."""
+        grouped: dict[int, MissingIngredientWithProducts] = {}
+        for row in rows:
+            item = grouped.get(row["ingredient_id"])
+            if item is None:
+                item = MissingIngredientWithProducts(
+                    ingredient_id=row["ingredient_id"], name=row["ingredient_name"], products=[]
                 )
-                for r in missing
-            ],
-        )
+                grouped[row["ingredient_id"]] = item
+            item.products.append(
+                MissingProductOption(
+                    product_id=row["product_id"],
+                    name=row["product_name"],
+                    price=float(row["price"]),
+                    rank=row["rank_in_ingredient"],
+                )
+            )
+        return cls(recipe_id=recipe_id, missing_ingredients=list(grouped.values()))
