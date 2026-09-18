@@ -330,3 +330,28 @@ def test_product_upsert_merges_metadata_instead_of_replacing() -> None:
     """
     sql = (Path(__file__).resolve().parents[1] / "sql" / "007_insert_product.sql").read_text(encoding="utf-8")
     assert "metadata       = COALESCE(p.metadata, '{}'::jsonb) || sp.metadata" in sql
+
+
+def test_duplicate_product_does_not_duplicate_its_ingredients(tmp_path: Path) -> None:
+    """같은 상품이 raw 에 두 번 오면 구성 재료도 한 벌만 남아야 합니다.
+
+    상품은 자연키로 접히는데 구성 재료는 안 접혀서, staging_product_ingredient 의
+    PK(source_type, source_product_id, normalized_name) 에서 COPY 가 터졌습니다.
+    (코드래빗 리뷰 PR #16)
+    """
+    row = {
+        "source_type": "KURLY_CRAWL",
+        "source_product_id": "k-1",
+        "name": "한돈 앞다리살 500g",
+        "price": "12900",
+        "product_type": "RAW_MATERIAL",
+        "category_path": "축산 > 돼지고기",
+        "ingredients": '[{"name": "돼지고기", "role": "PRIMARY"}]',
+    }
+    write_parquet(tmp_path / "product_raw.parquet", [row, dict(row)])
+    rows = catalog.build_catalog_rows(discover_datasets(tmp_path))
+
+    assert len(rows.products) == 1
+    keys = [item[:3] for item in rows.product_ingredients]
+    assert len(keys) == len(set(keys)), keys
+    assert keys == [("KURLY_CRAWL", "k-1", "돼지고기")]
