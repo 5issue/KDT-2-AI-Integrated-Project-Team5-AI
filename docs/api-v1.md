@@ -62,15 +62,15 @@ Base URL: `/api/v1`
 | HOME-01 | 홈 버블 목록 | GET | `/home/bubbles` | 구현됨 |
 | RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 기획 |
 | RECO-02 | My냉장고 기반 레시피 추천 | GET | `/recommendations/my-recipes` | 구현됨 |
-| PROD-01 | 상품 상세 | GET | `/products/{productId}` | 구현됨 |
-| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{productId}/recipes` | 구현됨 |
-| PROD-03 | 상품 보관 가이드 | GET | `/products/{productId}/storage-guide` | 구현됨 (명세 조정 필요) |
-| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipeId}` | 구현됨 (명세 조정 필요) |
-| RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipeId}/missing-products` | 구현됨 (18장 통합) |
+| PROD-01 | 상품 상세 | GET | `/products/{product_id}` | 구현됨 |
+| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{product_id}/recipes` | 구현됨 |
+| PROD-03 | 상품 보관 가이드 | GET | `/products/{product_id}/storage-guide` | 구현됨 (명세 조정 필요) |
+| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipe_id}` | 구현됨 (명세 조정 필요) |
+| RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipe_id}/missing-products` | 구현됨 (18장 통합) |
 | FRIDGE-01 | My냉장고 품목 목록 | GET | `/users/me/fridge` | 구현됨 |
 | FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 구현됨 |
-| FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{productId}` | 구현됨 (키 변경) |
-| FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{productId}` | 구현됨 (키 변경) |
+| FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
+| FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
 
 - `RECIPE-03` 은 18장(missing-ingredients)과 통일한 단일 API 입니다 (팀 합의).
   부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. `X-User-Id` 없으면(비로그인)
