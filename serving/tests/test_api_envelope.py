@@ -7,14 +7,17 @@
 
 from __future__ import annotations
 
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+
+from serving.app import create_app
+from serving.config import Settings
 
 ENVELOPE_FIELDS = {"status", "message", "data", "error", "timestamp"}
 
 
 async def test_recommendations_live_under_api_v1(offline_client: AsyncClient) -> None:
     """추천 엔드포인트는 /api/v1 아래에 있고, DB 미연결 503 도 envelope 로 답합니다."""
-    response = await offline_client.get("/api/v1/users/1/recipe-recommendations")
+    response = await offline_client.get("/api/v1/recommendations/my-recipes", headers={"X-User-Id": "1"})
 
     assert response.status_code == 503
     body = response.json()
@@ -33,7 +36,9 @@ async def test_legacy_unprefixed_paths_are_gone(offline_client: AsyncClient) -> 
 
 async def test_validation_error_uses_envelope(validating_client: AsyncClient) -> None:
     """422 도 envelope 로 답하고, 코드는 백엔드 카탈로그의 INVALID_INPUT_VALUE 를 재사용합니다."""
-    response = await validating_client.get("/api/v1/users/1/recipe-recommendations", params={"limit": "999"})
+    response = await validating_client.get(
+        "/api/v1/recommendations/my-recipes", headers={"X-User-Id": "1"}, params={"limit": "999"}
+    )
 
     assert response.status_code == 422
     body = response.json()
@@ -72,3 +77,53 @@ async def test_prefix_match_requires_path_boundary(offline_client: AsyncClient) 
 
     assert response.status_code == 404
     assert "detail" in response.json()
+
+
+def _crashing_app():
+    """일부러 터지는 라우트를 붙인 앱. 500 변환 동작 확인용."""
+    app = create_app(Settings(_env_file=None))  # type: ignore[call-arg]
+    app.state.pool = None
+
+    @app.get("/api/v1/_boom")
+    async def _api_boom() -> None:
+        raise RuntimeError("postgres://user:supersecret@host/db")
+
+    @app.get("/_boom")
+    async def _plain_boom() -> None:
+        raise RuntimeError("bang")
+
+    return app
+
+
+async def test_unhandled_exception_returns_envelope_500() -> None:
+    """처리되지 않은 예외도 /api/v1 에서는 envelope 500 으로 답합니다."""
+    transport = ASGITransport(app=_crashing_app(), raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/_boom")
+
+    assert response.status_code == 500
+    body = response.json()
+    assert set(body.keys()) == ENVELOPE_FIELDS
+    assert body["status"] == "ERROR"
+    assert body["error"] == "INTERNAL_SERVER_ERROR"
+    assert body["data"] is None
+
+
+async def test_unhandled_exception_does_not_leak_details() -> None:
+    """예외 메시지(자격증명 등)가 응답 본문에 새어 나가면 안 됩니다."""
+    transport = ASGITransport(app=_crashing_app(), raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/_boom")
+
+    assert "supersecret" not in response.text
+    assert "RuntimeError" not in response.text
+
+
+async def test_unhandled_exception_outside_api_stays_plain() -> None:
+    """/api/v1 밖에서는 기본 동작(플레인 500)을 유지합니다."""
+    transport = ASGITransport(app=_crashing_app(), raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/_boom")
+
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"

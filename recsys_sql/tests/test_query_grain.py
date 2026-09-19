@@ -33,6 +33,7 @@ GRAIN: dict[str, tuple[str, ...]] = {
     "bubble_recipe_candidates": ("recipe_id",),
     "fridge_recipe_match": ("recipe_id",),
     "missing_ingredient_products": ("ingredient_id", "product_id"),
+    "missing_products": ("ingredient_id", "product_id"),
     "my_fridge_items": ("product_id",),
     "my_recipe_candidates": ("recipe_id",),
     "product_detail": ("product_id",),
@@ -89,6 +90,12 @@ async def params_for(conn: AsyncConnection, name: str, seeded: SeedIds) -> dict[
         "missing_ingredient_products": {
             "user_id": seeded.user,
             "recipe_id": seeded.tofu_braise,
+            "max_per_ingredient": 50,
+        },
+        "missing_products": {
+            "user_id": seeded.user,
+            "recipe_id": seeded.tofu_braise,
+            "base_product_id": 0,
             "max_per_ingredient": 50,
         },
         "my_fridge_items": {"user_id": seeded.user},
