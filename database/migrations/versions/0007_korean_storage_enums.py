@@ -21,6 +21,7 @@ Revision ID: 0007_korean_storage_enums
 Revises: 0006_bubble_keyword_seed
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0007_korean_storage_enums"
@@ -64,29 +65,32 @@ def _in_list(column: str, values: tuple[str, ...]) -> str:
 
 def upgrade() -> None:
     # CHECK 가 옛 값을 붙들고 있어 UPDATE 보다 먼저 떼어낸다.
-    op.drop_constraint("ck_storage_guideline_location", "storage_guideline", type_="check")
-    op.drop_constraint("ck_storage_guideline_context", "storage_guideline", type_="check")
+    # 초기 Production에는 최초 storage migration이 적용되지 않았다. 그 경로는
+    # 0013에서 최종 스키마로 생성하고, 이미 테이블이 있는 KIPIL만 여기서 값을 변환한다.
+    if sa.inspect(op.get_bind()).has_table("storage_guideline"):
+        op.drop_constraint("ck_storage_guideline_location", "storage_guideline", type_="check")
+        op.drop_constraint("ck_storage_guideline_context", "storage_guideline", type_="check")
 
-    op.execute(_case("storage_location", LOCATIONS).format(table="storage_guideline"))
-    op.execute(_case("storage_context", CONTEXTS).format(table="storage_guideline"))
-    op.execute(_case("duration_unit", DURATION_UNITS).format(table="storage_guideline"))
+        op.execute(_case("storage_location", LOCATIONS).format(table="storage_guideline"))
+        op.execute(_case("storage_context", CONTEXTS).format(table="storage_guideline"))
+        op.execute(_case("duration_unit", DURATION_UNITS).format(table="storage_guideline"))
+
+        op.create_check_constraint(
+            "ck_storage_guideline_location",
+            "storage_guideline",
+            _in_list("storage_location", ("냉장", "냉동", "상온")),
+        )
+        op.create_check_constraint(
+            "ck_storage_guideline_context",
+            "storage_guideline",
+            _in_list("storage_context", ("일반", "구매후", "개봉후", "해동후")),
+        )
+        op.create_check_constraint(
+            "ck_storage_guideline_duration_unit",
+            "storage_guideline",
+            "duration_unit IS NULL OR " + _in_list("duration_unit", ("시간", "일", "주", "개월", "년")),
+        )
     op.execute(_case("storage_type", STORAGE_TYPES).format(table="product"))
-
-    op.create_check_constraint(
-        "ck_storage_guideline_location",
-        "storage_guideline",
-        _in_list("storage_location", ("냉장", "냉동", "상온")),
-    )
-    op.create_check_constraint(
-        "ck_storage_guideline_context",
-        "storage_guideline",
-        _in_list("storage_context", ("일반", "구매후", "개봉후", "해동후")),
-    )
-    op.create_check_constraint(
-        "ck_storage_guideline_duration_unit",
-        "storage_guideline",
-        "duration_unit IS NULL OR " + _in_list("duration_unit", ("시간", "일", "주", "개월", "년")),
-    )
     # product.storage_type 은 아직 비어 있는 행이 1,551 개라 NULL 을 허용한다.
     op.create_check_constraint(
         "ck_product_storage_type",
