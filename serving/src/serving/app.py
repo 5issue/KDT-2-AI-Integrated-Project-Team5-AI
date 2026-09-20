@@ -21,6 +21,7 @@ from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
 from serving.ratelimit import RateLimitMiddleware
+from serving.request_log import RequestLogMiddleware
 from serving.routers import health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
@@ -70,11 +71,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
+    # 나중에 추가한 미들웨어가 바깥에 섭니다. 요청 로그가 429 응답까지 보도록
+    # RequestLog 를 RateLimit 뒤(= 더 바깥)에 둡니다.
     app.add_middleware(
         RateLimitMiddleware,
         default_per_minute=settings.rate_limit_per_minute,
         reco_per_minute=settings.rate_limit_reco_per_minute,
     )
+
+    app.add_middleware(RequestLogMiddleware)
 
     register_exception_handlers(app)
 
