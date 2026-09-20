@@ -164,7 +164,7 @@ child로 올리며, 상세 내용은 바로 다음 절에서 설명한다.
 | 표현 | 처리 위치 |
 | --- | --- |
 | 친환경, 국내산, 한돈, 미국산 | Product 원문 또는 origin 정보 |
-| 냉장, 냉동 | Product 기본 보관 장소 또는 User Fridge 현재 장소 |
+| 냉장, 냉동 | Product 기본 보관 장소 |
 | 500g, 1kg, 2팩 | Product 중량·수량 |
 | 깐, 손질, 절단 | 원문 또는 Product 속성 |
 | 생것, 삶은것 | K-FIND 관측 상태 |
@@ -423,31 +423,30 @@ AND storage_guideline.storage_location = product.storage_type
 
 ### 6.3 마이냉장고 조회
 
-Product의 `storage_type`은 판매 시점의 기본 장소이며, 사용자가 실제로 보관 중인 장소는 아니다.
-사용자가 냉장 상품을 냉동실로 옮길 수 있으므로 현재 장소는 `user_fridge.storage_location`에 둔다.
+MVP에서는 `user_fridge`에 실제 보관 장소를 별도로 저장하지 않는다. 냉장고에 담긴 상품도
+`product.storage_type`을 기본 장소로 사용해 보관 지침을 조회한다.
 
 ```text
-상품 기본: 냉장
-사용자 현재 장소: 냉동
-
+냉장고 상품: 국내산 냉장 삼겹살 500g
 Product.storage_type = 냉장
-User Fridge.storage_location = 냉동
+PRIMARY Ingredient = 돼지고기 > 삼겹살
 
-→ 삼겹살 Ingredient의 냉동 지침 표시
+→ 삼겹살 Ingredient의 냉장 지침 목록 표시
 ```
 
-장소 선택 우선순위는 다음과 같다.
+따라서 My냉장고와 Product 상세는 같은 조회 키를 사용한다.
 
 ```text
-1. user_fridge.storage_location
-   사용자가 현재 장소를 선택한 경우
-
-2. product.storage_type
-   현재 장소가 비어 있을 때 Product 기본 장소 사용
+product_ingredient.role = PRIMARY
+AND storage_guideline.ingredient_id = product_ingredient.ingredient_id
+AND storage_guideline.storage_location = product.storage_type
 ```
 
-이 구조에서는 사용자가 냉장·냉동을 바꿔도 Product 또는 Ingredient 지침을 수정하지 않는다. User
-Fridge의 현재 장소만 바꾸고, 같은 Ingredient의 다른 보관 지침을 조회한다.
+`product.storage_type`과 `storage_guideline.storage_location`은 `0007` migration 이후
+`냉장`, `냉동`, `상온`을 DB 정본 값으로 사용한다. Product의 `storage_type`이 NULL이면
+장소 조건을 생략하고 PRIMARY Ingredient에 연결된 상황별 지침을 조회한다.
+
+사용자별 실제 보관 장소 변경은 이번 MVP 범위에서 다루지 않는다.
 
 ### 6.5 보관법을 보여줄 수 있는 Product 조건
 
