@@ -165,7 +165,5 @@ async def test_fridge_crud_cycle(live_client: AsyncClient) -> None:
     gone = await live_client.delete(f"/api/v1/users/me/fridge/{product_id}", headers=user)
     assert gone.status_code == 404
 
-    patch_gone = await live_client.patch(
-        f"/api/v1/users/me/fridge/{product_id}", headers=user, json={"quantity": 1}
-    )
+    patch_gone = await live_client.patch(f"/api/v1/users/me/fridge/{product_id}", headers=user, json={"quantity": 1})
     assert patch_gone.status_code == 404
