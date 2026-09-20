@@ -101,3 +101,26 @@ async def test_recipe_endpoints_query_runs(live_client: AsyncClient) -> None:
         for item in body["missing_ingredients"]:
             assert {"ingredient_id", "name", "products"} <= set(item)
             assert len(item["products"]) <= 2
+
+
+async def test_bubble_products_query_runs(live_client: AsyncClient) -> None:
+    """버블 -> 상품 추천이 실제 스키마에서 돕니다. 활성 버블 하나로 200 을 요구합니다."""
+    bubbles = await live_client.get("/api/v1/home/bubbles")
+    assert bubbles.status_code == 200
+    enabled = [b for b in bubbles.json()["data"]["items"] if b["enabled"]]
+    if not enabled:
+        pytest.skip("활성 버블이 없습니다")
+
+    response = await live_client.get(
+        "/api/v1/recommendations/products",
+        params={"bubble_id": enabled[0]["bubble_id"], "limit": 5},
+    )
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["bubble"]["id"] == enabled[0]["bubble_id"]
+    for item in body["items"]:
+        assert {"product", "recommendation"} <= set(item)
+        assert item["recommendation"]["score"] >= 0
+
+    missing_bubble = await live_client.get("/api/v1/recommendations/products", params={"bubble_id": "NO_SUCH_BUBBLE"})
+    assert missing_bubble.status_code == 404

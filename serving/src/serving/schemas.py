@@ -361,3 +361,71 @@ class MissingProductsResponse(BaseModel):
                 )
             )
         return cls(recipe_id=recipe_id, missing_ingredients=list(grouped.values()))
+
+
+class BubbleRef(BaseModel):
+    """추천 버블 참조 (명세 14장 bubble 객체)."""
+
+    id: str
+    label: str
+
+
+class RecommendedProduct(BaseModel):
+    """추천 상품 정보 (명세 14장 product 객체). 명세에 없는 컬럼은 내지 않습니다."""
+
+    product_id: int
+    name: str
+    price: float
+    weight_g: int | None = None
+    product_type: str | None = None
+    storage_type: str | None = None
+    origin_country: str | None = None
+    stock_quantity: int | None = None
+
+
+class ProductRecommendationInfo(BaseModel):
+    """추천 근거 (명세 14장 recommendation 객체).
+
+    주문 로그가 아직 없어 score 는 "이 버블의 레시피 중 이 재료를 쓰는 수" 입니다.
+    인기도 원천이 쌓이면 점수 정의를 교체합니다 (필드 계약은 동일).
+    """
+
+    score: float
+    reason: str
+
+
+class BubbleProductItem(BaseModel):
+    """버블 상품 추천 한 건."""
+
+    product: RecommendedProduct
+    recommendation: ProductRecommendationInfo
+
+
+class BubbleProductsResponse(BaseModel):
+    """버블 기반 상품 추천 (명세 14장 data)."""
+
+    bubble: BubbleRef
+    items: list[BubbleProductItem]
+
+    @classmethod
+    def from_rows(cls, bubble_id: str, bubble_label: str, rows: list[dict[str, Any]]) -> BubbleProductsResponse:
+        items = [
+            BubbleProductItem(
+                product=RecommendedProduct(
+                    product_id=row["product_id"],
+                    name=row["name"],
+                    price=float(row["price"]),
+                    weight_g=row["weight_g"],
+                    product_type=row["product_type"],
+                    storage_type=row["storage_type"],
+                    origin_country=row["origin_country"],
+                    stock_quantity=row["stock_quantity"],
+                ),
+                recommendation=ProductRecommendationInfo(
+                    score=float(row["recipe_count"]),
+                    reason=f"이 버블의 레시피 {row['recipe_count']}개에 쓰이는 재료예요",
+                ),
+            )
+            for row in rows
+        ]
+        return cls(bubble=BubbleRef(id=bubble_id, label=bubble_label), items=items)
