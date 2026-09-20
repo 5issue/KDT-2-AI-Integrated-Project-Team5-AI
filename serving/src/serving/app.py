@@ -20,6 +20,7 @@ from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
+from serving.ratelimit import RateLimitMiddleware
 from serving.routers import health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
@@ -68,6 +69,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_methods=["GET"],
             allow_headers=["*"],
         )
+
+    app.add_middleware(
+        RateLimitMiddleware,
+        default_per_minute=settings.rate_limit_per_minute,
+        reco_per_minute=settings.rate_limit_reco_per_minute,
+    )
 
     register_exception_handlers(app)
 

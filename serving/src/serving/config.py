@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    # /api/v1 분당 요청 한도. 0 이면 비활성. 추천 경로는 별도(더 낮은) 한도.
+    # 프로세스별 카운터라 워커 수만큼 배수가 됩니다.
+    rate_limit_per_minute: int = 60
+    rate_limit_reco_per_minute: int = 10
+
     cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
