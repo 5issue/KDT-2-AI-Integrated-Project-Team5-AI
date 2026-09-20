@@ -442,6 +442,10 @@ AND storage_guideline.ingredient_id = product_ingredient.ingredient_id
 AND storage_guideline.storage_location = product.storage_type
 ```
 
+`product.storage_type`과 `storage_guideline.storage_location`은 `0007` migration 이후
+`냉장`, `냉동`, `상온`을 DB 정본 값으로 사용한다. Product의 `storage_type`이 NULL이면
+장소 조건을 생략하고 PRIMARY Ingredient에 연결된 상황별 지침을 조회한다.
+
 사용자별 실제 보관 장소 변경은 이번 MVP 범위에서 다루지 않는다.
 
 ### 6.5 보관법을 보여줄 수 있는 Product 조건

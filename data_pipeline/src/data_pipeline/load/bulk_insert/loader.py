@@ -139,6 +139,11 @@ async def run_load(
             await run_sql_file(conn, settings.sql_dir / name)
             report.applied_sql.append(name)
 
+        review_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM staging_storage_guideline WHERE review_status IS NOT NULL"
+        )
+        report.row_counts["storage_guideline_review"] = int(review_count or 0)
+
         for table in ("ingredient", "recipe", "recipe_ingredient", "storage_guideline"):
             count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
             report.row_counts[table] = int(count or 0)

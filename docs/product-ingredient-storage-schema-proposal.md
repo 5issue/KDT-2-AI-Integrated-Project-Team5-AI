@@ -120,7 +120,8 @@ index가 이미 발견되어도 중단하므로, 수동 schema가 있는 DB는 �
 `source_item_id`는 staging에서만 원천 row를 식별하는 데 사용하고, 최종
 `storage_guideline`에는 저장하지 않는다. 여러 FoodKeeper 원천 variant는 staging에서
 `(ingredient_id, storage_location, storage_context)`별로 그룹화한다. 기간 정보가 서로 다르면
-자동 병합하지 않고 검토 대상으로 분리하며, 동일한 기간이면 대표 1건만 최종 적재한다.
+자동 병합하지 않고 staging 행에 `PERIOD_CONFLICT` 상태와 충돌 기간 수를 기록하며,
+동일한 기간이면 대표 1건만 최종 적재한다.
 `source_slot`은 최종 행에 보존하고, 장소와 상황은 정해진 규칙으로 파생한다.
 
 하나의 Ingredient·장소·상황에 여러 FoodKeeper 원천이 매핑될 수 있으므로 원천 variant는 staging에서
@@ -130,14 +131,13 @@ index가 이미 발견되어도 중단하므로, 수동 schema가 있는 DB는 �
 
 | source slot | 장소 | 상황 |
 | --- | --- | --- |
-| `pantry`, `refrigerate`, `freeze` | `PANTRY`, `REFRIGERATOR`, `FREEZER` | `NOT_APPLICABLE` |
-| `dop_pantry`, `dop_refrigerate`, `dop_freeze` | `PANTRY`, `REFRIGERATOR`, `FREEZER` | `FROM_PURCHASE` |
-| `pantry_after_opening`, `refrigerate_after_opening` | `PANTRY`, `REFRIGERATOR` | `AFTER_OPENING` |
-| `refrigerate_after_thawing` | `REFRIGERATOR` | `AFTER_THAWING` |
+| `pantry`, `refrigerate`, `freeze` | `상온`, `냉장`, `냉동` | `일반` |
+| `dop_pantry`, `dop_refrigerate`, `dop_freeze` | `상온`, `냉장`, `냉동` | `구매후` |
+| `pantry_after_opening`, `refrigerate_after_opening` | `상온`, `냉장` | `개봉후` |
+| `refrigerate_after_thawing` | `냉장` | `해동후` |
 
-`storage_location`과 `storage_context`는 DB·loader·조회 쿼리에서 위 영문 code를 canonical
-값으로 사용한다. API나 UI에서 사용자에게 표시할 때만 `REFRIGERATOR → 냉장`,
-`FREEZER → 냉동`, `PANTRY → 상온`처럼 label을 매핑한다.
+`storage_location`과 `storage_context`는 `0007` migration 이후 DB·loader·조회 쿼리에서
+위 한국어 값을 정본으로 사용한다. `source_slot`만 FoodKeeper 원천 식별자로 보존한다.
 
 ## User Fridge: 이번 ERD 변경 제안
 

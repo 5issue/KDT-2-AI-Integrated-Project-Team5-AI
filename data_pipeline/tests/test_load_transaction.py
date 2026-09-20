@@ -88,7 +88,21 @@ def synthetic_rows(ingredient_id: int) -> StagingRows:
                 "개월",
                 "구매 후 1-2개월",
                 "서늘하게",
-            )
+            ),
+            (
+                "pytest_item_2",
+                "Test Food Variant",
+                None,
+                "테스트재료",
+                "dop_refrigerate",
+                "냉장",
+                "구매후",
+                Decimal("1.00"),
+                Decimal("2.00"),
+                "개월",
+                "구매 후 1-2개월",
+                None,
+            ),
         ],
     )
 
@@ -209,6 +223,48 @@ async def test_full_load_sql_runs_against_live_schema() -> None:
             ingredient_id,
         )
         assert storage_guideline_count_after == storage_guideline_count_before
+
+
+async def test_storage_period_conflicts_are_routed_to_review() -> None:
+    """같은 조회 키의 기간이 다르면 대표값을 고르지 않고 staging 검토 대상으로 남깁니다."""
+    settings = get_settings()
+    with pytest.raises(RollbackError):
+        async with load_connection_scope(settings) as conn:
+            ingredient_id = await conn.fetchval("SELECT ingredient_id FROM ingredient ORDER BY ingredient_id LIMIT 1")
+            assert ingredient_id is not None, "ingredient 마스터가 비어 있습니다."
+
+            await run_sql_file(conn, settings.sql_dir / SQL_STEPS[0])
+            await conn.execute(
+                "TRUNCATE staging_recipe, staging_recipe_step, staging_recipe_ingredient, "
+                "staging_storage_guideline, staging_ingredient_match"
+            )
+            rows = synthetic_rows(int(ingredient_id))
+            conflicting = list(rows.storage[1])
+            conflicting[7] = Decimal("3.00")
+            conflicting[8] = Decimal("4.00")
+            conflicting[10] = "구매 후 3-4개월"
+            rows.storage[1] = tuple(conflicting)
+            await copy_staging(conn, rows, chunk_size=100)
+
+            before = await conn.fetchval(
+                "SELECT COUNT(*) FROM storage_guideline "
+                "WHERE ingredient_id = $1 AND storage_location = '냉장' AND storage_context = '구매후'",
+                ingredient_id,
+            )
+            await run_sql_file(conn, settings.sql_dir / "004_insert_storage_guideline.sql")
+            after = await conn.fetchval(
+                "SELECT COUNT(*) FROM storage_guideline "
+                "WHERE ingredient_id = $1 AND storage_location = '냉장' AND storage_context = '구매후'",
+                ingredient_id,
+            )
+            reviews = await conn.fetch(
+                "SELECT review_status, review_detail FROM staging_storage_guideline ORDER BY source_item_id"
+            )
+
+            assert after == before
+            assert [row["review_status"] for row in reviews] == ["PERIOD_CONFLICT", "PERIOD_CONFLICT"]
+            assert all("서로 다른 기간 2개" in row["review_detail"] for row in reviews)
+            raise RollbackError
 
 
 async def test_apply_stock_skips_products_it_does_not_own() -> None:
