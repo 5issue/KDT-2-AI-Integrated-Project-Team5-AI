@@ -60,7 +60,7 @@ Base URL: `/api/v1`
 | Index | 기능 | 메서드 | 경로 | 상태 |
 | --- | --- | --- | --- | --- |
 | HOME-01 | 홈 버블 목록 | GET | `/home/bubbles` | 구현됨 |
-| RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 기획 |
+| RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 구현됨 |
 | RECO-02 | My냉장고 기반 레시피 추천 | GET | `/recommendations/my-recipes` | 구현됨 |
 | PROD-01 | 상품 상세 | GET | `/products/{product_id}` | 구현됨 |
 | PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{product_id}/recipes` | 구현됨 |
@@ -82,6 +82,9 @@ Base URL: `/api/v1`
 - `PROD-03` 응답은 명세 22장과 다릅니다. 원천(FoodKeeper)에 `temperature_min/max`,
   `instruction_text` 가 없고 `tips` 는 단일 텍스트입니다. 같은 상품에 (보관 장소,
   상황)별 지침이 여러 개라 `items[]` 목록으로 냅니다. 명세 수정 협의가 필요합니다.
+- `RECO-01` 의 `recommendation.score` 는 현재 "그 버블의 후보 레시피 중 이 재료를
+  쓰는 수" 입니다. 주문 로그가 쌓이면 인기도 점수로 교체합니다 (필드 계약 동일).
+  존재하지 않는 `bubble_id` 는 404 입니다.
 - `HOME-01` 버블은 후보 레시피 수가 하한 미달이면 `enabled=false` 로 내려갑니다.
   `type` 은 현재 `RECIPE` 고정입니다.
 - `RECIPE-01` 의 `nutrition` 은 원본(jsonb) 키를 그대로 냅니다 (`protein_g`,
