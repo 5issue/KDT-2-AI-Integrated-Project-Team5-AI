@@ -79,8 +79,16 @@ PR #10의 `0005_product_ingredient_storage_alignment`는 번호 재배치 과정
 | 없는 부모를 가리키기 | ForeignKeyViolation으로 차단 |
 | 음수 재고 | CheckViolation으로 차단 |
 | `source_identity_key` 중복 | UniqueViolation으로 차단 |
+| 자식을 부모보다 먼저 INSERT (평소) | ForeignKeyViolation으로 차단 |
+| 자식을 부모보다 먼저 INSERT (`SET CONSTRAINTS ALL DEFERRED`) | 커밋 시점 검사로 통과 |
 
 적용 전 위반은 양쪽 DB 모두 0건이었다. 차단 확인은 트랜잭션 안에서 시도하고 롤백했다.
+
+`fk_ingredient_parent`는 처음에 NOT DEFERRABLE로 걸었다가 같은 날 `downgrade 0013` →
+`upgrade head`로 DEFERRABLE INITIALLY IMMEDIATE로 다시 걸었다. 카탈로그 승격의 COPY는 물리
+순서로 나가서 자식이 부모보다 먼저 올 수 있는데, 즉시 검사면 그 자리에서 죽는다. 지금은 22개
+자식 행 전부 부모 뒤에 있어 우연히 통과하지만 UPDATE 한 번이면 순서가 바뀐다. 승격 스크립트는
+복원 트랜잭션 안에서 `SET CONSTRAINTS ALL DEFERRED`를 건다.
 
 ## 되감을 때
 

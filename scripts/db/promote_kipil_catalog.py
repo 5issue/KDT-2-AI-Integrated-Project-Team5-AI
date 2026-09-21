@@ -192,6 +192,9 @@ def _write_prefix(handle: TextIO, backup_schema: str) -> None:
     """
     locked = ", ".join(f'public."{table}"' for table in WIPED_TABLES)
     handle.write(f"LOCK TABLE {locked} IN ACCESS EXCLUSIVE MODE;\n")
+    # pg_dump 의 COPY 는 물리 순서로 나가서 자식 행이 부모보다 먼저 올 수 있습니다.
+    # ingredient 의 self FK 처럼 DEFERRABLE 한 제약은 커밋 시점에 한 번에 검사합니다.
+    handle.write("SET CONSTRAINTS ALL DEFERRED;\n")
     for table in MUST_BE_EMPTY:
         handle.write(
             "DO $$ DECLARE n bigint; BEGIN "

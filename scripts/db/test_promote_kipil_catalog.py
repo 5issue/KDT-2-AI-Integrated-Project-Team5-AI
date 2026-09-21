@@ -86,3 +86,14 @@ def test_orders_are_rechecked_after_locking() -> None:
     lock_at = text.index("LOCK TABLE ")
     for table in MUST_BE_EMPTY:
         assert text.index(f"RAISE EXCEPTION '대상 DB의 {table}") > lock_at
+
+
+def test_constraints_are_deferred_inside_the_restore_transaction() -> None:
+    """COPY 순서가 부모·자식을 보장하지 않으므로 self FK 검사를 커밋 시점으로 미룹니다."""
+    script = io.StringIO()
+
+    _write_prefix(script, "backup_schema")
+    text = script.getvalue()
+
+    assert "SET CONSTRAINTS ALL DEFERRED;" in text
+    assert text.index("SET CONSTRAINTS ALL DEFERRED;") < text.index("TRUNCATE TABLE ")

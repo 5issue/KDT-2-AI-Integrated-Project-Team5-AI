@@ -7,12 +7,18 @@
 컬럼은 손으로 먼저 들어가 있어서 조회는 되지만 제약이 없다. 그래서 지금은
 
 - `parent_ingredient_id` 가 없는 재료를 가리켜도 막히지 않는다. 계층 확장 쿼리가
-  `WITH RECURSIVE` 로 부모를 따라가므로 순환이 생기면 쿼리가 끝나지 않는다.
+  `WITH RECURSIVE` 로 부모를 따라가므로 고아 id 가 보유 재료 집합에 섞여 들어간다.
+  (순환은 `UNION` 이 중복을 걷어내므로 종료된다. 무한 루프 위험은 아니다.)
 - `(source_type, source_product_id)` 와 `source_identity_key` 에 UNIQUE 가 없다.
   멱등 적재가 기대는 자연키가 DB 에 없는 상태다.
 
 `storage_type` CHECK 는 0007 이 이미 만들었으므로 여기서 다시 만들지 않는다.
 `sku` 의 NULL 허용은 이미 반영되어 있다.
+
+self FK 는 DEFERRABLE 로 둔다. 카탈로그 승격이 `pg_dump --data-only` 의 COPY 를 붓는데,
+COPY 는 물리 순서로 나가므로 자식이 부모보다 먼저 올 수 있다. 즉시 검사면 그 자리에서
+죽는다. 평소에는 즉시 검사(INITIALLY IMMEDIATE)하고, 복원 트랜잭션에서만
+`SET CONSTRAINTS ALL DEFERRED` 로 커밋 시점까지 미룬다.
 
 Revision ID: 0014_alignment_constraints
 Revises: 0013_storage_bootstrap
@@ -89,6 +95,8 @@ def upgrade() -> None:
         ["parent_ingredient_id"],
         ["ingredient_id"],
         ondelete="RESTRICT",
+        deferrable=True,
+        initially="IMMEDIATE",
     )
     # 자식에서 부모로 올라가는 계층 확장이 이 인덱스를 쓴다.
     op.create_index("idx_ingredient_parent", "ingredient", ["parent_ingredient_id"])
