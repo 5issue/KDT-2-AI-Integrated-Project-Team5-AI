@@ -16,6 +16,7 @@ from collections import defaultdict, deque
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp
 
 from serving.constants import API_PREFIX
 from serving.envelope import ApiResponse, ErrorCode
@@ -65,7 +66,7 @@ class SlidingWindowLimiter:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """/api/v1 요청에 한도를 적용합니다. 한도 0 은 비활성입니다."""
 
-    def __init__(self, app, default_per_minute: int, reco_per_minute: int) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, app: ASGIApp, default_per_minute: int, reco_per_minute: int) -> None:
         super().__init__(app)
         self._default = SlidingWindowLimiter(default_per_minute) if default_per_minute > 0 else None
         self._reco = SlidingWindowLimiter(reco_per_minute) if reco_per_minute > 0 else None
@@ -75,7 +76,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not (path == API_PREFIX or path.startswith(f"{API_PREFIX}/")):
             return await call_next(request)
 
-        limiter = self._reco if path.startswith(RECO_PREFIX) and self._reco else self._default
+        # 추천 한도 0 은 "별도 한도 없음"이라 기본 한도로 내려갑니다 (완전 면제가 아님).
+        is_reco = path == RECO_PREFIX or path.startswith(f"{RECO_PREFIX}/")
+        limiter = self._reco if is_reco and self._reco else self._default
         if limiter is None:
             return await call_next(request)
 
