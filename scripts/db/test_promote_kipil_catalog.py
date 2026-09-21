@@ -19,17 +19,20 @@ from scripts.db.promote_kipil_catalog import (
 
 
 def test_production_apply_requires_exact_confirmation() -> None:
+    """Production 쓰기에는 확인 문자열이 정확히 일치해야 합니다."""
     with pytest.raises(ValueError, match="Production 적용"):
         validate_confirmation("production", True, None)
     validate_confirmation("production", True, PRODUCTION_CONFIRMATION)
 
 
 def test_dry_run_does_not_require_confirmation() -> None:
+    """읽기만 하는 dry-run 은 확인 문자열 없이 돕니다."""
     validate_confirmation("production", False, None)
     validate_confirmation("local", False, None)
 
 
 def test_localhost_is_rewritten_only_for_docker_target() -> None:
+    """컨테이너에서 로컬 DB 에 닿아야 할 때만 호스트를 바꿉니다."""
     url = "postgresql://user:password@127.0.0.1:55433/database"
 
     assert parse_connection(url).host == "127.0.0.1"
@@ -37,6 +40,7 @@ def test_localhost_is_rewritten_only_for_docker_target() -> None:
 
 
 def test_percent_encoded_credentials_are_decoded() -> None:
+    """URL 인코딩된 비밀번호를 원래 값으로 되돌려 넘깁니다."""
     parsed = parse_connection("postgresql://user:p%40ss@db.example.com/database")
 
     assert parsed.password == "p@ss"
