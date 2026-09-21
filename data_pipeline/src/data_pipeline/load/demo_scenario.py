@@ -117,42 +117,43 @@ def config_version(*paths: Path) -> str:
     return digest.hexdigest()[:12]
 
 
-def load_recipes(path: Path = RECIPES_CSV) -> list[DemoRecipe]:
-    """확정 레시피 목록을 읽습니다."""
+def _read_rows(path: Path) -> list[dict[str, str]]:
+    """CSV 를 읽어 값을 다듬습니다. 빈 파일은 설정 실수이므로 멈춥니다."""
     with path.open(encoding="utf-8", newline="") as handle:
-        rows = [
-            DemoRecipe(
-                source_type=row["source_type"].strip(),
-                source_recipe_id=row["source_recipe_id"].strip(),
-                expected_name=row["expected_name"].strip(),
-                refresh_cycle=int(row["refresh_cycle"]),
-                display_order=int(row["display_order"]),
-                is_purchase_flow=row["is_purchase_flow_ready"].strip().lower() == "true",
-            )
-            for row in csv.DictReader(handle)
-        ]
+        rows = [{key: (value or "").strip() for key, value in row.items()} for row in csv.DictReader(handle)]
     if not rows:
         raise ValueError(f"{path.name} 이 비었습니다.")
     return rows
+
+
+def load_recipes(path: Path = RECIPES_CSV) -> list[DemoRecipe]:
+    """확정 레시피 목록을 읽습니다."""
+    return [
+        DemoRecipe(
+            source_type=row["source_type"],
+            source_recipe_id=row["source_recipe_id"],
+            expected_name=row["expected_name"],
+            refresh_cycle=int(row["refresh_cycle"]),
+            display_order=int(row["display_order"]),
+            is_purchase_flow=row["is_purchase_flow_ready"].lower() == "true",
+        )
+        for row in _read_rows(path)
+    ]
 
 
 def load_products(path: Path = PRODUCTS_CSV) -> list[DemoProduct]:
     """데모 상품 목록을 읽습니다."""
-    with path.open(encoding="utf-8", newline="") as handle:
-        rows = [
-            DemoProduct(
-                role=row["role"].strip(),
-                source_type=row["source_type"].strip(),
-                source_product_id=row["source_product_id"].strip(),
-                expected_name=row["expected_name"].strip(),
-                expected_ingredient=row["expected_ingredient"].strip(),
-                expected_parent_ingredient=(row["expected_parent_ingredient"] or "").strip() or None,
-            )
-            for row in csv.DictReader(handle)
-        ]
-    if not rows:
-        raise ValueError(f"{path.name} 이 비었습니다.")
-    return rows
+    return [
+        DemoProduct(
+            role=row["role"],
+            source_type=row["source_type"],
+            source_product_id=row["source_product_id"],
+            expected_name=row["expected_name"],
+            expected_ingredient=row["expected_ingredient"],
+            expected_parent_ingredient=row["expected_parent_ingredient"] or None,
+        )
+        for row in _read_rows(path)
+    ]
 
 
 def purchase_flow_recipe(recipes: list[DemoRecipe]) -> DemoRecipe:
@@ -348,21 +349,20 @@ async def upsert_priority(conn: asyncpg.Connection, recipe_id: int, missing_rows
 
 
 async def held_ingredients(conn: asyncpg.Connection) -> set[int]:
-    """냉장고 상품의 PRIMARY 재료와 그 부모까지 보유로 봅니다. 추천 SQL 과 같은 규칙입니다."""
+    """냉장고 상품의 PRIMARY 재료와 그 부모(1단계)를 보유로 봅니다. 추천 SQL 과 같은 규칙입니다."""
     rows = await conn.fetch(
         """
-        WITH RECURSIVE fridge(ingredient_id) AS (
-            SELECT DISTINCT pi.ingredient_id
-            FROM user_fridge uf
-            JOIN product_ingredient pi ON pi.product_id = uf.product_id AND pi.role = 'PRIMARY'
-            WHERE uf.user_id = $1 AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
-            UNION
-            SELECT i.parent_ingredient_id
-            FROM fridge f
-            JOIN ingredient i ON i.ingredient_id = f.ingredient_id
-            WHERE i.parent_ingredient_id IS NOT NULL
-        )
-        SELECT ingredient_id FROM fridge
+        SELECT pi.ingredient_id
+        FROM user_fridge uf
+        JOIN product_ingredient pi ON pi.product_id = uf.product_id AND pi.role = 'PRIMARY'
+        WHERE uf.user_id = $1 AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+        UNION
+        SELECT i.parent_ingredient_id
+        FROM user_fridge uf
+        JOIN product_ingredient pi ON pi.product_id = uf.product_id AND pi.role = 'PRIMARY'
+        JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
+        WHERE uf.user_id = $1 AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+          AND i.parent_ingredient_id IS NOT NULL
         """,
         DEMO_USER_ID,
     )
@@ -443,6 +443,14 @@ async def verify(
     by_product = {row["product_id"]: row["recommendation_priority"] for row in priorities}
     all_hundred = all(by_product.get(row["product_id"]) == REPRESENTATIVE_PRIORITY for row in missing_rows)
     checks.append(("대표 상품 우선순위가 100", all_hundred, f"{sorted(by_product.items())}"))
+
+    # 추천 SQL 은 부모를 1단계만 본다. 손자가 생기면 그 재료의 조부모 요구는 조용히 부족으로 남는다.
+    deep = await conn.fetchval(
+        "SELECT count(*) FROM ingredient child "
+        "JOIN ingredient parent ON parent.ingredient_id = child.parent_ingredient_id "
+        "WHERE parent.parent_ingredient_id IS NOT NULL"
+    )
+    checks.append(("재료 계층이 1단계를 넘지 않음", deep == 0, f"2단계 이상 {deep}건"))
 
     return checks
 
