@@ -33,6 +33,55 @@ uv run alembic -c database/alembic.ini stamp 0001_baseline
 uv run alembic -c database/alembic.ini upgrade head
 ```
 
+## 사라진 정합화 migration과 0014
+
+`0001_baseline`은 빈 revision이다. 저장소에는 base schema를 만드는 DDL이 없고, 손으로 만든
+Production의 표 15개가 시작점이라고 선언만 한다. 그래서 alembic 이력은 실제 DB보다 항상 덜
+말한다. 아래 문제도 여기서 나왔다.
+
+PR #10의 `0005_product_ingredient_storage_alignment`는 번호 재배치 과정에서 파일이 옮겨지지
+않고 `0012_storage_guideline_service_key`로 대체됐다. `0012`에는 Storage Guideline의 서비스
+자연키 투영만 남았고 나머지는 사라졌다.
+
+| `0005`가 하던 일 | `0012`에 남았나 | 복구 |
+| --- | :---: | --- |
+| `create_table(storage_guideline)` | X | `0013` |
+| ingredient `source_identity_key` UNIQUE, `parent_ingredient_id` self FK | X | `0014` |
+| product `(source_type, source_product_id)` UNIQUE, 재고 CHECK | X | `0014` |
+| product `sku` NULL 허용 | — | 이미 반영됨 |
+| product `storage_type` CHECK | — | `0007`이 만듦 |
+| user_fridge `ingredient_id` 삭제, PK 변경 | X | **미착수** |
+| Storage Guideline 서비스 자연키 투영 | O | — |
+
+컬럼은 손으로 먼저 들어가 있어 조회는 됐지만 제약이 없었다. baseline이 갖고 있던 상품 식별
+장치는 `uq_product_sku` 하나인데, `sku`가 NULL인 상품이 2,554개 중 1,111개라 절반 가까이
+아무 유일성도 없었다. `source_identity_key`는 NOT NULL인데 UNIQUE가 없어 이름과 달리 정체성을
+보장하지 않았다.
+
+`0014`는 제약을 걸기 전에 위반 건수를 세고 멈춘다. 원본의 중복 검사는 `GROUP BY`가 NULL을 한
+묶음으로 세어 NULL이 둘만 있어도 걸렸는데, UNIQUE는 NULL을 여러 개 허용하므로 검사에서 뺐다.
+
+`user_fridge`는 이 migration에 넣지 않는다. `ingredient_id`를 읽는 쿼리는 없지만 쓰는 쪽이
+`serving`, `data_pipeline`, `recsys_sql` 테스트에 걸쳐 있고 API의 품목 식별자와도 얽힌다.
+별도 PR로 다룬다.
+
+## 2026-09-21 적용 결과
+
+```
+0013_storage_bootstrap -> 0014_alignment_constraints -> 0015_product_image_url (head)
+```
+
+| 확인 | 결과 |
+| --- | --- |
+| `uq_ingredient_source_identity` / `fk_ingredient_parent` / `idx_ingredient_parent` | 생성됨 |
+| `uq_product_source` / `ck_product_stock_nonnegative` | 생성됨 |
+| `product.image_url` | 추가됨 |
+| 없는 부모를 가리키기 | ForeignKeyViolation으로 차단 |
+| 음수 재고 | CheckViolation으로 차단 |
+| `source_identity_key` 중복 | UniqueViolation으로 차단 |
+
+적용 전 위반은 양쪽 DB 모두 0건이었다. 차단 확인은 트랜잭션 안에서 시도하고 롤백했다.
+
 ## 되감을 때
 
 `upgrade`는 표가 있으면 건너뛰는데 `downgrade`가 있으면 지우면, 만든 적 없는 revision이 남의
