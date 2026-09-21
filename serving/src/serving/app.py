@@ -9,6 +9,7 @@ DATABASE_URL 이 없으면 풀 없이 뜹니다. 그래야 DB 없이도 앱을 �
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -30,7 +31,9 @@ logger = logging.getLogger("serving")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """앱이 뜰 때 풀을 만들고 내려갈 때 정리합니다."""
-    settings: Settings = get_settings()
+    # create_app 에 주입된 설정을 씁니다. get_settings() 를 다시 읽으면
+    # 테스트나 팩토리에서 넘긴 설정(종료 유예 0 등)이 무시됩니다.
+    settings: Settings = getattr(app.state, "settings", None) or get_settings()
     app.state.pool = None
 
     try:
@@ -48,6 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # EKS 스팟 회수 등으로 SIGTERM 을 받으면 uvicorn 이 처리 중 요청을 끝낸 뒤
         # 여기로 들어옵니다. 시작/완료를 로그로 남겨 강제 종료(로그 없음)와 구분합니다.
         logger.info("graceful shutdown 시작 - 처리 중 요청 완료됨, 리소스 정리")
+        # SIGTERM 은 ALB 의 타깃 제외보다 먼저 도착합니다. 제외가 전파될 때까지
+        # 기다렸다가 정리해야 그 사이 들어온 요청이 502 로 끊기지 않습니다.
+        if settings.shutdown_delay_seconds > 0:
+            await asyncio.sleep(settings.shutdown_delay_seconds)
         if app.state.pool is not None:
             await app.state.pool.close()
             app.state.pool = None
@@ -66,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if settings.docs_url else None,
         lifespan=lifespan,
     )
+    app.state.settings = settings
 
     if settings.cors_allow_origins:
         app.add_middleware(

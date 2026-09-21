@@ -109,7 +109,7 @@ async def test_lifespan_logs_graceful_shutdown(caplog: pytest.LogCaptureFixture)
     from serving.app import create_app
     from serving.config import Settings
 
-    app = create_app(Settings(_env_file=None))  # type: ignore[call-arg]
+    app = create_app(Settings(_env_file=None, shutdown_delay_seconds=0))  # type: ignore[call-arg]
     with caplog.at_level("INFO", logger="serving"):
         async with app.router.lifespan_context(app):
             pass
@@ -117,3 +117,22 @@ async def test_lifespan_logs_graceful_shutdown(caplog: pytest.LogCaptureFixture)
     messages = [r.getMessage() for r in caplog.records if r.name == "serving"]
     assert any("graceful shutdown 시작" in m for m in messages)
     assert any("graceful shutdown 완료" in m for m in messages)
+
+
+async def test_shutdown_waits_for_lb_deregistration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """종료 유예가 설정되면 리소스 정리 전에 그만큼 대기합니다 (ALB 제외 전파 대기, 502 방지)."""
+    import serving.app as app_module
+    from serving.app import create_app
+    from serving.config import Settings
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(app_module.asyncio, "sleep", fake_sleep)
+    app = create_app(Settings(_env_file=None, shutdown_delay_seconds=5))  # type: ignore[call-arg]
+    async with app.router.lifespan_context(app):
+        pass
+
+    assert slept == [5.0]
