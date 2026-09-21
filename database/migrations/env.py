@@ -10,9 +10,8 @@
 이 저장소는 루트 `.env` 를 두지 않고 폴더별 `.env` 만 쓴다(루트 `.env.example` 참고).
 그래서 루트만 보면 아무 데서도 값을 찾지 못한다. 3번이 그 경우를 받는다.
 
-DDL 은 pooler 가 아니라 direct 엔드포인트로 거는 편이 안전하므로
-`DATABASE_URL_DIRECT` 가 있으면 그쪽을 먼저 쓴다. 없으면 `DATABASE_URL` 을 쓴다.
-
+기본값은 `DATABASE_URL_DIRECT`(있을 때) 또는 `DATABASE_URL`이다. 임시 Neon 브랜치를
+검증할 때만 `DATABASE_URL_ENV_KEY`로 다른 환경변수 키를 명시한다.
 production 브랜치에 실수로 적용하지 않도록, 엔드포인트를 확인하고 싶으면
 `ALEMBIC_ALLOWED_HOST_PREFIX` 환경변수에 접두사를 지정한다.
 """
@@ -42,10 +41,15 @@ for candidate in (
     if candidate.exists():
         load_dotenv(candidate)
 
-database_url = os.getenv("DATABASE_URL_DIRECT") or os.getenv("DATABASE_URL")
+database_url_env_key = os.getenv("DATABASE_URL_ENV_KEY", "DATABASE_URL")
+database_url = (
+    os.getenv(database_url_env_key)
+    if database_url_env_key != "DATABASE_URL"
+    else os.getenv("DATABASE_URL_DIRECT") or os.getenv("DATABASE_URL")
+)
 if not database_url:
     raise RuntimeError(
-        "DATABASE_URL 이 없다. 저장소 루트의 .env 또는 data_pipeline/.env 를 확인한다. 환경변수로 직접 넘겨도 된다."
+        f"{database_url_env_key} 이(가) 없다. database/.env, 저장소 루트 .env 또는 data_pipeline/.env 를 확인한다."
     )
 
 allowed_prefix = os.getenv("ALEMBIC_ALLOWED_HOST_PREFIX")

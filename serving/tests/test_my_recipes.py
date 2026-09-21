@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -18,7 +19,7 @@ PATH = "/api/v1/recommendations/my-recipes"
 USER_HEADER = {"X-User-Id": "1"}
 
 
-def _sample_row() -> dict:
+def _sample_row() -> dict[str, Any]:
     """my_recipe_candidates 쿼리가 내는 행 모양. jsonb 는 asyncpg 기본 설정에서 str 로 옵니다."""
     return {
         "recipe_id": 1001,

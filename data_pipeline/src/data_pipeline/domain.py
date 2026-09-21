@@ -85,8 +85,8 @@ recipe_ingredient
   quantity numeric(10,3) / unit varchar(30) / is_required bool 필수 / purpose varchar(50)
 
 storage_guideline
-  자연키 (ingredient_id, source_item_id, source_slot, storage_location, storage_context)
-  source_item_id text 필수 / source_food_name text 필수 / source_food_subtitle text
+  자연키 (ingredient_id, storage_location, storage_context)
+  source_food_name text 필수 / source_food_subtitle text
   source_slot text 필수, 아래 9개 중 하나만 허용:
     pantry, dop_pantry, pantry_after_opening,
     refrigerate, dop_refrigerate, refrigerate_after_opening, refrigerate_after_thawing,

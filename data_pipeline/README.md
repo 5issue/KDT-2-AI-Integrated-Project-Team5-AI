@@ -239,12 +239,12 @@ uv run alembic -c database/alembic.ini current
 uv run alembic -c database/alembic.ini upgrade head
 ```
 
-`database/migrations/env.py` 는 프로세스 환경변수 -> 루트 `.env` -> `data_pipeline/.env`
-순으로 접속 정보를 찾고, `DATABASE_URL_DIRECT` 가 있으면 그쪽을 먼저 씁니다.
-DDL 은 pooler 가 아니라 direct 로 거는 편이 안전하기 때문입니다.
+`database/migrations/env.py` 는 프로세스 환경변수 -> `database/.env` -> 루트 `.env` ->
+`data_pipeline/.env` 순으로 접속 정보를 찾습니다. 기본으로 `DATABASE_URL_DIRECT`(있을 때) 또는
+`DATABASE_URL`을 쓰며, 임시 Neon 브랜치를 검증할 때만 `DATABASE_URL_ENV_KEY`로 대상 키를 지정합니다.
 
 `sql/002~005` 의 `ON CONFLICT` 는 실제 스키마에 이미 있는 유니크 제약을 씁니다
-(`recipe_source_unique_idx`, `uq_storage_guideline_source_rule`). 없으면 `load` 가 먼저 막습니다.
+(`recipe_source_unique_idx`, `uq_storage_guideline_query`). 없으면 `load` 가 먼저 막습니다.
 
 ## 테스트
 

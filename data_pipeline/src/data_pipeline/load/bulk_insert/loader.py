@@ -34,7 +34,7 @@ from data_pipeline.load.bulk_insert.models import (
 REQUIRED_INDEXES = (
     "recipe_source_unique_idx",
     "uq_ingredient_source_identity_key",
-    "uq_storage_guideline_source_rule",
+    "uq_storage_guideline_query",
 )
 
 SQL_STEPS = (
@@ -138,6 +138,11 @@ async def run_load(
         for name in SQL_STEPS[1:]:
             await run_sql_file(conn, settings.sql_dir / name)
             report.applied_sql.append(name)
+
+        review_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM staging_storage_guideline WHERE review_status IS NOT NULL"
+        )
+        report.row_counts["storage_guideline_review"] = int(review_count or 0)
 
         for table in ("ingredient", "recipe", "recipe_ingredient", "storage_guideline"):
             count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")

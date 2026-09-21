@@ -74,10 +74,14 @@ async def test_anonymous_user_gets_full_missing_list(db_conn: AsyncConnection, s
 
 
 async def test_pantry_is_never_missing_even_for_anonymous(db_conn: AsyncConnection, seeded: SeedIds) -> None:
-    """상비재료(소금)는 비로그인이어도 부족으로 치지 않습니다."""
+    """상비재료(소금)는 비로그인이어도 부족으로 치지 않습니다.
+
+    시드에서 소금은 pork_grill 에만 들어 있으므로 그 레시피를 봐야
+    NOT is_pantry 분기가 실제로 검증됩니다.
+    """
     anonymous = await fetch(
         db_conn,
-        {"user_id": 0, "recipe_id": seeded.kimchi_stew, "base_product_id": 0, "max_per_ingredient": 3},
+        {"user_id": 0, "recipe_id": seeded.pork_grill, "base_product_id": 0, "max_per_ingredient": 3},
     )
 
     assert seeded.salt not in {row["ingredient_id"] for row in anonymous}

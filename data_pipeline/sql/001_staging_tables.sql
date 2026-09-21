@@ -58,8 +58,14 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_storage_guideline (
     duration_unit        TEXT,
     duration_text        TEXT NOT NULL,
     storage_tips         TEXT,
+    review_status        TEXT,
+    review_detail        TEXT,
     PRIMARY KEY (source_item_id, source_slot)
 );
+
+ALTER TABLE staging_storage_guideline
+    ADD COLUMN IF NOT EXISTS review_status TEXT,
+    ADD COLUMN IF NOT EXISTS review_detail TEXT;
 
 -- 3단계 결과. 정확 일치와 LLM 매칭이 method 로 구분됩니다.
 CREATE UNLOGGED TABLE IF NOT EXISTS staging_ingredient_match (

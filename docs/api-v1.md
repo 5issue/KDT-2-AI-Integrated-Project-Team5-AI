@@ -60,17 +60,17 @@ Base URL: `/api/v1`
 | Index | 기능 | 메서드 | 경로 | 상태 |
 | --- | --- | --- | --- | --- |
 | HOME-01 | 홈 버블 목록 | GET | `/home/bubbles` | 구현됨 |
-| RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 기획 |
+| RECO-01 | 버블 기반 상품 추천 | GET | `/recommendations/products` | 구현됨 |
 | RECO-02 | My냉장고 기반 레시피 추천 | GET | `/recommendations/my-recipes` | 구현됨 |
-| PROD-01 | 상품 상세 | GET | `/products/{productId}` | 구현됨 |
-| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{productId}/recipes` | 구현됨 |
-| PROD-03 | 상품 보관 가이드 | GET | `/products/{productId}/storage-guide` | 구현됨 (명세 조정 필요) |
-| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipeId}` | 구현됨 (명세 조정 필요) |
-| RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipeId}/missing-products` | 구현됨 (18장 통합) |
-| FRIDGE-01 | My냉장고 품목 목록 | GET | `/users/me/fridge` | 기획 |
-| FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 기획 |
-| FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{fridgeItemId}` | 기획 |
-| FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{fridgeItemId}` | 기획 |
+| PROD-01 | 상품 상세 | GET | `/products/{product_id}` | 구현됨 |
+| PROD-02 | 상품으로 만들 수 있는 레시피 | GET | `/products/{product_id}/recipes` | 구현됨 |
+| PROD-03 | 상품 보관 가이드 | GET | `/products/{product_id}/storage-guide` | 구현됨 (명세 조정 필요) |
+| RECIPE-01 | 레시피 상세 | GET | `/recipes/{recipe_id}` | 구현됨 (명세 조정 필요) |
+| RECIPE-03 | 부족 재료 상품 추천 | GET | `/recipes/{recipe_id}/missing-products` | 구현됨 (18장 통합) |
+| FRIDGE-01 | My냉장고 품목 목록 | GET | `/users/me/fridge` | 구현됨 |
+| FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 구현됨 |
+| FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
+| FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
 
 - `RECIPE-03` 은 18장(missing-ingredients)과 통일한 단일 API 입니다 (팀 합의).
   부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. `X-User-Id` 없으면(비로그인)
@@ -82,6 +82,9 @@ Base URL: `/api/v1`
 - `PROD-03` 응답은 명세 22장과 다릅니다. 원천(FoodKeeper)에 `temperature_min/max`,
   `instruction_text` 가 없고 `tips` 는 단일 텍스트입니다. 같은 상품에 (보관 장소,
   상황)별 지침이 여러 개라 `items[]` 목록으로 냅니다. 명세 수정 협의가 필요합니다.
+- `RECO-01` 의 `recommendation.score` 는 현재 "그 버블의 후보 레시피 중 이 재료를
+  쓰는 수" 입니다. 주문 로그가 쌓이면 인기도 점수로 교체합니다 (필드 계약 동일).
+  존재하지 않는 `bubble_id` 는 404 입니다.
 - `HOME-01` 버블은 후보 레시피 수가 하한 미달이면 `enabled=false` 로 내려갑니다.
   `type` 은 현재 `RECIPE` 고정입니다.
 - `RECIPE-01` 의 `nutrition` 은 원본(jsonb) 키를 그대로 냅니다 (`protein_g`,
@@ -92,6 +95,12 @@ Base URL: `/api/v1`
   `recsys_sql` 카탈로그(`_template/reorder_candidates.sql`)에 남아 있습니다.
 - My냉장고 CRUD 는 AI 파트가 구현합니다. DELETE 는 HTTP 200 + envelope
   (`data: null`) 입니다.
+- **품목 키는 `fridgeItemId` 가 아니라 `productId` 입니다** (명세 조정 필요).
+  `user_fridge` 의 PK 가 (ingredient_id, user_id, product_id) 복합키라 단일
+  품목 id 가 없습니다. 같은 이유로 목록의 `ingredient` 는 단수 객체가 아니라
+  `ingredients[]` 배열입니다 (밀키트처럼 PRIMARY 재료가 여럿인 상품 대응).
+- POST 는 이미 담긴 상품과 재료 미연결 상품(현재 295건)을 409 `CONFLICT` 로
+  거절합니다. 기한 지난 품목도 목록에 나오며 `is_expired` 로 구분합니다.
 
 ## RECO-02 상세 (구현됨)
 
