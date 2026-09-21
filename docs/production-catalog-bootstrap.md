@@ -114,6 +114,22 @@ Production의 표는 `0013`이 만들었지만 표식이 없다. 지금은 보�
 표식을 나중에 달지 않는다. 표식이 없는 쪽이 데이터를 남기는 동작이고, `0012`와 `0007`이
 schema를 차례로 되돌리므로 이력과 schema도 어긋나지 않는다.
 
+## 적용 대상 DB
+
+2026-09-21 기준 살아 있는 Neon 브랜치는 둘뿐이다. dev 브랜치들은 삭제됐고 다시 만들 계획이 없다.
+
+| 환경 변수 | 용도 | 상태 |
+| --- | --- | --- |
+| `DATABASE_URL` / `DATABASE_URL_DIRECT` | Production. 데모가 여기서 돈다 | 사용 중 (`0015_product_image_url`) |
+| `DATABASE_URL_KIPIL` | 카탈로그 원천. 읽기만 한다 | 사용 중 (`0011_product_brand_name`) |
+| `DATABASE_URL_CHAEYEON`, `DATABASE_URL_DEV_SUBEOM`, `DATABASE_URL_DEV_SUBEOM2` | 개발용 | **삭제됨. 접속되지 않는다** |
+
+그래서 migration 과 적재를 시험해 볼 곳이 Production 밖에 없다. 이 문서의 모든 절차가
+되돌리기 수단(백업 스키마, `downgrade`, `--rollback-sql`)을 함께 요구하는 이유다.
+
+`0001_baseline`이 빈 revision이라 코드만으로 새 DB를 만들 수는 없다. 브랜치를 새로 판다면
+Production 스냅샷 복원이 유일한 출발점이다.
+
 ## 카탈로그 승격
 
 기본 실행은 읽기 전용 건수 비교다.
