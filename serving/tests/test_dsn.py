@@ -38,6 +38,23 @@ def test_keeps_statement_cache_for_direct() -> None:
     assert "statement_cache_size" not in kwargs
 
 
+def test_sslmode_disable_turns_ssl_off() -> None:
+    """클러스터 내부 DB(CloudNativePG)처럼 sslmode=disable 이면 ssl 을 끕니다."""
+    for mode in ("disable", "allow"):
+        _, kwargs = normalize_neon_dsn(f"postgresql://alice:secret@{HOST}/appdb?sslmode={mode}")
+        assert kwargs["ssl"] is False, mode
+
+
+def test_sslmode_default_stays_require() -> None:
+    """sslmode 가 없거나 그 외 값이면 안전 기본값 require 를 유지합니다."""
+    for query in ("", "?sslmode=require", "?sslmode=prefer"):
+        _, kwargs = normalize_neon_dsn(f"postgresql://alice:secret@{HOST}/appdb{query}")
+        assert kwargs["ssl"] == "require", query
+
+    _, kwargs = normalize_neon_dsn(f"postgresql://alice:secret@{HOST}/appdb?sslmode=verify-full")
+    assert kwargs["ssl"] == "verify-full"
+
+
 def test_accepts_sqlalchemy_style_scheme() -> None:
     """다른 폴더에서 쓰는 postgresql+asyncpg DSN 을 붙여 넣어도 동작합니다."""
     dsn, _ = normalize_neon_dsn(POOLED.replace("postgresql://", "postgresql+asyncpg://"))

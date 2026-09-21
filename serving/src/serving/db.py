@@ -47,7 +47,11 @@ def normalize_neon_dsn(url: str) -> tuple[str, dict[str, Any]]:
     dropped = {key.lower(): value for key, value in query if key.lower() in _LIBPQ_ONLY_PARAMS}
 
     sslmode = dropped.get("sslmode", "require")
-    connect_kwargs: dict[str, Any] = {"ssl": "verify-full" if sslmode == "verify-full" else "require"}
+    if sslmode in {"disable", "allow"}:
+        # 클러스터 내부 DB(CloudNativePG)처럼 파드 간 평문 통신 구간에서 씁니다.
+        connect_kwargs: dict[str, Any] = {"ssl": False}
+    else:
+        connect_kwargs = {"ssl": "verify-full" if sslmode == "verify-full" else "require"}
 
     if "-pooler." in (parts.hostname or ""):
         # PgBouncer transaction 모드에서는 prepared statement 를 재사용할 수 없습니다.
