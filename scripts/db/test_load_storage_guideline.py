@@ -6,11 +6,11 @@ from decimal import Decimal
 
 import pytest
 
+from scripts.db._env import validate_confirmation
 from scripts.db.load_storage_guideline import (
     PRODUCTION_CONFIRMATION,
     Guideline,
     select_representatives,
-    validate_confirmation,
     validate_enums,
 )
 
@@ -125,11 +125,11 @@ def test_null_duration_unit_is_allowed() -> None:
 def test_production_apply_requires_exact_confirmation() -> None:
     """Production 쓰기에는 확인 문자열이 필요합니다."""
     with pytest.raises(ValueError, match="Production 적용"):
-        validate_confirmation("production", True, None)
-    validate_confirmation("production", True, PRODUCTION_CONFIRMATION)
+        validate_confirmation("production", True, None, token=PRODUCTION_CONFIRMATION)
+    validate_confirmation("production", True, PRODUCTION_CONFIRMATION, token=PRODUCTION_CONFIRMATION)
 
 
 def test_dry_run_does_not_require_confirmation() -> None:
     """읽기만 하는 dry-run 은 확인 문자열 없이 돕니다."""
-    validate_confirmation("production", False, None)
-    validate_confirmation("local", False, None)
+    validate_confirmation("production", False, None, token=PRODUCTION_CONFIRMATION)
+    validate_confirmation("local", False, None, token=PRODUCTION_CONFIRMATION)

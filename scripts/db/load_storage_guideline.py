@@ -18,18 +18,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 import psycopg
 
+from scripts.db._env import Target, env_url, load_env, validate_confirmation
+
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_CONFIRMATION = "LOAD_STORAGE_GUIDELINE_V1"
-Target = Literal["local", "production"]
 
 # 0013_storage_bootstrap 의 CHECK 와 같은 값입니다. 여기서 먼저 걸러야 트랜잭션 중간이 아니라
 # 적재 전에 무엇이 틀렸는지 알 수 있습니다.
@@ -117,34 +117,6 @@ class HeldGroup:
     sources: list[str]
     durations: list[str]
     reason: str
-
-
-def load_env(path: Path) -> dict[str, str]:
-    """비밀 값을 출력하지 않고 단순 env 파일을 읽습니다."""
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def env_url(values: dict[str, str], key: str) -> str:
-    """환경 변수 또는 env 파일에서 접속 문자열을 읽습니다. 값 자체는 출력하지 않습니다."""
-    value = os.environ.get(key) or values.get(key)
-    if not value:
-        raise ValueError(f"{key}가 설정되지 않았습니다. 접속 문자열 값은 출력하지 않습니다.")
-    return value
-
-
-def validate_confirmation(target: Target, apply: bool, confirmation: str | None) -> None:
-    """Production 에 실제로 쓰기 전 확인 문자열을 요구합니다."""
-    if target == "production" and apply and confirmation != PRODUCTION_CONFIRMATION:
-        raise ValueError(f"Production 적용에는 --confirm-production {PRODUCTION_CONFIRMATION} 이 필요합니다.")
 
 
 def validate_enums(rows: list[Guideline]) -> None:
@@ -271,7 +243,7 @@ def main() -> None:
     """선별 결과를 보고하고, --apply 일 때만 대상 DB에 적재합니다."""
     args = parse_args()
     target = cast(Target, args.target)
-    validate_confirmation(target, args.apply, args.confirm_production)
+    validate_confirmation(target, args.apply, args.confirm_production, token=PRODUCTION_CONFIRMATION)
     values = load_env(args.env_file)
     source_url = env_url(values, args.source_url_env)
     target_url = env_url(values, args.target_url_env)
