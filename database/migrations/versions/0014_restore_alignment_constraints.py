@@ -6,9 +6,8 @@
 
 컬럼은 손으로 먼저 들어가 있어서 조회는 되지만 제약이 없다. 그래서 지금은
 
-- `parent_ingredient_id` 가 없는 재료를 가리켜도 막히지 않는다. 계층 확장 쿼리가
-  `WITH RECURSIVE` 로 부모를 따라가므로 고아 id 가 보유 재료 집합에 섞여 들어간다.
-  (순환은 `UNION` 이 중복을 걷어내므로 종료된다. 무한 루프 위험은 아니다.)
+- `parent_ingredient_id` 가 없는 재료를 가리켜도 막히지 않는다. 추천 쿼리가 부모를
+  1단계 join 으로 보유 재료에 더하므로, 고아 id 가 보유 집합에 섞여 들어간다.
 - `(source_type, source_product_id)` 와 `source_identity_key` 에 UNIQUE 가 없다.
   멱등 적재가 기대는 자연키가 DB 에 없는 상태다.
 

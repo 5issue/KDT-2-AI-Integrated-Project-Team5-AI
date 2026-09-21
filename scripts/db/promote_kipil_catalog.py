@@ -15,15 +15,16 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TextIO, cast
+from typing import TextIO, cast
 from urllib.parse import unquote, urlsplit
 
 import psycopg
 
+from scripts.db._env import Target, env_url, load_env, validate_confirmation
+
 ROOT = Path(__file__).resolve().parents[2]
 POSTGRES_IMAGE = "pgvector/pgvector:pg18"
 PRODUCTION_CONFIRMATION = "PROMOTE_KIPIL_CATALOG_V1"
-Target = Literal["local", "production"]
 
 # KIPIL 에서 복제해 오는 표입니다.
 CATALOG_TABLES = (
@@ -66,28 +67,6 @@ class ConnectionParts:
     database: str
 
 
-def load_env(path: Path) -> dict[str, str]:
-    """비밀 값을 출력하지 않고 단순 env 파일을 읽습니다."""
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def env_url(values: dict[str, str], key: str) -> str:
-    """환경 변수 또는 env 파일에서 접속 문자열을 읽습니다. 값 자체는 출력하지 않습니다."""
-    value = os.environ.get(key) or values.get(key)
-    if not value:
-        raise ValueError(f"{key}가 설정되지 않았습니다. 접속 문자열 값은 출력하지 않습니다.")
-    return value
-
-
 def parse_connection(url: str, *, docker_target: bool = False) -> ConnectionParts:
     """libpq URL을 Docker의 pg_dump와 psql 인자로 분해합니다."""
     parsed = urlsplit(url)
@@ -103,12 +82,6 @@ def parse_connection(url: str, *, docker_target: bool = False) -> ConnectionPart
         password=unquote(parsed.password),
         database=parsed.path.lstrip("/") or "postgres",
     )
-
-
-def validate_confirmation(target: Target, apply: bool, confirmation: str | None) -> None:
-    """Production 에 실제로 쓰기 전 확인 문자열을 요구합니다."""
-    if target == "production" and apply and confirmation != PRODUCTION_CONFIRMATION:
-        raise ValueError(f"Production 적용에는 --confirm-production {PRODUCTION_CONFIRMATION} 이 필요합니다.")
 
 
 def fetch_counts(url: str) -> dict[str, int]:
@@ -290,7 +263,7 @@ def main() -> None:
     """건수를 보고하고, --apply 일 때만 카탈로그를 교체합니다."""
     args = parse_args()
     target = cast(Target, args.target)
-    validate_confirmation(target, args.apply, args.confirm_production)
+    validate_confirmation(target, args.apply, args.confirm_production, token=PRODUCTION_CONFIRMATION)
     values = load_env(args.env_file)
     source_url = env_url(values, args.source_url_env)
     target_url = env_url(values, args.target_url_env)
