@@ -17,10 +17,10 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from serving.constants import API_PREFIX
 from serving.envelope import ApiResponse, ErrorCode
 
-API_PREFIX = "/api/v1"
-RECO_PREFIX = "/api/v1/recommendations"
+RECO_PREFIX = f"{API_PREFIX}/recommendations"
 WINDOW_SECONDS = 60.0
 
 
@@ -30,10 +30,29 @@ class SlidingWindowLimiter:
     def __init__(self, limit: int) -> None:
         self.limit = limit
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._last_sweep = 0.0
+
+    def tracked_keys(self) -> set[str]:
+        """현재 보관 중인 키. 테스트/관측용입니다."""
+        return set(self._hits)
+
+    def _sweep(self, now: float) -> None:
+        """윈도우가 지난 키를 통째로 버립니다.
+
+        일회성 봇이나 악성 IP 가 한 번씩만 찔러도 키가 영원히 남는 누수를 막습니다.
+        별도 백그라운드 태스크 대신 요청 경로에서 윈도우당 한 번만 돌립니다 —
+        태스크 수명 관리가 필요 없고, 비용은 분당 O(키 수) 한 번입니다.
+        """
+        stale = [key for key, hits in self._hits.items() if not hits or now - hits[-1] >= WINDOW_SECONDS]
+        for key in stale:
+            del self._hits[key]
+        self._last_sweep = now
 
     def try_acquire(self, key: str, now: float | None = None) -> float | None:
         """허용이면 None, 초과면 다시 시도까지 남은 초를 돌려줍니다."""
         now = time.monotonic() if now is None else now
+        if now - self._last_sweep >= WINDOW_SECONDS:
+            self._sweep(now)
         hits = self._hits[key]
         while hits and now - hits[0] >= WINDOW_SECONDS:
             hits.popleft()
