@@ -80,3 +80,31 @@ def test_stale_keys_are_swept() -> None:
 
     assert "one-shot-bot" not in limiter.tracked_keys()
     assert "active-user" in limiter.tracked_keys()
+
+
+async def test_reco_prefix_requires_path_boundary(limited_client: AsyncClient) -> None:
+    """/api/v1/recommendations-extra 같은 유사 경로는 추천 한도(2)가 아닌 기본 한도(3)를 씁니다."""
+    path = "/api/v1/recommendations-extra"
+    headers = {"X-User-Id": "5"}
+    responses = [await limited_client.get(path, headers=headers) for _ in range(4)]
+
+    # 존재하지 않는 경로라 404 지만, 한도는 3회까지 통과하고 4회째 429 여야 합니다.
+    assert [r.status_code for r in responses] == [404, 404, 404, 429]
+
+
+async def test_zero_limits_disable_completely() -> None:
+    """한도 0 이면 rate limit 이 완전히 비활성화됩니다."""
+    settings = Settings(_env_file=None, rate_limit_per_minute=0, rate_limit_reco_per_minute=0)  # type: ignore[call-arg]
+    app = create_app(settings)
+    app.state.pool = None
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for _ in range(10):
+            response = await client.get("/api/v1/home/bubbles")
+            assert response.status_code == 503
+
+
+def test_negative_limits_are_rejected() -> None:
+    """음수 한도는 설정 단계에서 거부됩니다 (0 만 비활성)."""
+    with pytest.raises(Exception):
+        Settings(_env_file=None, rate_limit_per_minute=-1)  # type: ignore[call-arg]
