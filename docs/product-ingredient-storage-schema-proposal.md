@@ -175,12 +175,14 @@ chaeyeon 님 PR에서 정한 `0001_baseline` stamp와 기존 revision 적용 절
 `0005`는 기존 수동 객체를 자동으로 흡수하는 reconciliation migration이 아니며, 대상 DB에
 `storage_guideline` 또는 동일 컬럼 조합의 UNIQUE index가 있으면 schema drift 오류로 중단한다.
 
+production에서 분기한 임시 Neon 브랜치는 기본 `DATABASE_URL`을 바꾸지 않고 아래처럼 선택한다.
+
+~~~bash
+DATABASE_URL_ENV_KEY=DATABASE_URL_DEV_SUBEOM2 \
+  uv run alembic -c database/alembic.ini stamp 0001_baseline
+DATABASE_URL_ENV_KEY=DATABASE_URL_DEV_SUBEOM2 \
+  uv run alembic -c database/alembic.ini upgrade head
+~~~
+
 `0001_baseline`은 기존 production schema를 Alembic 이력에 등록하는 빈 baseline revision이다. 새 schema를
 만드는 migration이 아니며, 이번 변경은 그 뒤의 `0005`로 적용된다.
-
-> **2026-09-21 기준 정정.** 이 절에 있던 `DATABASE_URL_ENV_KEY=DATABASE_URL_DEV_SUBEOM2` 실행
-> 예시를 지웠다. 그 Neon 브랜치는 삭제됐다. 현재 살아 있는 DB는 `DATABASE_URL`(production)과
-> `DATABASE_URL_KIPIL`(카탈로그 원천, 읽기) 둘뿐이다.
->
-> 기본값이 `DATABASE_URL`이므로 다른 키를 쓸 일이 없다. 임시 브랜치를 다시 만든다면 그때
-> `DATABASE_URL_ENV_KEY`로 대상을 고르면 된다(`database/migrations/env.py` 참고).
