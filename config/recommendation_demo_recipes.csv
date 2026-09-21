@@ -1,0 +1,7 @@
+source_type,source_recipe_id,expected_name,refresh_cycle,display_order,is_purchase_flow_ready,dev_subeom2_recipe_id
+MFDS_COOKRCP01,914,돼지고기 토마토 두부볶음,0,1,false,3965
+MFDS_COOKRCP01,718,사과소스폭찹,0,2,false,3748
+MFDS_COOKRCP01,3277,치즈토마토 가지구이,0,3,false,3867
+MFDS_COOKRCP01,137,된장 두부찌개,1,1,true,3221
+MFDS_COOKRCP01,250,단호박제육볶음,1,2,false,3404
+MFDS_COOKRCP01,991,산호두부,1,3,false,4063
