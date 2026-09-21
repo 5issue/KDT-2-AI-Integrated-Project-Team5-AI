@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from recsys_fixtures import SeedIds
+from recsys_fixtures import SeedIds, seed_child_ingredient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -90,24 +90,8 @@ async def test_pantry_is_never_missing_even_for_anonymous(db_conn: AsyncConnecti
 
 async def test_child_ingredient_in_fridge_fills_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
     """목심 Product를 냉장고에 두면 돼지고기를 다시 추천하지 않습니다."""
-    pork_neck = seeded.pork + 1000
-    await db_conn.execute(
-        text(
-            "INSERT INTO ingredient ("
-            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
-            "source_identity_key, parent_ingredient_id"
-            ") VALUES ("
-            ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
-            ")"
-        ),
-        {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
-    )
-    await db_conn.execute(
-        text(
-            "UPDATE product_ingredient SET ingredient_id = :child_id "
-            "WHERE product_id = :product_id AND ingredient_id = :parent_id AND role = 'PRIMARY'"
-        ),
-        {"child_id": pork_neck, "product_id": seeded.pork_a, "parent_id": seeded.pork},
+    await seed_child_ingredient(
+        db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork, repoint_product_id=seeded.pork_a
     )
 
     rows = await fetch(
@@ -120,19 +104,10 @@ async def test_child_ingredient_in_fridge_fills_parent_requirement(db_conn: Asyn
 
 async def test_child_product_can_be_bought_for_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
     """돼지고기가 부족하면 목심처럼 더 구체적인 Product도 구매 후보가 됩니다."""
-    pork_neck = seeded.pork + 1000
-    pork_neck_product = seeded.pork_a + 1000
-    await db_conn.execute(
-        text(
-            "INSERT INTO ingredient ("
-            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
-            "source_identity_key, parent_ingredient_id"
-            ") VALUES ("
-            ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
-            ")"
-        ),
-        {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
+    pork_neck = await seed_child_ingredient(
+        db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork
     )
+    pork_neck_product = seeded.pork_a + 1000
     await db_conn.execute(
         text(
             "INSERT INTO product ("

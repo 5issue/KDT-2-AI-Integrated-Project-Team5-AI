@@ -20,8 +20,9 @@
 -- 우선순위는 레시피당 한 번 집계합니다. recipe_product 를 그대로 조인하면 상품 수만큼
 -- 행이 불어납니다.
 
-WITH RECURSIVE fridge(ingredient_id) AS (
-    SELECT DISTINCT pi.ingredient_id
+WITH fridge AS (
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    SELECT pi.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
@@ -29,9 +30,13 @@ WITH RECURSIVE fridge(ingredient_id) AS (
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
     UNION
     SELECT i.parent_ingredient_id
-    FROM fridge f
-    JOIN ingredient i ON i.ingredient_id = f.ingredient_id
-    WHERE i.parent_ingredient_id IS NOT NULL
+    FROM user_fridge uf
+    JOIN product_ingredient pi ON pi.product_id = uf.product_id
+                              AND pi.role = 'PRIMARY'
+    JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
+    WHERE uf.user_id = :user_id
+      AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND i.parent_ingredient_id IS NOT NULL
 ),
 candidate AS (
     SELECT DISTINCT ri.recipe_id

@@ -18,37 +18,37 @@
 -- 로그인하지 않은 사용자도 이 화면을 볼 수 있어야 합니다.
 -- 선택 재료(`is_required = false`)까지 전부 내고, 필수 여부는 컬럼으로 구분합니다.
 
-WITH RECURSIVE base_direct AS (
+WITH base AS (
+    -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
     SELECT pi.ingredient_id
     FROM product_ingredient pi
     WHERE pi.product_id = :base_product_id
       AND pi.role = 'PRIMARY'
-),
-base(ingredient_id) AS (
-    SELECT ingredient_id
-    FROM base_direct
     UNION
     SELECT i.parent_ingredient_id
-    FROM base b
-    JOIN ingredient i ON i.ingredient_id = b.ingredient_id
-    WHERE i.parent_ingredient_id IS NOT NULL
+    FROM product_ingredient pi
+    JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    WHERE pi.product_id = :base_product_id
+      AND pi.role = 'PRIMARY'
+      AND i.parent_ingredient_id IS NOT NULL
 ),
-fridge_direct AS (
-    SELECT DISTINCT pi.ingredient_id
+fridge AS (
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    SELECT pi.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
-),
-fridge(ingredient_id) AS (
-    SELECT ingredient_id
-    FROM fridge_direct
     UNION
     SELECT i.parent_ingredient_id
-    FROM fridge f
-    JOIN ingredient i ON i.ingredient_id = f.ingredient_id
-    WHERE i.parent_ingredient_id IS NOT NULL
+    FROM user_fridge uf
+    JOIN product_ingredient pi ON pi.product_id = uf.product_id
+                              AND pi.role = 'PRIMARY'
+    JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
+    WHERE uf.user_id = :user_id
+      AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND i.parent_ingredient_id IS NOT NULL
 )
 SELECT ri.recipe_id,
        i.ingredient_id,

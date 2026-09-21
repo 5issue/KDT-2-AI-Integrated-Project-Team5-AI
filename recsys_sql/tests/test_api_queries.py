@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from recsys_fixtures import SeedIds
+from recsys_fixtures import SeedIds, seed_child_ingredient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -292,24 +292,12 @@ class TestMyFridge:
         self, db_conn: AsyncConnection, seeded: SeedIds
     ) -> None:
         """목심 Product를 보유하면 돼지고기 Recipe 재료를 보유한 것으로 칩니다."""
-        pork_neck = seeded.pork + 1000
-        await db_conn.execute(
-            text(
-                "INSERT INTO ingredient ("
-                "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
-                "source_identity_key, parent_ingredient_id"
-                ") VALUES ("
-                ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
-                ")"
-            ),
-            {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
-        )
-        await db_conn.execute(
-            text(
-                "UPDATE product_ingredient SET ingredient_id = :child_id "
-                "WHERE product_id = :product_id AND ingredient_id = :parent_id AND role = 'PRIMARY'"
-            ),
-            {"child_id": pork_neck, "product_id": seeded.pork_a, "parent_id": seeded.pork},
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
         )
 
         rows = await fetch(
@@ -476,30 +464,6 @@ class TestApiSpecContract:
         assert len(kimchi["ingredients"]) == 2
 
 
-async def _seed_pork_neck(db_conn: AsyncConnection, seeded: SeedIds) -> int:
-    """돼지고기의 child 로 목심을 만들고, 돼지고기 상품의 PRIMARY 를 목심으로 바꿉니다."""
-    pork_neck = seeded.pork + 1000
-    await db_conn.execute(
-        text(
-            "INSERT INTO ingredient ("
-            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
-            "source_identity_key, parent_ingredient_id"
-            ") VALUES ("
-            ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
-            ")"
-        ),
-        {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
-    )
-    await db_conn.execute(
-        text(
-            "UPDATE product_ingredient SET ingredient_id = :child_id "
-            "WHERE product_id = :product_id AND ingredient_id = :parent_id AND role = 'PRIMARY'"
-        ),
-        {"child_id": pork_neck, "product_id": seeded.pork_a, "parent_id": seeded.pork},
-    )
-    return pork_neck
-
-
 class TestRecommendationPriorityOrdering:
     """추천 상품 우선순위가 첫 정렬 기준입니다.
 
@@ -588,7 +552,13 @@ class TestIngredientHierarchyAcrossQueries:
 
     async def test_recipe_detail_marks_parent_as_in_fridge(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """목심 상품을 가진 사용자의 상세 화면에서 돼지고기는 보유입니다."""
-        await _seed_pork_neck(db_conn, seeded)
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
 
         rows = await fetch(
             db_conn,
@@ -601,28 +571,55 @@ class TestIngredientHierarchyAcrossQueries:
 
     async def test_product_recipes_reach_parent_requirements(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
         """목심 상품으로 만들 수 있는 요리에 돼지고기를 요구하는 레시피가 들어옵니다."""
-        await _seed_pork_neck(db_conn, seeded)
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
 
         rows = await fetch(db_conn, "product_recipes", {"product_id": seeded.pork_a, "max_results": 50, "skip": 0})
         recipe_ids = {row["recipe_id"] for row in rows}
 
         assert {seeded.kimchi_stew, seeded.pork_grill} <= recipe_ids
 
+    async def test_hierarchy_stops_at_the_parent(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """계층은 1단계까지만 봅니다. 상품 PRIMARY 를 돼지고기 -> 목심 -> 목심 슬라이스로 두 번 옮깁니다.
+
+        손자 상품을 갖고 있으면 부모(목심)는 보유지만 조부모(돼지고기)는 아닙니다.
+
+        재귀로 끝까지 올라가지 않는 것이 정책입니다. 2단계가 필요해지면 데이터가 아니라
+        쿼리 규칙을 바꿔야 하고, 이 테스트가 그때 깨집니다.
+        """
+        pork_neck = await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 2000,
+            name="목심 슬라이스",
+            parent_id=pork_neck,
+            repoint_product_id=seeded.pork_a,
+        )
+
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        stew = next(row for row in rows if row["recipe_id"] == seeded.kimchi_stew)
+
+        assert seeded.pork in {item["ingredient_id"] for item in stew["missing_ingredients"]}
+
     async def test_parent_in_fridge_does_not_cover_child_requirement(
         self, db_conn: AsyncConnection, seeded: SeedIds
     ) -> None:
         """돼지고기 상품만 있으면 목심을 요구하는 레시피는 부족입니다."""
-        pork_neck = seeded.pork + 1000
-        await db_conn.execute(
-            text(
-                "INSERT INTO ingredient ("
-                "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
-                "source_identity_key, parent_ingredient_id"
-                ") VALUES ("
-                ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, 'TEST-SEED:돼지고기:목심', :parent_id"
-                ")"
-            ),
-            {"id": pork_neck, "parent_id": seeded.pork},
+        pork_neck = await seed_child_ingredient(
+            db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork
         )
         await db_conn.execute(
             text(
