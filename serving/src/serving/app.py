@@ -45,9 +45,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # EKS 스팟 회수 등으로 SIGTERM 을 받으면 uvicorn 이 처리 중 요청을 끝낸 뒤
+        # 여기로 들어옵니다. 시작/완료를 로그로 남겨 강제 종료(로그 없음)와 구분합니다.
+        logger.info("graceful shutdown 시작 - 처리 중 요청 완료됨, 리소스 정리")
         if app.state.pool is not None:
             await app.state.pool.close()
             app.state.pool = None
+            logger.info("커넥션 풀 정리 완료")
+        logger.info("graceful shutdown 완료")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

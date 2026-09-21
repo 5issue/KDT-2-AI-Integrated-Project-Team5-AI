@@ -102,3 +102,18 @@ async def test_health_is_not_logged(offline_client: AsyncClient, caplog: pytest.
         await offline_client.get("/health")
 
     assert not [r for r in caplog.records if r.name == "serving.access"]
+
+
+async def test_lifespan_logs_graceful_shutdown(caplog: pytest.LogCaptureFixture) -> None:
+    """종료 시 graceful shutdown 시작/완료 로그가 남습니다 (EKS 스팟 회수 추적용)."""
+    from serving.app import create_app
+    from serving.config import Settings
+
+    app = create_app(Settings(_env_file=None))  # type: ignore[call-arg]
+    with caplog.at_level("INFO", logger="serving"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "serving"]
+    assert any("graceful shutdown 시작" in m for m in messages)
+    assert any("graceful shutdown 완료" in m for m in messages)
