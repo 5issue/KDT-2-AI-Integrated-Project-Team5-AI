@@ -29,6 +29,17 @@ _SKIP_PATHS = frozenset({"/health", "/health/db"})
 access_logger = logging.getLogger("serving.access")
 
 
+def _client_ip(request: Request) -> str | None:
+    """실제 유저 IP. LB/인그레스를 거치면 X-Forwarded-For 첫 값이 원 클라이언트입니다.
+
+    이 값은 위조 가능한 헤더라 추적(로그)용으로만 쓰고, 인증·차단 판단에는 쓰지 않습니다.
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 def _resolve_request_id(incoming: str | None) -> str:
     if incoming and _VALID_REQUEST_ID.match(incoming):
         return incoming
@@ -49,6 +60,7 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         entry = {
             "request_id": request_id,
+            "client_ip": _client_ip(request),
             "method": request.method,
             "path": request.url.path,
             "user_id": request.headers.get("X-User-Id"),
@@ -61,7 +73,9 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
                 duration_ms=round((time.perf_counter() - start) * 1000, 1),
                 error=type(exc).__name__,
             )
-            access_logger.error(json.dumps(entry, ensure_ascii=False))
+            # traceback 을 request_id 와 같은 레코드에 묶습니다. uvicorn 의 재발생 로그에는
+            # 요청 맥락이 없어 여기서 남기는 것이 추적 가능한 유일한 지점입니다.
+            access_logger.error(json.dumps(entry, ensure_ascii=False), exc_info=True)
             raise
 
         entry.update(
