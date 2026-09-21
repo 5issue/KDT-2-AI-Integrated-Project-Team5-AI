@@ -22,7 +22,7 @@ from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
 from serving.ratelimit import RateLimitMiddleware
 from serving.request_log import RequestLogMiddleware
-from serving.routers import health, home, products, recipes, recommendations
+from serving.routers import fridge, health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
 
@@ -89,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(home.router, prefix=API_PREFIX)
     app.include_router(products.router, prefix=API_PREFIX)
     app.include_router(recipes.router, prefix=API_PREFIX)
+    app.include_router(fridge.router, prefix=API_PREFIX)
     return app
 
 

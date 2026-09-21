@@ -8,13 +8,14 @@ missing-ingredients 는 비로그인도 허용됩니다 — X-User-Id 가 없으
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from httpx import AsyncClient
 
 from serving.schemas import MissingProductsResponse, RecipeDetailResponse
 
 
-def _detail_row() -> dict:
+def _detail_row() -> dict[str, Any]:
     return {
         "recipe_id": 1001,
         "name": "돼지고기 김치찌개",
@@ -46,7 +47,7 @@ def _detail_row() -> dict:
     }
 
 
-def _missing_product_rows() -> list[dict]:
+def _missing_product_rows() -> list[dict[str, Any]]:
     """missing_products 쿼리가 내는 행 모양 (재료 x 상품 랭킹)."""
     return [
         {
