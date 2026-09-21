@@ -15,6 +15,11 @@ down_revision = "0012_storage_service_key"
 branch_labels = None
 depends_on = None
 
+# 이 revision 이 표를 만들었다는 영구 표식이다. downgrade 가 지울 권한을 여기서만 얻는다.
+# 표식이 없으면 KIPIL 처럼 먼저 있던 표이므로 건드리지 않는다. 만든 적 없는 revision 이
+# 삭제 권한까지 갖는 구조를 만들지 않는다.
+OWNER_MARK = "created_by:0013_storage_bootstrap"
+
 
 def upgrade() -> None:
     """표가 없는 대상에 서비스 조회용 최종 스키마를 생성한다."""
@@ -68,11 +73,20 @@ def upgrade() -> None:
         "storage_guideline",
         ["ingredient_id", "storage_location", "storage_context"],
     )
+    op.execute(f"COMMENT ON TABLE storage_guideline IS '{OWNER_MARK}'")
 
 
 def downgrade() -> None:
-    """이 revision이 만든 최종 표를 제거한다."""
-    if not sa.inspect(op.get_bind()).has_table("storage_guideline"):
+    """이 revision이 만든 표일 때만 제거한다.
+
+    upgrade 는 표가 있으면 건너뛰는데 downgrade 가 있으면 지우면, 먼저 있던 표와 그 데이터가
+    사라진다. 표식을 확인해 직접 만든 경우에만 지운다.
+    """
+    bind = op.get_bind()
+    if not sa.inspect(bind).has_table("storage_guideline"):
+        return
+    mark = bind.execute(sa.text("SELECT obj_description('public.storage_guideline'::regclass, 'pg_class')")).scalar()
+    if mark != OWNER_MARK:
         return
     op.drop_index("idx_storage_guideline_ingredient_lookup", table_name="storage_guideline")
     op.drop_table("storage_guideline")

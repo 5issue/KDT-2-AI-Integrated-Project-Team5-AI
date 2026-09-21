@@ -33,6 +33,30 @@ uv run alembic -c database/alembic.ini stamp 0001_baseline
 uv run alembic -c database/alembic.ini upgrade head
 ```
 
+## 되감을 때
+
+`upgrade`는 표가 있으면 건너뛰는데 `downgrade`가 있으면 지우면, 만든 적 없는 revision이 남의
+표를 삭제한다. KIPIL에서는 기존 `storage_guideline`과 그 데이터가 사라진다. 그래서 `0013`은
+표를 만들 때 표식을 남기고, 되감을 때 그 표식이 있는 경우에만 지운다.
+
+```sql
+COMMENT ON TABLE storage_guideline IS 'created_by:0013_storage_bootstrap';
+```
+
+`0007`의 `downgrade`도 같은 조건으로 나눈다. 초기 Production 경로에서는 `0013`이 표를 먼저
+지우므로 없는 표에 접근하게 되고, 그대로 두면 undefined-table 오류로 멈춘다. `product`는 두
+경로 모두 존재하므로 조건 밖에 둔다. `0012`는 이미 같은 guard를 갖고 있다.
+
+| DB | `storage_guideline` 표식 | `0013` downgrade | 이후 |
+| --- | --- | --- | --- |
+| KIPIL | 없음 (먼저 있던 표) | 지우지 않음 | `0012`, `0007`이 차례로 되돌림 |
+| Production | 없음 (`0013` 적용 시점에 표식 기능이 없었음) | 지우지 않음 | 같음 |
+| 새 초기 DB | 있음 | 지움 | `0012`, `0007`은 표가 없으므로 건너뜀 |
+
+Production의 표는 `0013`이 만들었지만 표식이 없다. 지금은 보관 지침 473행이 들어 있으므로
+표식을 나중에 달지 않는다. 표식이 없는 쪽이 데이터를 남기는 동작이고, `0012`와 `0007`이
+schema를 차례로 되돌리므로 이력과 schema도 어긋나지 않는다.
+
 ## 카탈로그 승격
 
 기본 실행은 읽기 전용 건수 비교다.
