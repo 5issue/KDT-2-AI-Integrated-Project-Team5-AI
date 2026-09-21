@@ -69,7 +69,8 @@ async def validating_client() -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 async def live_client() -> AsyncIterator[AsyncClient]:
     """실제 DB 풀까지 띄운 앱에 붙는 클라이언트. lifespan 을 통과시킵니다."""
-    app = create_app()
+    # 종료 유예(ALB 대기)는 테스트에서 끕니다. 켜 두면 테스트마다 5초씩 기다립니다.
+    app = create_app(Settings(shutdown_delay_seconds=0))
     transport = ASGITransport(app=app)
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=transport, base_url="http://test") as client:

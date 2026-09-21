@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    # 종료 유예(초). SIGTERM 후 ALB 가 이 파드를 트래픽에서 제외할 때까지 기다려
+    # 502 를 막습니다 (전파에 보통 2~5초). 로컬/테스트는 0 으로 끕니다.
+    shutdown_delay_seconds: float = Field(default=5.0, ge=0)
+
     # /api/v1 분당 요청 한도. 0 이면 비활성. 추천 경로는 별도(더 낮은) 한도.
     # 프로세스별 카운터라 워커 수만큼 배수가 됩니다.
     rate_limit_per_minute: int = Field(default=60, ge=0)
