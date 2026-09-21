@@ -65,9 +65,26 @@ uv run python scripts/db/promote_kipil_catalog.py \
 교체한다. 실패하면 truncate와 restore를 모두 롤백한다. 접속 비밀번호는 명령 인자나 출력에
 포함하지 않는다.
 
-복제 대상은 Category, Ingredient, Product, Product Ingredient, Recipe, Recipe Ingredient,
-Recipe Step, Recipe Product, Product Popularity, App User, User Fridge, User Product Affinity다.
-주문 데이터와 Storage Guideline은 복제하지 않는다.
+## 무엇을 복제하고 무엇을 비우는가
+
+| 구분 | 표 | 백업 | 복제 |
+| --- | --- | :---: | :---: |
+| 카탈로그 | Category, Ingredient, Product, Product Ingredient, Recipe, Recipe Ingredient, Recipe Step, Recipe Product, Product Popularity, App User, User Fridge, User Product Affinity | O | O |
+| 참조 표 | Storage Guideline, Order Item, Order Header | O | X |
+
+참조 표는 카탈로그를 FK로 참조하므로 카탈로그를 비우려면 함께 비워야 한다. 복제하지는 않는다.
+
+이전 구현은 `TRUNCATE ... CASCADE`로 이 세 표를 **백업 없이** 비웠다. 대상이 0행이던 동안에는
+드러나지 않았지만, Storage Guideline이 적재된 뒤에는 그대로 사라지는 경로였다. 지금은
+`CASCADE`를 쓰지 않고 이름으로 열거하며, 셋 다 백업 스키마에 들어간다. 카탈로그를 참조하는
+표가 새로 생기면 `verify_reference_closure`가 이름을 알려 주고 중단한다.
+
+주문 표는 복구할 원천이 없으므로 비어 있지 않으면 중단한다. 검사는 표를 잠근 뒤 트랜잭션
+안에서 다시 한다. 잠그기 전의 검사만으로는 검사와 삭제 사이에 들어온 주문을 못 본다.
+
+**적용 후 Storage Guideline은 비어 있다.** `scripts/db/load_storage_guideline.py`를 다시
+실행해 채운다. 실행 절차와 선별 규칙은 [Storage Guideline 적재](storage-guideline-load.md)를
+따른다.
 
 ## 적용 후 확인
 
