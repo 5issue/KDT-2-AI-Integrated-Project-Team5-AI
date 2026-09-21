@@ -65,3 +65,18 @@ async def test_zero_limit_disables(offline_client: AsyncClient) -> None:
     for _ in range(5):
         response = await offline_client.get("/api/v1/home/bubbles")
         assert response.status_code == 503
+
+
+def test_stale_keys_are_swept() -> None:
+    """윈도우가 지난 키는 dict 에서 제거됩니다 (일회성 봇/IP 메모리 누수 방지)."""
+    from serving.ratelimit import WINDOW_SECONDS, SlidingWindowLimiter
+
+    limiter = SlidingWindowLimiter(5)
+    limiter.try_acquire("one-shot-bot", now=0.0)
+    assert "one-shot-bot" in limiter.tracked_keys()
+
+    # 다른 키의 요청이 윈도우 하나를 넘긴 뒤 들어오면 청소가 돌아야 합니다.
+    limiter.try_acquire("active-user", now=WINDOW_SECONDS + 1.0)
+
+    assert "one-shot-bot" not in limiter.tracked_keys()
+    assert "active-user" in limiter.tracked_keys()
