@@ -17,11 +17,20 @@
 -- `ingredient_summary` 는 api_spec 16절이 요구하는 값입니다. 이 상품 하나로 레시피의
 -- 필수 재료 중 몇 개가 채워지는지를 셉니다. 상비재료는 채워진 것으로 칩니다.
 
-WITH base AS (
+WITH RECURSIVE base_direct AS (
     SELECT pi.ingredient_id
     FROM product_ingredient pi
     WHERE pi.product_id = :product_id
       AND pi.role = 'PRIMARY'
+),
+base(ingredient_id) AS (
+    SELECT ingredient_id
+    FROM base_direct
+    UNION
+    SELECT i.parent_ingredient_id
+    FROM base b
+    JOIN ingredient i ON i.ingredient_id = b.ingredient_id
+    WHERE i.parent_ingredient_id IS NOT NULL
 ),
 candidate AS (
     -- 필수 재료로 걸린 것만 후보입니다. 선택 재료만 겹치는 레시피를 넣으면

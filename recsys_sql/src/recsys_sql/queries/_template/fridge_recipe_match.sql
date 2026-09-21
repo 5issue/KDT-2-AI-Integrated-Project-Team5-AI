@@ -19,13 +19,18 @@
 -- 다만 필수 재료가 전부 상비재료인 레시피(소금·설탕만 쓰는 것 등)도 함께 빠집니다.
 -- "냉장고가 비어도 만들 수 있는 요리" 가 필요하면 그건 별도 쿼리로 다룹니다.
 
-WITH fridge AS (
+WITH RECURSIVE fridge(ingredient_id) AS (
     SELECT DISTINCT pi.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+    UNION
+    SELECT i.parent_ingredient_id
+    FROM fridge f
+    JOIN ingredient i ON i.ingredient_id = f.ingredient_id
+    WHERE i.parent_ingredient_id IS NOT NULL
 ),
 candidate AS (
     SELECT DISTINCT ri.recipe_id

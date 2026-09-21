@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from recsys_fixtures import SeedIds
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from recsys_sql.catalog import SqlQuery, load_catalog
@@ -85,3 +86,76 @@ async def test_pantry_is_never_missing_even_for_anonymous(db_conn: AsyncConnecti
     )
 
     assert seeded.salt not in {row["ingredient_id"] for row in anonymous}
+
+
+async def test_child_ingredient_in_fridge_fills_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
+    """목심 Product를 냉장고에 두면 돼지고기를 다시 추천하지 않습니다."""
+    pork_neck = seeded.pork + 1000
+    await db_conn.execute(
+        text(
+            "INSERT INTO ingredient ("
+            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
+            "source_identity_key, parent_ingredient_id"
+            ") VALUES ("
+            ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
+            ")"
+        ),
+        {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
+    )
+    await db_conn.execute(
+        text(
+            "UPDATE product_ingredient SET ingredient_id = :child_id "
+            "WHERE product_id = :product_id AND ingredient_id = :parent_id AND role = 'PRIMARY'"
+        ),
+        {"child_id": pork_neck, "product_id": seeded.pork_a, "parent_id": seeded.pork},
+    )
+
+    rows = await fetch(
+        db_conn,
+        {"user_id": seeded.user, "recipe_id": seeded.kimchi_stew, "base_product_id": 0, "max_per_ingredient": 3},
+    )
+
+    assert seeded.pork not in {row["ingredient_id"] for row in rows}
+
+
+async def test_child_product_can_be_bought_for_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
+    """돼지고기가 부족하면 목심처럼 더 구체적인 Product도 구매 후보가 됩니다."""
+    pork_neck = seeded.pork + 1000
+    pork_neck_product = seeded.pork_a + 1000
+    await db_conn.execute(
+        text(
+            "INSERT INTO ingredient ("
+            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
+            "source_identity_key, parent_ingredient_id"
+            ") VALUES ("
+            ":id, '목심', '목심', TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
+            ")"
+        ),
+        {"id": pork_neck, "source_key": "TEST-SEED:돼지고기:목심", "parent_id": seeded.pork},
+    )
+    await db_conn.execute(
+        text(
+            "INSERT INTO product ("
+            "product_id, sku, name, product_type, price, stock_quantity, is_active, metadata, "
+            "source_type, source_product_id"
+            ") VALUES ("
+            ":id, :sku, '목심 상품', 'INGREDIENT', 11000, 3, TRUE, '{}'::jsonb, 'TEST-SEED', :sku"
+            ")"
+        ),
+        {"id": pork_neck_product, "sku": "P-NECK"},
+    )
+    await db_conn.execute(
+        text(
+            "INSERT INTO product_ingredient (product_id, ingredient_id, role) "
+            "VALUES (:product_id, :ingredient_id, 'PRIMARY')"
+        ),
+        {"product_id": pork_neck_product, "ingredient_id": pork_neck},
+    )
+
+    rows = await fetch(
+        db_conn,
+        {"user_id": 0, "recipe_id": seeded.kimchi_stew, "base_product_id": 0, "max_per_ingredient": 10},
+    )
+    pork_products = {row["product_id"] for row in rows if row["ingredient_id"] == seeded.pork}
+
+    assert pork_neck_product in pork_products

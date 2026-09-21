@@ -9,13 +9,22 @@
 -- 냉장고는 상품을 담으므로 재료는 상품의 PRIMARY 구성 재료로 풉니다.
 -- `fridge_recipe_match` 와 같은 정의를 씁니다. 두 쿼리가 보유 재료를 다르게 보면
 -- "부족하다고 했는데 목록에는 없는" 재료가 생깁니다.
-WITH fridge AS (
+WITH RECURSIVE fridge_direct AS (
     SELECT DISTINCT pi.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+),
+fridge(ingredient_id) AS (
+    SELECT ingredient_id
+    FROM fridge_direct
+    UNION
+    SELECT i.parent_ingredient_id
+    FROM fridge f
+    JOIN ingredient i ON i.ingredient_id = f.ingredient_id
+    WHERE i.parent_ingredient_id IS NOT NULL
 ),
 missing AS (
     SELECT ri.ingredient_id
