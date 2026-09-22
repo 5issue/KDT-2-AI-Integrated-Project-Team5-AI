@@ -23,18 +23,21 @@ from serving.schemas import (
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
+# 필수 재료의 절반 이상을 보유한 레시피만 추천합니다. FE 합의로 파라미터 대신
+# 서버 고정값입니다 (조절 UI 가 생기면 쿼리 파라미터로 다시 엽니다).
+MIN_MATCH_RATE = 0.5
+
 
 @router.get("/my-recipes", response_model=ApiResponse[MyRecipeListResponse])
 async def read_my_recipes(
     pool: PoolDep,
     user_id: CurrentUserId,
-    min_match_rate: float = Query(default=0.5, ge=0.0, le=1.0, description="필수 재료 매칭률 하한"),
     limit: int = Query(default=10, ge=1, le=50, description="가져올 개수"),
 ) -> ApiResponse[MyRecipeListResponse]:
     """My냉장고 재료로 만들 수 있는 레시피를 추천합니다 (명세 21장)."""
     sql, args = build_query(
         "my_recipe_candidates",
-        {"user_id": user_id, "min_match_rate": min_match_rate, "max_results": limit},
+        {"user_id": user_id, "min_match_rate": MIN_MATCH_RATE, "max_results": limit},
     )
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *args)

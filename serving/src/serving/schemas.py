@@ -110,7 +110,6 @@ class BubbleItem(BaseModel):
     bubble_id: str
     label: str
     description: str | None = None
-    type: str = "RECIPE"
     enabled: bool
 
     @classmethod
@@ -118,7 +117,8 @@ class BubbleItem(BaseModel):
         """bubble_candidate_counts 행을 명세 모양으로 바꿉니다.
 
         keyword_id 가 곧 버블 코드이고, 후보 수가 하한 미달이면 enabled=false 로
-        내려서 화면이 누를 수 없게 합니다. type 은 현재 레시피 버블뿐이라 상수입니다.
+        내려서 화면이 누를 수 없게 합니다. type 은 DB 내부 분류라 내지 않습니다
+        (FE 미사용 확인 후 제거 확정).
         """
         return cls(
             bubble_id=row["keyword_id"],
