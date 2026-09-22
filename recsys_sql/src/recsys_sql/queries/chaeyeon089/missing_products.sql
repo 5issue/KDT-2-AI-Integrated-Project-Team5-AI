@@ -20,35 +20,27 @@
 
 WITH base AS (
     -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
-    SELECT pi.ingredient_id
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM product_ingredient pi
+    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.product_id = :base_product_id
       AND pi.role = 'PRIMARY'
-    UNION
-    SELECT i.parent_ingredient_id
-    FROM product_ingredient pi
-    JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
-    WHERE pi.product_id = :base_product_id
-      AND pi.role = 'PRIMARY'
-      AND i.parent_ingredient_id IS NOT NULL
+      AND h.ingredient_id IS NOT NULL
 ),
 fridge AS (
     -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
-    SELECT pi.ingredient_id
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
+    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
-    UNION
-    SELECT i.parent_ingredient_id
-    FROM user_fridge uf
-    JOIN product_ingredient pi ON pi.product_id = uf.product_id
-                              AND pi.role = 'PRIMARY'
-    JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
-    WHERE uf.user_id = :user_id
-      AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
-      AND i.parent_ingredient_id IS NOT NULL
+      AND h.ingredient_id IS NOT NULL
 ),
 missing AS (
     SELECT ri.ingredient_id
@@ -64,23 +56,17 @@ missing AS (
 ),
 product_coverage AS (
     -- 상품이 채우는 재료: PRIMARY 재료와 그 부모(1단계). 목심 상품은 돼지고기 요구도 채웁니다.
-    SELECT pi.product_id,
-           pi.ingredient_id
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT pi.product_id,
+           h.ingredient_id
     FROM product_ingredient pi
-    JOIN product p ON p.product_id = pi.product_id
-                  AND p.is_active
-                  AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
+    JOIN product p         ON p.product_id = pi.product_id
+                          AND p.is_active
+                          AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
+    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.role = 'PRIMARY'
-    UNION
-    SELECT pi.product_id,
-           i.parent_ingredient_id
-    FROM product_ingredient pi
-    JOIN product p    ON p.product_id = pi.product_id
-                     AND p.is_active
-                     AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
-    JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
-    WHERE pi.role = 'PRIMARY'
-      AND i.parent_ingredient_id IS NOT NULL
+      AND h.ingredient_id IS NOT NULL
 ),
 ranked AS (
     SELECT m.ingredient_id,

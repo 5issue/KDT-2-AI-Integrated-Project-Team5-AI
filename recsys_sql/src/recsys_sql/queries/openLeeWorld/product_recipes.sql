@@ -19,17 +19,14 @@
 
 WITH base AS (
     -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
-    SELECT pi.ingredient_id
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM product_ingredient pi
+    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.product_id = :product_id
       AND pi.role = 'PRIMARY'
-    UNION
-    SELECT i.parent_ingredient_id
-    FROM product_ingredient pi
-    JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
-    WHERE pi.product_id = :product_id
-      AND pi.role = 'PRIMARY'
-      AND i.parent_ingredient_id IS NOT NULL
+      AND h.ingredient_id IS NOT NULL
 ),
 candidate AS (
     -- 필수 재료로 걸린 것만 후보입니다. 선택 재료만 겹치는 레시피를 넣으면
