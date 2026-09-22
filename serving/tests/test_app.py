@@ -29,12 +29,18 @@ async def test_db_health_returns_503_without_pool(offline_client: AsyncClient) -
     assert "데이터베이스" in response.json()["detail"]
 
 
-def test_docs_are_closed_outside_local() -> None:
-    """local 이 아니면 문서 페이지와 openapi.json 을 닫습니다."""
+def test_docs_are_open_outside_prod_only() -> None:
+    """스웨거는 local/dev 에서 열리고 prod 에서만 닫습니다.
+
+    FE 가 연동 전 dev 데모 환경에서 브라우저로 계약을 확인할 수 있어야 합니다.
+    """
     local = create_app(Settings(_env_file=None, environment="local"))  # type: ignore[call-arg]
+    dev = create_app(Settings(_env_file=None, environment="dev"))  # type: ignore[call-arg]
     prod = create_app(Settings(_env_file=None, environment="prod"))  # type: ignore[call-arg]
 
     assert local.docs_url == "/docs"
+    assert dev.docs_url == "/docs"
+    assert dev.openapi_url == "/openapi.json"
     assert prod.docs_url is None
     assert prod.openapi_url is None
 
