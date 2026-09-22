@@ -42,7 +42,7 @@ FE/BE 통합 인터페이스 명세(노션 v0.2)에서 AI 파트 몫을 옮겨 �
 | 405 | `METHOD_NOT_ALLOWED` | 지원하지 않는 메서드 |
 | 409 | `CONFLICT` | 상태 충돌 |
 | 422 | `INVALID_INPUT_VALUE` | 검증 실패 (새 코드 대신 재사용) |
-| 429 | `TOO_MANY_REQUESTS` | rate limit 초과 (AI 파트 확장) |
+| 429 | `TOO_MANY_REQUESTS` | rate limit 초과: 기본 60/분, 추천 경로 10/분, `Retry-After` 헤더 포함 (AI 파트 확장) |
 | 500 | `INTERNAL_SERVER_ERROR` | 처리되지 않은 예외. 상세는 응답에 싣지 않음 |
 | 503 | `SERVICE_UNAVAILABLE` | DB 미연결 등 (AI 파트 확장) |
 

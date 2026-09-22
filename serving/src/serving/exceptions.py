@@ -15,9 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from serving.constants import API_PREFIX
 from serving.envelope import ApiResponse, ErrorCode
-
-API_PREFIX = "/api/v1"
 
 _STATUS_TO_CODE = {code.http_status: code for code in ErrorCode}
 
