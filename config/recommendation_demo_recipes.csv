@@ -1,0 +1,7 @@
+source_type,source_recipe_id,expected_name,is_purchase_flow_ready
+MFDS_COOKRCP01,914,돼지고기 토마토 두부볶음,false
+MFDS_COOKRCP01,718,사과소스폭찹,false
+MFDS_COOKRCP01,3277,치즈토마토 가지구이,false
+MFDS_COOKRCP01,137,된장 두부찌개,true
+MFDS_COOKRCP01,250,단호박제육볶음,false
+MFDS_COOKRCP01,991,산호두부,false
