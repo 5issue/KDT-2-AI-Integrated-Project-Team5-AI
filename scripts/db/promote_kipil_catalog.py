@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import psycopg
 
@@ -65,13 +65,25 @@ class ConnectionParts:
     user: str
     password: str
     database: str
+    sslmode: str
 
 
 def parse_connection(url: str, *, docker_target: bool = False) -> ConnectionParts:
-    """libpq URL을 Docker의 pg_dump와 psql 인자로 분해합니다."""
+    """libpq URL을 Docker의 pg_dump와 psql 인자로 분해합니다.
+
+    URL 의 `sslmode` 를 그대로 가져옵니다. 여기서 `require` 로 고정해 버리면 URL 이
+    `verify-full` 을 요구해도 인증서를 확인하지 않는 연결로 조용히 내려갑니다.
+    `sslrootcert` 는 컨테이너 안에 그 파일이 없으므로 받지 않고 멈춥니다.
+    """
     parsed = urlsplit(url)
     if not parsed.hostname or not parsed.username or parsed.password is None:
         raise ValueError("DB 접속 문자열에 host, user, password가 모두 필요합니다.")
+    query = parse_qs(parsed.query)
+    if query.get("sslrootcert"):
+        raise ValueError("sslrootcert 는 컨테이너 안에서 읽을 수 없습니다. 인증서를 넣는 경로를 먼저 정하세요.")
+    sslmode = query.get("sslmode", ["require"])[0]
+    if sslmode in {"disable", "allow", "prefer"}:
+        raise ValueError(f"암호화되지 않을 수 있는 sslmode={sslmode} 로는 카탈로그를 옮기지 않습니다.")
     host = parsed.hostname
     if docker_target and host in {"127.0.0.1", "localhost"}:
         host = "host.docker.internal"
@@ -81,7 +93,32 @@ def parse_connection(url: str, *, docker_target: bool = False) -> ConnectionPart
         user=unquote(parsed.username),
         password=unquote(parsed.password),
         database=parsed.path.lstrip("/") or "postgres",
+        sslmode=sslmode,
     )
+
+
+def database_identity(url: str) -> tuple[str, str, str]:
+    """서버와 데이터베이스의 실제 식별자를 읽습니다.
+
+    URL 문자열 비교로는 같은 DB 를 가리키는 다른 주소를 구분하지 못합니다. Neon 은 같은
+    브랜치에 pooler 주소와 직접 주소를 함께 주고, 포트 표기나 쿼리 매개변수도 다를 수
+    있습니다. 같은 DB 를 source 와 target 으로 쓰면 복제하지 않는 표까지 비웁니다.
+
+    Neon 브랜치는 한 프로젝트에서 갈라져 나와 `system_identifier` 와 database 이름이
+    서로 같습니다. 브랜치를 가르는 값은 `neon.timeline_id` 뿐이라 함께 읽습니다.
+    Neon 이 아닌 서버에서는 이 설정이 없어 빈 문자열이 되고, `system_identifier` 가
+    클러스터를 가릅니다.
+    """
+    with psycopg.connect(url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT system_identifier::text, "
+            "COALESCE(current_setting('neon.timeline_id', true), ''), "
+            "current_database() FROM pg_control_system()"
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("DB 식별자를 읽지 못했습니다.")
+        return str(row[0]), str(row[1]), str(row[2])
 
 
 def fetch_counts(url: str) -> dict[str, int]:
@@ -129,7 +166,7 @@ def _docker_pg_command(tool: str, connection: ConnectionParts, extra: list[str])
     """임시 컨테이너에서 돌릴 pg 도구 명령과 환경을 만듭니다. 비밀번호는 인자가 아닌 환경으로만 넘깁니다."""
     environment = dict(os.environ)
     environment["PGPASSWORD"] = connection.password
-    environment["PGSSLMODE"] = "require"
+    environment["PGSSLMODE"] = connection.sslmode
     command = [
         "docker",
         "run",
@@ -212,6 +249,12 @@ def promote(source_url: str, target_url: str, *, target: Target, apply: bool) ->
     """건수 비교 또는 트랜잭션 단위 카탈로그 복제를 수행합니다."""
     if source_url == target_url:
         raise ValueError("source와 target DB가 같습니다.")
+    source_identity = database_identity(source_url)
+    if source_identity == database_identity(target_url):
+        raise ValueError(
+            f"source와 target이 같은 DB입니다"
+            f"(서버 {source_identity[0]}, timeline {source_identity[1]}, database {source_identity[2]})."
+        )
     source_counts = fetch_counts(source_url)
     target_counts = fetch_counts(target_url)
     verify_reference_closure(target_url)

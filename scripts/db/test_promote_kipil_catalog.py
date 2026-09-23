@@ -13,6 +13,7 @@ from scripts.db.promote_kipil_catalog import (
     MUST_BE_EMPTY,
     PRODUCTION_CONFIRMATION,
     WIPED_TABLES,
+    _docker_pg_command,
     _write_prefix,
     parse_connection,
 )
@@ -97,3 +98,30 @@ def test_constraints_are_deferred_inside_the_restore_transaction() -> None:
 
     assert "SET CONSTRAINTS ALL DEFERRED;" in text
     assert text.index("SET CONSTRAINTS ALL DEFERRED;") < text.index("TRUNCATE TABLE ")
+
+
+def test_url_sslmode_is_not_downgraded() -> None:
+    """URL 이 더 강한 검증을 요구하면 그대로 씁니다. require 로 덮으면 인증서를 보지 않습니다."""
+    verify = parse_connection("postgresql://user:password@db.example.com/database?sslmode=verify-full")
+
+    assert verify.sslmode == "verify-full"
+    _, environment = _docker_pg_command("pg_dump", verify, [])
+    assert environment["PGSSLMODE"] == "verify-full"
+
+
+def test_sslmode_defaults_to_require_when_url_is_silent() -> None:
+    """URL 이 아무 말도 하지 않으면 최소한 암호화는 요구합니다."""
+    assert parse_connection("postgresql://user:password@db.example.com/database").sslmode == "require"
+
+
+def test_weak_sslmode_is_rejected() -> None:
+    """평문으로 떨어질 수 있는 설정으로는 카탈로그를 옮기지 않습니다."""
+    for mode in ("disable", "allow", "prefer"):
+        with pytest.raises(ValueError, match="sslmode"):
+            parse_connection(f"postgresql://user:password@db.example.com/database?sslmode={mode}")
+
+
+def test_sslrootcert_stops_instead_of_being_ignored() -> None:
+    """컨테이너 안에 없는 인증서를 조용히 무시하면 검증이 사라집니다."""
+    with pytest.raises(ValueError, match="sslrootcert"):
+        parse_connection("postgresql://user:password@db.example.com/database?sslmode=verify-full&sslrootcert=/tmp/ca")
