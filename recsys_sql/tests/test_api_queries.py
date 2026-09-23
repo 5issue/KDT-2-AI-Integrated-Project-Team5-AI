@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from recsys_fixtures import SeedIds
+from recsys_fixtures import SeedIds, seed_child_ingredient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -288,6 +288,28 @@ class TestMyFridge:
         assert float(stew["match_rate"]) == 1.0
         assert stew["missing_ingredients"] == []
 
+    async def test_child_ingredient_in_fridge_covers_parent_recipe_requirement(
+        self, db_conn: AsyncConnection, seeded: SeedIds
+    ) -> None:
+        """목심 Product를 보유하면 돼지고기 Recipe 재료를 보유한 것으로 칩니다."""
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
+
+        rows = await fetch(
+            db_conn,
+            "my_recipe_candidates",
+            {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100},
+        )
+        stew = next(row for row in rows if row["recipe_id"] == seeded.kimchi_stew)
+
+        assert float(stew["match_rate"]) == 1.0
+        assert stew["missing_ingredients"] == []
+
     async def test_missing_list_matches_missing_count(self, db_conn: AsyncConnection) -> None:
         """개수와 목록이 어긋나면 화면이 둘 중 무엇을 믿을지 알 수 없습니다."""
         rows = await fetch(
@@ -440,3 +462,176 @@ class TestApiSpecContract:
 
         assert len([row for row in rows if row["product_id"] == seeded.kimchi_a]) == 1
         assert len(kimchi["ingredients"]) == 2
+
+
+class TestRecommendationPriorityOrdering:
+    """추천 상품 우선순위가 첫 정렬 기준입니다.
+
+    데모·운영이 밀고 싶은 레시피는 seed 가 `recipe_product.recommendation_priority` 를 넣고,
+    SQL 은 레시피 id 를 모릅니다. 시드 사용자는 김치·돼지고기를 갖고 있어 김치찌개와
+    삼겹살구이가 둘 다 매칭률 1.0 이고, 조리시간이 짧은 김치찌개가 앞섭니다.
+    """
+
+    async def test_priority_beats_match_rate(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """매칭률이 낮아도 우선순위가 높으면 앞에 옵니다."""
+        # 삼겹살구이에 만료된 두부를 필수로 붙여 매칭률을 떨어뜨립니다.
+        await db_conn.execute(
+            text(
+                "INSERT INTO recipe_ingredient (recipe_id, ingredient_id, quantity, unit, is_required) "
+                "VALUES (:recipe_id, :ingredient_id, 100, 'g', TRUE)"
+            ),
+            {"recipe_id": seeded.pork_grill, "ingredient_id": seeded.tofu},
+        )
+        await db_conn.execute(
+            text(
+                "INSERT INTO recipe_product (recipe_id, ingredient_id, product_id, recommendation_priority) "
+                "VALUES (:recipe_id, :ingredient_id, :product_id, 100)"
+            ),
+            {"recipe_id": seeded.pork_grill, "ingredient_id": seeded.pork, "product_id": seeded.pork_a},
+        )
+
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        by_id = {row["recipe_id"]: row for row in rows}
+
+        assert rows[0]["recipe_id"] == seeded.pork_grill
+        assert float(by_id[seeded.pork_grill]["match_rate"]) < float(by_id[seeded.kimchi_stew]["match_rate"])
+
+    async def test_without_priority_match_rate_decides(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """우선순위가 없으면 기존 순서(매칭률 -> 부족 수 -> 조리시간)가 그대로입니다."""
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        order = [row["recipe_id"] for row in rows]
+
+        assert order[:2] == [seeded.kimchi_stew, seeded.pork_grill]
+
+    async def test_priority_does_not_add_a_column(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """정렬만 바꿉니다. Serving 응답을 바꾸는 새 컬럼은 내지 않습니다."""
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 1}
+        )
+
+        assert set(rows[0]) == {
+            "recipe_id",
+            "name",
+            "image_url",
+            "difficulty",
+            "cook_time_min",
+            "servings",
+            "required_count",
+            "available_count",
+            "missing_count",
+            "match_rate",
+            "missing_ingredients",
+        }
+
+    async def test_multiple_designated_products_count_once(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """한 레시피에 지정 상품이 여럿이어도 레시피는 한 번만 나옵니다. 집계를 레시피당 한 번 하기 때문입니다."""
+        for product_id in (seeded.tofu_a, seeded.tofu_b):
+            await db_conn.execute(
+                text(
+                    "INSERT INTO recipe_product (recipe_id, ingredient_id, product_id, recommendation_priority) "
+                    "VALUES (:recipe_id, :ingredient_id, :product_id, 100) ON CONFLICT DO NOTHING"
+                ),
+                {"recipe_id": seeded.kimchi_stew, "ingredient_id": seeded.tofu, "product_id": product_id},
+            )
+
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        ids = [row["recipe_id"] for row in rows]
+
+        assert ids[0] == seeded.kimchi_stew
+        assert ids.count(seeded.kimchi_stew) == 1
+
+
+class TestIngredientHierarchyAcrossQueries:
+    """child 보유는 parent 요구를 채우고, 그 반대는 아닙니다. 상세·상품 쿼리도 같은 규칙입니다."""
+
+    async def test_recipe_detail_marks_parent_as_in_fridge(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """목심 상품을 가진 사용자의 상세 화면에서 돼지고기는 보유입니다."""
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
+
+        rows = await fetch(
+            db_conn,
+            "recipe_missing_ingredients",
+            {"recipe_id": seeded.kimchi_stew, "base_product_id": 0, "user_id": seeded.user},
+        )
+        status = {row["ingredient_id"]: row["status"] for row in rows}
+
+        assert status[seeded.pork] == "IN_FRIDGE"
+
+    async def test_product_recipes_reach_parent_requirements(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """목심 상품으로 만들 수 있는 요리에 돼지고기를 요구하는 레시피가 들어옵니다."""
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
+
+        rows = await fetch(db_conn, "product_recipes", {"product_id": seeded.pork_a, "max_results": 50, "skip": 0})
+        recipe_ids = {row["recipe_id"] for row in rows}
+
+        assert {seeded.kimchi_stew, seeded.pork_grill} <= recipe_ids
+
+    async def test_hierarchy_stops_at_the_parent(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """계층은 1단계까지만 봅니다. 상품 PRIMARY 를 돼지고기 -> 목심 -> 목심 슬라이스로 두 번 옮깁니다.
+
+        손자 상품을 갖고 있으면 부모(목심)는 보유지만 조부모(돼지고기)는 아닙니다.
+
+        재귀로 끝까지 올라가지 않는 것이 정책입니다. 2단계가 필요해지면 데이터가 아니라
+        쿼리 규칙을 바꿔야 하고, 이 테스트가 그때 깨집니다.
+        """
+        pork_neck = await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 1000,
+            name="목심",
+            parent_id=seeded.pork,
+            repoint_product_id=seeded.pork_a,
+        )
+        await seed_child_ingredient(
+            db_conn,
+            ingredient_id=seeded.pork + 2000,
+            name="목심 슬라이스",
+            parent_id=pork_neck,
+            repoint_product_id=seeded.pork_a,
+        )
+
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        stew = next(row for row in rows if row["recipe_id"] == seeded.kimchi_stew)
+
+        assert seeded.pork in {item["ingredient_id"] for item in stew["missing_ingredients"]}
+
+    async def test_parent_in_fridge_does_not_cover_child_requirement(
+        self, db_conn: AsyncConnection, seeded: SeedIds
+    ) -> None:
+        """돼지고기 상품만 있으면 목심을 요구하는 레시피는 부족입니다."""
+        pork_neck = await seed_child_ingredient(
+            db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork
+        )
+        await db_conn.execute(
+            text(
+                "UPDATE recipe_ingredient SET ingredient_id = :child_id "
+                "WHERE recipe_id = :recipe_id AND ingredient_id = :parent_id"
+            ),
+            {"child_id": pork_neck, "recipe_id": seeded.pork_grill, "parent_id": seeded.pork},
+        )
+
+        rows = await fetch(
+            db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100}
+        )
+        grill = next((row for row in rows if row["recipe_id"] == seeded.pork_grill), None)
+
+        assert grill is None or grill["missing_count"] == 1

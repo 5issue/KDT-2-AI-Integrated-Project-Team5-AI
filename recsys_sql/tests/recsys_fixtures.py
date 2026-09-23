@@ -254,6 +254,41 @@ async def seed_recipes(conn: AsyncConnection, ids: SeedIds) -> None:
     )
 
 
+async def seed_child_ingredient(
+    conn: AsyncConnection,
+    *,
+    ingredient_id: int,
+    name: str,
+    parent_id: int,
+    repoint_product_id: int | None = None,
+) -> int:
+    """부모가 있는 재료를 하나 만듭니다. 계층 테스트가 전부 이 헬퍼를 씁니다.
+
+    `repoint_product_id` 를 주면 그 상품의 PRIMARY 를 부모에서 이 재료로 옮깁니다.
+    "돼지고기 상품" 을 "목심 상품" 으로 바꾸는 가장 짧은 방법입니다.
+    """
+    await conn.execute(
+        text(
+            "INSERT INTO ingredient ("
+            "ingredient_id, name, normalized_name, is_raw_material, aliases, nutrition, is_pantry, "
+            "source_identity_key, parent_ingredient_id"
+            ") VALUES ("
+            ":id, :name, :name, TRUE, '{}'::text[], '{}'::jsonb, FALSE, :source_key, :parent_id"
+            ")"
+        ),
+        {"id": ingredient_id, "name": name, "source_key": f"TEST-SEED:child:{name}", "parent_id": parent_id},
+    )
+    if repoint_product_id is not None:
+        await conn.execute(
+            text(
+                "UPDATE product_ingredient SET ingredient_id = :child_id "
+                "WHERE product_id = :product_id AND ingredient_id = :parent_id AND role = 'PRIMARY'"
+            ),
+            {"child_id": ingredient_id, "product_id": repoint_product_id, "parent_id": parent_id},
+        )
+    return ingredient_id
+
+
 async def seed_fridge(conn: AsyncConnection, ids: SeedIds) -> None:
     """냉장고 3칸. **두부는 유통기한이 지났습니다**(days=-1).
 

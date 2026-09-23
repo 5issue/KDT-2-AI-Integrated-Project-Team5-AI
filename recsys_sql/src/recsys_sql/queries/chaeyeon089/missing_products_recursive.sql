@@ -1,46 +1,54 @@
--- name: missing_products
+-- name: missing_products_recursive
 -- owner: chaeyeon089
--- description: 부족 재료와 재료별 추천 상품. 기준 상품(base_product_id) 갈래 포함
+-- description: [후보] missing_products 의 재귀 CTE 버전. 서빙은 쓰지 않고 비교용으로 보존합니다
 -- params: user_id:int, recipe_id:int, base_product_id:int, max_per_ingredient:int
 --
--- `GET /recipes/{recipeId}/missing-products` 용입니다. api_spec 18장(부족 재료 계산)과
--- 30장(부족 재료 상품 추천)을 하나로 통일한 명세를 받칩니다.
+-- 서비스가 쓰는 `missing_products` 는 계층을 1단계(자기 재료 + 부모)까지만 봅니다. 이 파일은 같은
+-- 규칙을 `WITH RECURSIVE` 로 조상 끝까지 따라가는 원래 초안입니다. 결과 모양과 랭킹은
+-- `missing_products` 와 같고, 다른 곳은 base·fridge 두 CTE 뿐입니다.
 --
--- `missing_ingredient_products` 에 base 갈래를 더한 것입니다. 기존 18장의
--- "지금 고른 상품(base_product_id)이 채우는 재료는 부족 목록에서 제외" 를 유지해,
--- 방금 담은 상품을 다시 추천하는 일이 없게 합니다.
+-- `missing_products` 를 1단계로 둔 이유: 현재 데이터의 계층 깊이는 최대 1단계(손자 재료 0)라 두 쿼리의
+-- 결과가 같습니다. 손자 재료가 생기면 결과가 갈리고, 그때 이 후보로 바꿀지 판단합니다.
+-- 성능 비교는 PR #28 의 EXPLAIN ANALYZE 결과를 봅니다.
 --
--- 보유 판정은 fridge_recipe_match / my_recipe_candidates 와 같은 정의를 씁니다
--- (냉장고 상품의 PRIMARY 재료와 부모 계층 + 상비재료). 다르면 "추천에서 부족하다던 재료가
--- 여기에는 없는" 불일치가 생깁니다.
---
--- user_id 0 은 냉장고 갈래 미사용(비로그인), base_product_id 0 은 기준 상품 미사용입니다.
--- 상품 랭킹: 레시피 지정 상품(recipe_product) > 최근 인기도 > 낮은 가격.
--- 비활성/품절 제외. stock_quantity NULL 은 품절이 아니라 "수량 미상"이라 후보에 남깁니다.
+-- 안전장치:
+--   - `CYCLE ingredient_id SET is_cycle USING path` 로 A -> B -> A 같은 순환을 만나면
+--     그 경로의 재귀를 멈춥니다. 데이터가 잘못 들어와도 무한 루프에 빠지지 않습니다.
+--   - UNION ALL 이라 같은 재료가 여러 경로로 나올 수 있어, 쓰는 쪽 CTE 에서 DISTINCT 로 접습니다.
+--   - 재귀 한 단계가 `ingredient.ingredient_id`(PK) 로 조인하므로 부모 쪽으로 올라갈 때는
+--     `parent_ingredient_id` 인덱스가 필요 없습니다.
 
-WITH base AS (
-    -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
-    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
-    SELECT DISTINCT h.ingredient_id
+WITH RECURSIVE base_walk(ingredient_id) AS (
+    -- 기준 상품의 PRIMARY 재료에서 시작해 조상을 끝까지 따라갑니다.
+    SELECT pi.ingredient_id
     FROM product_ingredient pi
-    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
-    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.product_id = :base_product_id
       AND pi.role = 'PRIMARY'
-      AND h.ingredient_id IS NOT NULL
+    UNION ALL
+    SELECT i.parent_ingredient_id
+    FROM base_walk b
+    JOIN ingredient i ON i.ingredient_id = b.ingredient_id
+    WHERE i.parent_ingredient_id IS NOT NULL
+) CYCLE ingredient_id SET is_cycle USING path,
+base AS (
+    SELECT DISTINCT ingredient_id FROM base_walk WHERE NOT is_cycle
 ),
-fridge AS (
-    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
-    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
-    SELECT DISTINCT h.ingredient_id
+fridge_walk(ingredient_id) AS (
+    -- 냉장고 상품의 PRIMARY 재료에서 시작해 조상을 끝까지 따라갑니다.
+    SELECT pi.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
-    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
-    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
-      AND h.ingredient_id IS NOT NULL
+    UNION ALL
+    SELECT i.parent_ingredient_id
+    FROM fridge_walk f
+    JOIN ingredient i ON i.ingredient_id = f.ingredient_id
+    WHERE i.parent_ingredient_id IS NOT NULL
+) CYCLE ingredient_id SET is_cycle USING path,
+fridge AS (
+    SELECT DISTINCT ingredient_id FROM fridge_walk WHERE NOT is_cycle
 ),
 missing AS (
     SELECT ri.ingredient_id

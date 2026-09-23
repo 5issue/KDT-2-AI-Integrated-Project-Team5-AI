@@ -58,6 +58,7 @@ from data_pipeline.load.bulk_insert import (
     collect_rows,
     run_load,
 )
+from data_pipeline.load.demo_scenario import run_demo_scenario
 from data_pipeline.load.demo_seed import run_demo_seed
 from data_pipeline.load.embedding import TARGETS as EMBEDDING_TARGETS
 from data_pipeline.load.embedding import run_embedding
@@ -288,6 +289,20 @@ def command_seed_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_seed_scenario(args: argparse.Namespace) -> int:
+    """데모 시나리오를 설정대로 맞추고 검증 결과를 보여줍니다."""
+    report = asyncio.run(
+        run_demo_scenario(settings=get_settings(), dry_run=not args.apply, rollback_path=args.rollback_sql)
+    )
+    print(report.render())
+    if not args.apply:
+        print("\n실제로 넣으려면 --apply 를 붙이세요.", file=sys.stderr)
+    if not report.ok:
+        print("\n검증에 실패한 항목이 있습니다.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def command_load(args: argparse.Namespace) -> int:
     """중간 산출물을 staging 에 COPY 하고 타깃 테이블에 반영합니다."""
     settings = get_settings()
@@ -383,6 +398,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="표식 없이 이미 채워진 재고까지 덮어씀 (기본은 NULL 이거나 seed-demo 가 쓴 행만)",
     )
     demo.set_defaults(func=command_seed_demo)
+
+    scenario = sub.add_parser("seed-scenario", help="데모 시나리오(사용자/냉장고/대표 상품) 고정")
+    scenario.add_argument("--apply", action="store_true", help="실제로 DB 에 반영")
+    scenario.add_argument(
+        "--rollback-sql",
+        type=Path,
+        default=None,
+        help="바꾸기 전 상태로 되돌리는 SQL 을 남길 경로",
+    )
+    scenario.set_defaults(func=command_seed_scenario)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")
