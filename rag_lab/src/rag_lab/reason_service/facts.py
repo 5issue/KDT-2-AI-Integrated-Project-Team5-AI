@@ -82,7 +82,7 @@ def facts_from_row(row: dict[str, Any]) -> RecipeFacts:
         have=_names(row, "held_ingredients"),
         missing=_names(row, "missing_ingredients"),
         pantry=_names(row, "pantry_ingredients"),
-        cook_time_min=row.get("cook_time_min"),
+        cook_time_min=None if row.get("cook_time_min") is None else int(row["cook_time_min"]),
         required_count=None if row.get("required_count") is None else int(row["required_count"]),
         available_count=None if row.get("available_count") is None else int(row["available_count"]),
         missing_count=None if row.get("missing_count") is None else int(row["missing_count"]),

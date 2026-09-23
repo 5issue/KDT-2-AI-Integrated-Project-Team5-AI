@@ -22,6 +22,12 @@ from .template import object_particle, template_reason
 
 logger = logging.getLogger(__name__)
 
+# 카드별 제한 시간. HTTP 계층에는 따로 두지 않고 이 하나로 상한을 정합니다.
+DEFAULT_TIMEOUT_SECONDS = 2.0
+# 화면은 캐러셀 3장입니다. 그 뒤 카드는 LLM 을 부르지 않고 규칙 문구를 씁니다.
+# 호출 수와 지연을 함께 묶습니다. limit=50 요청이 와도 LLM 호출은 3번, 대기는 한 번입니다.
+DEFAULT_MAX_LLM_CARDS = 3
+
 
 class ReasonClient(Protocol):
     async def complete(self, system: str, user: str) -> str: ...
@@ -66,34 +72,39 @@ async def generate_reasons(
     facts_list: list[RecipeFacts],
     client: ReasonClient | None,
     *,
-    timeout_seconds: float = 2.0,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     vocabulary: Iterable[str] = (),
+    max_llm_cards: int = DEFAULT_MAX_LLM_CARDS,
 ) -> list[ReasonResult]:
     """카드 목록의 문구를 동시에 만듭니다. 순서는 입력과 같습니다.
+
+    앞 ``max_llm_cards`` 장만 LLM 으로 만들고 나머지는 규칙 문구(``source="template"``)입니다.
 
     ``vocabulary`` 는 재료 이름 전체 사전입니다. 서빙은 앱 시작 때 ``ingredient`` 표에서 한 번 읽어 넘깁니다.
     비워 두면 옆 카드 재료 혼입만 잡고, 세 카드 어디에도 없는 재료를 지어낸 것은 잡지 못합니다.
     """
     if client is None or not facts_list:
         return [ReasonResult(template_reason(facts), "template") for facts in facts_list]
-    all_ingredients = [facts.known_ingredients for facts in facts_list]
+    head, tail = facts_list[:max_llm_cards], facts_list[max_llm_cards:]
+    all_ingredients = [facts.known_ingredients for facts in head]
     lexicon = frozenset(vocabulary)
     tasks = []
-    for index, facts in enumerate(facts_list):
-        foreign = set().union(*(names for other, names in enumerate(all_ingredients) if other != index))
+    for index, facts in enumerate(head):
+        foreign: set[str] = set().union(*(names for other, names in enumerate(all_ingredients) if other != index))
         tasks.append(_generate_one(facts, client, timeout_seconds=timeout_seconds, foreign=foreign, vocabulary=lexicon))
-    results = await asyncio.gather(*tasks)
+    results = list(await asyncio.gather(*tasks))
     fallbacks = sum(not result.is_llm for result in results)
     logger.info("추천 이유 생성: 카드 %d장, LLM %d장, 대체 %d장", len(results), len(results) - fallbacks, fallbacks)
-    return list(results)
+    return results + [ReasonResult(template_reason(facts), "template") for facts in tail]
 
 
 async def generate_reasons_for_rows(
     rows: list[dict[str, Any]],
     client: ReasonClient | None,
     *,
-    timeout_seconds: float = 2.0,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     vocabulary: Iterable[str] = (),
+    max_llm_cards: int = DEFAULT_MAX_LLM_CARDS,
 ) -> list[ReasonResult]:
     """``my_recipe_candidates`` 행 목록을 받습니다. 사실값이 어긋난 행은 LLM 에 넘기지 않습니다.
 
@@ -106,7 +117,7 @@ async def generate_reasons_for_rows(
         recipe = str(row.get("name", ""))
         try:
             facts = facts_from_row(row)
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             logger.warning("추천 행 %d의 재료 목록을 읽지 못했습니다: %s", index, type(exc).__name__)
             fixed[index] = ReasonResult(f"{recipe}{object_particle(recipe)} 추천해 드려요.", "fallback_invalid_row")
             continue
@@ -117,5 +128,9 @@ async def generate_reasons_for_rows(
             fixed[index] = ReasonResult(template_reason(facts), "fallback_invalid_row")
             continue
         valid.append(facts)
-    generated = iter(await generate_reasons(valid, client, timeout_seconds=timeout_seconds, vocabulary=vocabulary))
+    generated = iter(
+        await generate_reasons(
+            valid, client, timeout_seconds=timeout_seconds, vocabulary=vocabulary, max_llm_cards=max_llm_cards
+        )
+    )
     return [fixed[index] if index in fixed else next(generated) for index in range(len(rows))]

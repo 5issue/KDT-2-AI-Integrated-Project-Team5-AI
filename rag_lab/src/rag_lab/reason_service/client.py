@@ -7,13 +7,12 @@ API 키는 요청 헤더에만 쓰고 로그나 예외 메시지에 넣지 않�
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 DEFAULT_MODEL = "google/gemini-3.5-flash-lite"
-DEFAULT_TIMEOUT_SECONDS = 2.0
 BASE_URL = "https://openrouter.ai/api/v1"
 MAX_OUTPUT_TOKENS = 256
 # 실험의 Vertex `MINIMAL` 과 같은 조건. OpenRouter 의 이 모델은 `none` 을 거부합니다(400).
@@ -28,9 +27,8 @@ class ReasonClientError(RuntimeError):
 class ReasonSettings:
     """환경변수로 받는 설정. pydantic 을 쓰지 않아 어디에 복사해도 동작합니다."""
 
-    api_key: str
+    api_key: str = field(repr=False)  # 로그·예외에 설정 객체가 찍혀도 키는 안 보이게
     model: str = DEFAULT_MODEL
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> ReasonSettings:
@@ -42,7 +40,6 @@ class ReasonSettings:
         return cls(
             api_key=api_key,
             model=env.get("REASON_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL,
-            timeout_seconds=float(env.get("REASON_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)),
         )
 
 
@@ -54,6 +51,7 @@ class OpenRouterReasonClient:
         self._settings = settings
 
     async def complete(self, system: str, user: str) -> str:
+        # 제한 시간은 여기 두지 않습니다. 카드별 상한은 service.py 의 wait_for 하나가 정합니다.
         body: dict[str, Any] = {
             "model": self._settings.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -65,7 +63,6 @@ class OpenRouterReasonClient:
             f"{BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {self._settings.api_key}"},
             json=body,
-            timeout=self._settings.timeout_seconds,
         )
         if response.status_code >= 400:
             raise ReasonClientError(f"openrouter_http_{response.status_code}")

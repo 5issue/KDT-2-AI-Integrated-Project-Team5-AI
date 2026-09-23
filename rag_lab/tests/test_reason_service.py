@@ -92,10 +92,10 @@ def _chat_response(text: str, status: int = 200) -> httpx.Response:
     return httpx.Response(status, json={"choices": [{"message": {"role": "assistant", "content": text}}]})
 
 
-def _client(handler: Any, timeout: float = 2.0) -> OpenRouterReasonClient:
+def _client(handler: Any) -> OpenRouterReasonClient:
     """동기·비동기 handler 를 모두 받습니다. MockTransport 가 둘 다 지원합니다."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return OpenRouterReasonClient(http, ReasonSettings(api_key="test-key", timeout_seconds=timeout))
+    return OpenRouterReasonClient(http, ReasonSettings(api_key="test-key"))
 
 
 # --- facts ------------------------------------------------------------------
@@ -370,6 +370,28 @@ async def test_invalid_row_uses_template_without_blocking_others() -> None:
     assert results[1].text == "새송이버섯·모차렐라치즈 등 2가지를 더 준비하면 치즈토마토 가지구이를 만들 수 있어요."
 
 
+async def test_only_first_three_cards_call_the_llm() -> None:
+    """API limit 이 50 이어도 LLM 호출은 화면 크기(3장)만큼입니다. 뒤 카드는 규칙 문구입니다."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _chat_response(GOOD_REASONS[_recipe_of(request)])
+
+    results = await generate_reasons_for_rows(FRIDGE_ROWS * 2, _client(handler))
+    assert calls == 3
+    assert [result.source for result in results] == ["llm"] * 3 + ["template"] * 3
+
+
+async def test_bad_typed_row_falls_back_instead_of_raising() -> None:
+    """count 나 match_rate 에 이상한 타입이 와도 그 행만 규칙 문구로 빠지고 요청은 살아야 합니다."""
+    row = dict(FRIDGE_ROWS[0], match_rate=["0.8"])
+    results = await generate_reasons_for_rows([row, dict(FRIDGE_ROWS[1], cook_time_min="15")], None)
+    assert results[0].source == "fallback_invalid_row"
+    assert results[1].source == "template"
+
+
 async def test_unreadable_row_makes_no_ingredient_claim() -> None:
     row = dict(FRIDGE_ROWS[0], missing_ingredients="{not json")
     results = await generate_reasons_for_rows([row], None)
@@ -383,10 +405,9 @@ async def test_unreadable_row_makes_no_ingredient_claim() -> None:
 def test_settings_from_env_defaults_and_overrides() -> None:
     with pytest.raises(RuntimeError):
         ReasonSettings.from_env({})
-    settings = ReasonSettings.from_env({"OPENROUTER_API_KEY": "k", "REASON_TIMEOUT_SECONDS": "1.5"})
-    assert settings.model == "google/gemini-3.5-flash-lite"
-    assert settings.timeout_seconds == 1.5
-    assert "k" not in repr(settings.model)
+    settings = ReasonSettings.from_env({"OPENROUTER_API_KEY": "sk-secret-value", "REASON_MODEL": " m "})
+    assert settings.model == "m"
+    assert "sk-secret-value" not in repr(settings), "설정 객체가 로그에 찍혀도 키는 보이면 안 됩니다"
 
 
 def test_request_uses_minimal_reasoning_and_fixed_endpoint() -> None:
