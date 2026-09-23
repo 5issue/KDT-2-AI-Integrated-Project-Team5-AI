@@ -67,6 +67,7 @@ product_coverage AS (
     CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.role = 'PRIMARY'
       AND h.ingredient_id IS NOT NULL
+      AND h.ingredient_id IN (SELECT ingredient_id FROM missing)
 ),
 ranked AS (
     SELECT m.ingredient_id,
