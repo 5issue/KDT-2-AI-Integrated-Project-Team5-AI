@@ -86,7 +86,7 @@ Base URL: `/api/v1`
   쓰는 수" 입니다. 주문 로그가 쌓이면 인기도 점수로 교체합니다 (필드 계약 동일).
   존재하지 않는 `bubble_id` 는 404 입니다.
 - `HOME-01` 버블은 후보 레시피 수가 하한 미달이면 `enabled=false` 로 내려갑니다.
-  `type` 은 현재 `RECIPE` 고정입니다.
+  `type` 필드는 DB 내부 분류라 응답에서 제거했습니다 (FE 미사용 확인).
 - `RECIPE-01` 의 `nutrition` 은 원본(jsonb) 키를 그대로 냅니다 (`protein_g`,
   `sodium_mg` 등, 원본마다 채워진 항목이 다름). 명세 17장의 calories/protein/
   carbs/fat 로 펴면 대부분 null 이 되어 키 통일은 협의 대상입니다. `steps[]` 는
@@ -107,7 +107,7 @@ Base URL: `/api/v1`
 `GET /api/v1/recommendations/my-recipes`
 
 - Header: `X-User-Id` (필수)
-- Query: `min_match_rate` (0~1, 기본 0.5), `limit` (1~50, 기본 10)
+- Query: `limit` (1~50, 기본 10). 매칭률 하한은 서버 고정 0.5 (FE 합의로 파라미터 제거)
 - SQL: 카탈로그 `my_recipe_candidates` (보유 판정: 냉장고 상품의 PRIMARY 재료 +
   상비재료, 만료 재료 제외)
 - `recommendation_reason` 은 현재 규칙 기반 문장입니다

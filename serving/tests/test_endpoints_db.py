@@ -55,7 +55,8 @@ async def test_home_bubbles_query_runs(live_client: AsyncClient) -> None:
     envelope = response.json()
     assert envelope["status"] == "SUCCESS"
     for item in envelope["data"]["items"]:
-        assert {"bubble_id", "label", "type", "enabled"} <= set(item)
+        assert {"bubble_id", "label", "enabled"} <= set(item)
+        assert "type" not in item
 
 
 async def test_product_endpoints_query_runs(live_client: AsyncClient) -> None:

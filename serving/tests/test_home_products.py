@@ -40,7 +40,7 @@ async def test_product_id_is_validated(validating_client: AsyncClient) -> None:
 
 
 def test_bubble_item_maps_row_to_spec_shape() -> None:
-    """keyword_id -> bubble_id, is_servable -> enabled 로 매핑합니다 (명세 13장)."""
+    """keyword_id -> bubble_id, is_servable -> enabled 로 매핑하고 type 은 내지 않습니다."""
     item = BubbleItem.from_row(
         {
             "keyword_id": "MEAT",
@@ -53,8 +53,9 @@ def test_bubble_item_maps_row_to_spec_shape() -> None:
     )
 
     assert item.bubble_id == "MEAT"
-    assert item.type == "RECIPE"
     assert item.enabled is True
+    # type 은 DB 내부 분류라 응답에서 제거하기로 확정 (FE 미사용 확인)
+    assert "type" not in item.model_dump()
 
 
 def test_product_detail_maps_row_and_parses_ingredients() -> None:
