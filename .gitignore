@@ -23,6 +23,8 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# 팀에 공유하기로 한 노트북만 예외로 추적합니다.
+!notebooks/ingredient_master_storage_alignment.ipynb
 
 # 모델 가중치 / 데이터 (용량이 크므로 Git LFS 또는 제외)
 *.pt
