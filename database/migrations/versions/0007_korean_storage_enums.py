@@ -21,6 +21,7 @@ Revision ID: 0007_korean_storage_enums
 Revises: 0006_bubble_keyword_seed
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0007_korean_storage_enums"
@@ -63,30 +64,34 @@ def _in_list(column: str, values: tuple[str, ...]) -> str:
 
 
 def upgrade() -> None:
+    """화면에 나가는 열거값을 한국어 한 벌로 모은다."""
     # CHECK 가 옛 값을 붙들고 있어 UPDATE 보다 먼저 떼어낸다.
-    op.drop_constraint("ck_storage_guideline_location", "storage_guideline", type_="check")
-    op.drop_constraint("ck_storage_guideline_context", "storage_guideline", type_="check")
+    # 초기 Production에는 최초 storage migration이 적용되지 않았다. 그 경로는
+    # 0013에서 최종 스키마로 생성하고, 이미 테이블이 있는 KIPIL만 여기서 값을 변환한다.
+    if sa.inspect(op.get_bind()).has_table("storage_guideline"):
+        op.drop_constraint("ck_storage_guideline_location", "storage_guideline", type_="check")
+        op.drop_constraint("ck_storage_guideline_context", "storage_guideline", type_="check")
 
-    op.execute(_case("storage_location", LOCATIONS).format(table="storage_guideline"))
-    op.execute(_case("storage_context", CONTEXTS).format(table="storage_guideline"))
-    op.execute(_case("duration_unit", DURATION_UNITS).format(table="storage_guideline"))
+        op.execute(_case("storage_location", LOCATIONS).format(table="storage_guideline"))
+        op.execute(_case("storage_context", CONTEXTS).format(table="storage_guideline"))
+        op.execute(_case("duration_unit", DURATION_UNITS).format(table="storage_guideline"))
+
+        op.create_check_constraint(
+            "ck_storage_guideline_location",
+            "storage_guideline",
+            _in_list("storage_location", ("냉장", "냉동", "상온")),
+        )
+        op.create_check_constraint(
+            "ck_storage_guideline_context",
+            "storage_guideline",
+            _in_list("storage_context", ("일반", "구매후", "개봉후", "해동후")),
+        )
+        op.create_check_constraint(
+            "ck_storage_guideline_duration_unit",
+            "storage_guideline",
+            "duration_unit IS NULL OR " + _in_list("duration_unit", ("시간", "일", "주", "개월", "년")),
+        )
     op.execute(_case("storage_type", STORAGE_TYPES).format(table="product"))
-
-    op.create_check_constraint(
-        "ck_storage_guideline_location",
-        "storage_guideline",
-        _in_list("storage_location", ("냉장", "냉동", "상온")),
-    )
-    op.create_check_constraint(
-        "ck_storage_guideline_context",
-        "storage_guideline",
-        _in_list("storage_context", ("일반", "구매후", "개봉후", "해동후")),
-    )
-    op.create_check_constraint(
-        "ck_storage_guideline_duration_unit",
-        "storage_guideline",
-        "duration_unit IS NULL OR " + _in_list("duration_unit", ("시간", "일", "주", "개월", "년")),
-    )
     # product.storage_type 은 아직 비어 있는 행이 1,551 개라 NULL 을 허용한다.
     op.create_check_constraint(
         "ck_product_storage_type",
@@ -96,13 +101,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """열거값을 영어로 되돌린다. 표가 없는 경로에서는 product 만 되돌린다."""
+    # upgrade 와 같은 조건으로 나눈다. 초기 Production 경로에서는 0013 이 표를 만들고
+    # 되감을 때 먼저 지우므로, 여기서는 없는 표에 접근하게 된다. product 는 두 경로 모두
+    # 존재하므로 조건 밖에 둔다.
     op.drop_constraint("ck_product_storage_type", "product", type_="check")
+    # 되돌릴 때는 단수형을 살릴 수 없다. `Year` 3건은 `Years` 로 합쳐진 채 남는다.
+    op.execute(_case("storage_type", {v: k for k, v in STORAGE_TYPES.items()}).format(table="product"))
+
+    if not sa.inspect(op.get_bind()).has_table("storage_guideline"):
+        return
+
     op.drop_constraint("ck_storage_guideline_duration_unit", "storage_guideline", type_="check")
     op.drop_constraint("ck_storage_guideline_context", "storage_guideline", type_="check")
     op.drop_constraint("ck_storage_guideline_location", "storage_guideline", type_="check")
 
-    # 되돌릴 때는 단수형을 살릴 수 없다. `Year` 3건은 `Years` 로 합쳐진 채 남는다.
-    op.execute(_case("storage_type", {v: k for k, v in STORAGE_TYPES.items()}).format(table="product"))
     op.execute(
         _case("duration_unit", {"시간": "Hours", "일": "Days", "주": "Weeks", "개월": "Months", "년": "Years"}).format(
             table="storage_guideline"
