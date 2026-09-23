@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -18,7 +19,7 @@ PATH = "/api/v1/recommendations/my-recipes"
 USER_HEADER = {"X-User-Id": "1"}
 
 
-def _sample_row() -> dict:
+def _sample_row() -> dict[str, Any]:
     """my_recipe_candidates 쿼리가 내는 행 모양. jsonb 는 asyncpg 기본 설정에서 str 로 옵니다."""
     return {
         "recipe_id": 1001,
@@ -63,10 +64,22 @@ async def test_my_recipes_returns_503_without_pool(offline_client: AsyncClient) 
 
 async def test_my_recipes_validates_query_params(validating_client: AsyncClient) -> None:
     """파라미터 범위는 DB 까지 가기 전에 422 로 걸립니다."""
-    for params in ({"min_match_rate": "1.5"}, {"limit": "999"}):
-        response = await validating_client.get(PATH, headers=USER_HEADER, params=params)
-        assert response.status_code == 422, params
-        assert response.json()["error"] == "INVALID_INPUT_VALUE"
+    response = await validating_client.get(PATH, headers=USER_HEADER, params={"limit": "999"})
+    assert response.status_code == 422
+    assert response.json()["error"] == "INVALID_INPUT_VALUE"
+
+
+def test_min_match_rate_is_no_longer_a_parameter() -> None:
+    """min_match_rate 는 FE 합의로 닫혔습니다 (서버 고정 0.5). OpenAPI 계약에서 제거를 고정합니다."""
+    from serving.app import create_app
+    from serving.config import Settings
+
+    app = create_app(Settings(_env_file=None, environment="local"))  # type: ignore[call-arg]
+    operation = app.openapi()["paths"][PATH]["get"]
+    parameter_names = [param["name"] for param in operation.get("parameters", [])]
+
+    assert "min_match_rate" not in parameter_names
+    assert "limit" in parameter_names
 
 
 async def test_legacy_user_scoped_paths_are_gone(offline_client: AsyncClient) -> None:

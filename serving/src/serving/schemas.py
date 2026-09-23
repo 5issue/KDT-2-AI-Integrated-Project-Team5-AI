@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -109,7 +110,6 @@ class BubbleItem(BaseModel):
     bubble_id: str
     label: str
     description: str | None = None
-    type: str = "RECIPE"
     enabled: bool
 
     @classmethod
@@ -117,7 +117,8 @@ class BubbleItem(BaseModel):
         """bubble_candidate_counts 행을 명세 모양으로 바꿉니다.
 
         keyword_id 가 곧 버블 코드이고, 후보 수가 하한 미달이면 enabled=false 로
-        내려서 화면이 누를 수 없게 합니다. type 은 현재 레시피 버블뿐이라 상수입니다.
+        내려서 화면이 누를 수 없게 합니다. type 은 DB 내부 분류라 내지 않습니다
+        (FE 미사용 확인 후 제거 확정).
         """
         return cls(
             bubble_id=row["keyword_id"],
@@ -361,3 +362,158 @@ class MissingProductsResponse(BaseModel):
                 )
             )
         return cls(recipe_id=recipe_id, missing_ingredients=list(grouped.values()))
+
+
+class BubbleRef(BaseModel):
+    """추천 버블 참조 (명세 14장 bubble 객체)."""
+
+    id: str
+    label: str
+
+
+class RecommendedProduct(BaseModel):
+    """추천 상품 정보 (명세 14장 product 객체). 명세에 없는 컬럼은 내지 않습니다."""
+
+    product_id: int
+    name: str
+    price: float
+    weight_g: int | None = None
+    product_type: str | None = None
+    storage_type: str | None = None
+    origin_country: str | None = None
+    stock_quantity: int | None = None
+
+
+class ProductRecommendationInfo(BaseModel):
+    """추천 근거 (명세 14장 recommendation 객체).
+
+    주문 로그가 아직 없어 score 는 "이 버블의 레시피 중 이 재료를 쓰는 수" 입니다.
+    인기도 원천이 쌓이면 점수 정의를 교체합니다 (필드 계약은 동일).
+    """
+
+    score: float
+    reason: str
+
+
+class BubbleProductItem(BaseModel):
+    """버블 상품 추천 한 건."""
+
+    product: RecommendedProduct
+    recommendation: ProductRecommendationInfo
+
+
+class BubbleProductsResponse(BaseModel):
+    """버블 기반 상품 추천 (명세 14장 data)."""
+
+    bubble: BubbleRef
+    items: list[BubbleProductItem]
+
+    @classmethod
+    def from_rows(cls, bubble_id: str, bubble_label: str, rows: list[dict[str, Any]]) -> BubbleProductsResponse:
+        items = [
+            BubbleProductItem(
+                product=RecommendedProduct(
+                    product_id=row["product_id"],
+                    name=row["name"],
+                    price=float(row["price"]),
+                    weight_g=row["weight_g"],
+                    product_type=row["product_type"],
+                    storage_type=row["storage_type"],
+                    origin_country=row["origin_country"],
+                    stock_quantity=row["stock_quantity"],
+                ),
+                recommendation=ProductRecommendationInfo(
+                    score=float(row["recipe_count"]),
+                    reason=f"이 버블의 레시피 {row['recipe_count']}개에 쓰이는 재료예요",
+                ),
+            )
+            for row in rows
+        ]
+        return cls(bubble=BubbleRef(id=bubble_id, label=bubble_label), items=items)
+
+
+class FridgeProductRef(BaseModel):
+    """냉장고 품목의 상품 정보 (명세 20장 product 객체)."""
+
+    product_id: int
+    name: str
+    storage_type: str | None = None
+    weight_g: int | None = None
+
+
+class FridgeIngredientRef(BaseModel):
+    """냉장고 품목의 대표 재료. PRIMARY 가 여럿인 상품은 배열로 냅니다."""
+
+    ingredient_id: int
+    name: str
+
+
+class FridgeItem(BaseModel):
+    """My냉장고 품목 한 칸 (명세 20장).
+
+    실제 스키마에 fridge_item_id 가 없어(복합 PK) 수정·삭제 키는 product_id 입니다.
+    명세의 ingredient 단수 대신 ingredients 배열입니다 (밀키트 대응).
+    """
+
+    product: FridgeProductRef
+    ingredients: list[FridgeIngredientRef]
+    quantity: float
+    unit: str
+    expires_at: datetime | None = None
+    is_expired: bool
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> FridgeItem:
+        raw = row["ingredients"]
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        return cls(
+            product=FridgeProductRef(
+                product_id=row["product_id"],
+                name=row["product_name"],
+                storage_type=row["storage_type"],
+                weight_g=row["weight_g"],
+            ),
+            ingredients=[FridgeIngredientRef.model_validate(i) for i in parsed],
+            quantity=float(row["quantity"]),
+            unit=row["unit"],
+            expires_at=row["expires_at"],
+            is_expired=bool(row["is_expired"]),
+        )
+
+
+class FridgeListResponse(BaseModel):
+    """My냉장고 품목 목록 (명세 20장 data)."""
+
+    items: list[FridgeItem]
+
+
+class FridgeItemCreate(BaseModel):
+    """품목 추가 요청 (명세 23장 POST body)."""
+
+    product_id: int = Field(ge=1)
+    quantity: float = Field(gt=0)
+    unit: str = Field(min_length=1, max_length=20)
+    expires_at: datetime | None = None
+
+
+class FridgeItemUpdate(BaseModel):
+    """품목 수정 요청 (명세 23장 PATCH body). 최소 한 필드는 있어야 합니다."""
+
+    quantity: float | None = Field(default=None, gt=0)
+    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _require_any_field(self) -> FridgeItemUpdate:
+        if not self.model_fields_set:
+            raise ValueError("수정할 필드가 최소 하나 필요합니다")
+        return self
+
+
+class FridgeItemSummary(BaseModel):
+    """추가/수정 응답 (명세 23장). 키는 product_id 입니다."""
+
+    product_id: int
+    quantity: float
+    unit: str
+    expires_at: datetime | None = None

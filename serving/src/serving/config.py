@@ -33,6 +33,15 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    # 종료 유예(초). SIGTERM 후 ALB 가 이 파드를 트래픽에서 제외할 때까지 기다려
+    # 502 를 막습니다 (전파에 보통 2~5초). 로컬/테스트는 0 으로 끕니다.
+    shutdown_delay_seconds: float = Field(default=5.0, ge=0)
+
+    # /api/v1 분당 요청 한도. 0 이면 비활성. 추천 경로는 별도(더 낮은) 한도.
+    # 프로세스별 카운터라 워커 수만큼 배수가 됩니다.
+    rate_limit_per_minute: int = Field(default=60, ge=0)
+    rate_limit_reco_per_minute: int = Field(default=10, ge=0)
+
     cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
@@ -47,7 +56,8 @@ class Settings(BaseSettings):
     @property
     def docs_url(self) -> str | None:
         """local 이 아니면 문서 페이지를 닫습니다. 스키마 노출을 줄입니다."""
-        return "/docs" if self.environment == "local" else None
+        # FE 가 연동 전 dev 데모에서 계약을 확인할 수 있게 prod 에서만 닫습니다.
+        return "/docs" if self.environment in ("local", "dev") else None
 
     def require_database_url(self) -> str:
         """DB URL 을 꺼내되, 비어 있으면 값 노출 없이 실패시킵니다."""

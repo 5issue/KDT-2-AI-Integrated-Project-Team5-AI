@@ -105,6 +105,22 @@ uv run pytest serving/tests -q
 | `tests/test_app.py`          | 아니오  | 라우팅, 503 처리, 입력 검증, 카탈로그 계약, .sql 복사본 금지 |
 | `tests/test_endpoints_db.py` | 예      | 실제 Neon 에서 카탈로그 SQL 실행 + 응답 스키마               |
 
+## FE 연동 전 데모 띄우기 (스웨거 포함)
+
+```bash
+docker build -f serving/Dockerfile -t serving .
+docker run --rm -p 8000:8000 \
+  -e DATABASE_URL='<dev 브랜치 접속 문자열>' \
+  -e ENVIRONMENT=dev -e HOST=0.0.0.0 \
+  serving
+```
+
+- 스웨거: http://localhost:8000/docs (계약 확인·직접 호출 가능)
+- OpenAPI 스펙: http://localhost:8000/openapi.json (FE 타입 생성용)
+- 스웨거는 local/dev 에서 열리고 **prod 에서만 닫힙니다.**
+- 사용자 컨텍스트가 필요한 API 는 `X-User-Id` 헤더를 넣으세요
+  (dev DB 의 테스트 사용자: 9200000001~9200000020).
+
 # fastapi 배포
 
 기본적으로 Dockerfile로 만들어서 AWS EKS에 배포할 계획
