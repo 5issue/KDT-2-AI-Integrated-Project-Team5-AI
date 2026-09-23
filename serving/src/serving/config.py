@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
+    # 추천 이유 LLM 생성(rag_lab.reason_service). 키가 비어 있으면 규칙 기반 문구만 나갑니다.
+    # 제한 시간과 LLM 카드 수는 환경변수가 아니라 reason_service 의 상수입니다.
+    openrouter_api_key: SecretStr | None = None
+    reason_model: str = ""
+
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def split_csv(cls, value: object) -> object:
@@ -58,6 +63,11 @@ class Settings(BaseSettings):
         """local 이 아니면 문서 페이지를 닫습니다. 스키마 노출을 줄입니다."""
         # FE 가 연동 전 dev 데모에서 계약을 확인할 수 있게 prod 에서만 닫습니다.
         return "/docs" if self.environment in ("local", "dev") else None
+
+    def reason_environ(self) -> dict[str, str]:
+        """``ReasonSettings.from_env`` 에 넘길 값. serving 은 .env 를 os.environ 에 올리지 않습니다."""
+        api_key = "" if self.openrouter_api_key is None else self.openrouter_api_key.get_secret_value()
+        return {"OPENROUTER_API_KEY": api_key, "REASON_MODEL": self.reason_model}
 
     def require_database_url(self) -> str:
         """DB URL 을 꺼내되, 비어 있으면 값 노출 없이 실패시킵니다."""

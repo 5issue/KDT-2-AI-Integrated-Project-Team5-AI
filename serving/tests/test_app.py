@@ -97,3 +97,22 @@ def test_repository_layer_does_not_drag_in_sqlalchemy() -> None:
         check=True,
     )
     assert result.stdout.strip() == "False", "serving.queries 가 SQLAlchemy 를 끌어옵니다."
+
+
+def test_reason_service_does_not_drag_in_rag_experiment_packages() -> None:
+    """서빙은 ``rag_lab.reason_service`` 만 씁니다. LangGraph·OpenAI SDK 가 따라오면 이미지에서 죽습니다."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import serving.app, sys; "
+            "print(sorted(m for m in ('langgraph', 'openai', 'sqlalchemy') if m in sys.modules))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "[]", result.stdout
