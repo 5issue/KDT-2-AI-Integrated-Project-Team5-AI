@@ -9,16 +9,29 @@
 -- api_spec 21절이 부족 재료 **목록**까지 요구해서, 개수만 내는 쪽으로는 부족합니다.
 -- 화면에서 개수를 보고 다시 재료를 물으면 왕복이 레시피 수만큼 늘어납니다.
 --
--- 보유 판정: 냉장고 상품의 PRIMARY 재료 + 상비재료.
+-- 보유 판정: 냉장고 상품의 PRIMARY 재료와 그 부모 계층 + 상비재료.
+-- Product가 목심처럼 구체적인 child를 가리키면 돼지고기 같은 상위 Recipe 재료도
+-- 채웁니다. 반대 방향(돼지고기 보유로 목심 충족)은 허용하지 않습니다.
 -- 냉장고 재료를 하나도 쓰지 않는 레시피는 후보에서 먼저 잘라냅니다.
+--
+-- 정렬: 레시피별 추천 상품 우선순위(`recipe_product.recommendation_priority` 의 MAX) 가
+-- 첫 기준입니다. 데모·운영이 밀고 싶은 레시피는 seed 가 이 값을 넣고, SQL 은 레시피 id 를
+-- 모릅니다. 우선순위가 같으면 매칭률 -> 부족 수 -> 조리시간 -> id 순입니다.
+-- 우선순위는 레시피당 한 번 집계합니다. recipe_product 를 그대로 조인하면 상품 수만큼
+-- 행이 불어납니다.
 
 WITH fridge AS (
-    SELECT DISTINCT pi.ingredient_id
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
+    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND h.ingredient_id IS NOT NULL
 ),
 candidate AS (
     SELECT DISTINCT ri.recipe_id
@@ -49,6 +62,12 @@ match AS (
     JOIN ingredient i         ON i.ingredient_id = ri.ingredient_id
     LEFT JOIN fridge f        ON f.ingredient_id = ri.ingredient_id
     GROUP BY ri.recipe_id
+),
+priority AS (
+    SELECT rp.recipe_id,
+           MAX(rp.recommendation_priority) AS recommendation_priority
+    FROM recipe_product rp
+    GROUP BY rp.recipe_id
 )
 SELECT r.recipe_id,
        r.name,
@@ -62,10 +81,12 @@ SELECT r.recipe_id,
        ROUND(m.available_count::numeric / m.required_count, 3) AS match_rate,
        m.missing_ingredients
 FROM match m
-JOIN recipe r ON r.recipe_id = m.recipe_id
+JOIN recipe r          ON r.recipe_id = m.recipe_id
+LEFT JOIN priority pr  ON pr.recipe_id = m.recipe_id
 WHERE m.required_count > 0
   AND m.available_count::numeric / m.required_count >= :min_match_rate
-ORDER BY match_rate DESC,
+ORDER BY COALESCE(pr.recommendation_priority, 0) DESC,
+         match_rate DESC,
          m.missing_count ASC,
          r.cook_time_min ASC NULLS LAST,
          r.recipe_id ASC
