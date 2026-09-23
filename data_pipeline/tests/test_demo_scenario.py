@@ -1,6 +1,6 @@
 """데모 시나리오 시드의 설정 읽기와 불변식 테스트입니다.
 
-DB 없이 검증할 수 있는 것만 여기서 봅니다. 원천 키 조회와 검증 8항목은 실제 스키마가
+DB 없이 검증할 수 있는 것만 여기서 봅니다. 원천 키 조회와 검증 7항목은 실제 스키마가
 필요해 통합 검증으로 돌립니다.
 """
 
@@ -14,7 +14,6 @@ from data_pipeline.load.demo_scenario import (
     ROLE_FRIDGE,
     ROLE_MISSING,
     ScenarioReport,
-    check_display_order,
     config_version,
     load_products,
     load_recipes,
@@ -49,25 +48,6 @@ def test_purchase_flow_must_not_be_ambiguous() -> None:
         purchase_flow_recipe([recipe for recipe in recipes if not recipe.is_purchase_flow])
     with pytest.raises(ValueError, match="정확히 하나"):
         purchase_flow_recipe(only_flags * 2)
-
-
-def test_display_order_is_one_two_three_per_cycle() -> None:
-    """각 노출 주기에 1, 2, 3 이 한 번씩 있어야 화면 순서가 정해집니다."""
-    passed, detail = check_display_order(load_recipes())
-
-    assert passed, detail
-    assert "2개 주기" in detail
-
-
-def test_broken_display_order_is_caught() -> None:
-    """순서가 겹치면 잡힙니다."""
-    recipes = load_recipes()
-    broken = [recipes[0], recipes[0], recipes[0]]
-
-    passed, detail = check_display_order(broken)
-
-    assert not passed
-    assert "1,2,3" in detail
 
 
 def test_fridge_products_carry_expected_ingredient() -> None:

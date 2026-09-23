@@ -52,8 +52,6 @@ class DemoRecipe:
     source_type: str
     source_recipe_id: str
     expected_name: str
-    refresh_cycle: int
-    display_order: int
     is_purchase_flow: bool
 
 
@@ -133,8 +131,6 @@ def load_recipes(path: Path = RECIPES_CSV) -> list[DemoRecipe]:
             source_type=row["source_type"],
             source_recipe_id=row["source_recipe_id"],
             expected_name=row["expected_name"],
-            refresh_cycle=int(row["refresh_cycle"]),
-            display_order=int(row["display_order"]),
             is_purchase_flow=row["is_purchase_flow_ready"].lower() == "true",
         )
         for row in _read_rows(path)
@@ -162,17 +158,6 @@ def purchase_flow_recipe(recipes: list[DemoRecipe]) -> DemoRecipe:
     if len(targets) != 1:
         raise ValueError(f"is_purchase_flow_ready 가 정확히 하나여야 합니다 (현재 {len(targets)}개).")
     return targets[0]
-
-
-def check_display_order(recipes: list[DemoRecipe]) -> tuple[bool, str]:
-    """각 노출 주기에 1, 2, 3 이 한 번씩 있는지 봅니다."""
-    cycles: dict[int, list[int]] = {}
-    for recipe in recipes:
-        cycles.setdefault(recipe.refresh_cycle, []).append(recipe.display_order)
-    broken = {cycle: sorted(orders) for cycle, orders in cycles.items() if sorted(orders) != [1, 2, 3]}
-    if broken:
-        return False, f"주기별 노출 순서가 1,2,3 이 아님: {broken}"
-    return True, f"{len(cycles)}개 주기 x 3개"
 
 
 async def resolve_recipes(conn: asyncpg.Connection, recipes: list[DemoRecipe]) -> dict[str, int]:
@@ -379,7 +364,7 @@ async def verify(
     fridge_rows: list[asyncpg.Record],
     missing_rows: list[asyncpg.Record],
 ) -> list[tuple[str, bool, str]]:
-    """인계서의 검증 8항목입니다. 하나라도 어긋나면 실패로 남깁니다."""
+    """인계서의 검증 7항목입니다. 하나라도 어긋나면 실패로 남깁니다."""
     checks: list[tuple[str, bool, str]] = []
 
     user_count = await conn.fetchval("SELECT count(*) FROM app_user WHERE user_id = $1", DEMO_USER_ID)
@@ -388,8 +373,6 @@ async def verify(
     checks.append(
         ("확정 레시피 원천 키와 이름 일치", len(recipe_ids) == len(recipes), f"{len(recipe_ids)}/{len(recipes)}")
     )
-    order_ok, order_detail = check_display_order(recipes)
-    checks.append(("노출 주기별 순서가 1,2,3", order_ok, order_detail))
 
     expected_products = {row["product_id"] for row in fridge_rows}
     actual = {
