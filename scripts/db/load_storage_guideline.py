@@ -4,12 +4,25 @@ KIPIL의 935행에는 서비스 자연키 `(ingredient_id, storage_location, sto
 중복되는 조합이 160개 있습니다. 전수 분해해 보면 그중 125개는 **서로 다른 FoodKeeper 원천이
 한 Ingredient에 뭉친 것**이고, 같은 원천이 기간만 다르게 들어온 경우는 0건입니다.
 
-따라서 이 스크립트는 중복을 병합하지 않습니다. 기간이 같은 조합만 대표 1건으로 접고,
-기간이 다른 조합은 적재하지 않고 보류 리포트로 남깁니다. 가장 짧은 기간을 고르는 식으로
-자동 확정하면 생닭 상품에 튀긴 닭 지침이 사실처럼 표시됩니다. 모르는 값은 지어내지 않습니다.
+뭉친 원천은 세 단계로 풉니다.
 
-보류는 버리는 것이 아니라 Ingredient 매핑 과제 목록입니다. 원천을 부위·형태별 child
-Ingredient로 가르는 기준은 `docs/product-ingredient-storage-normalization-guide.md` 3.3, 5.6절입니다.
+1. 원재료(`is_raw_material`) Ingredient 에서는 가공·조리 원천을 뺍니다. 생닭에 너겟이나
+   튀긴 닭 지침을 붙이지 않습니다. 가공·조리 식품의 지침은 그 제품 기준이라 생고기 상품에
+   보여 주면 틀린 보관 정보가 됩니다. 예를 들어 생닭 상품의 `냉장·해동후` 에 치킨너겟 기준
+   1-2일이 나가고 있었습니다. 가공 원천 목록은 `config/foodkeeper_processed_sources.csv`
+   (FoodKeeper 카테고리 11-14, 16, 17)입니다. 햄·베이컨처럼 원래 가공품인 Ingredient 는 그대로 둡니다.
+2. `config/foodkeeper_ingredient_child_rules.csv` 가 가리키는 원천은 부위 child Ingredient 로
+   옮깁니다. `Pork, loin chops` 는 `돼지고기` 가 아니라 `돼지고기 > 등심` 의 지침입니다.
+   규칙은 원천 항목 단위로 검토한 것이라 원래 Ingredient 보다 우선합니다. `Beef, short ribs` 가
+   `돼지고기` 에 잘못 붙어 있어도 `소고기 > 갈비` 로 옮깁니다.
+3. 그래도 한 자연키에 기간이 다른 원천이 남으면 **가장 짧은 기간**을 대표로 고릅니다.
+   긴 쪽을 보여 주면 상한 음식을 먹으라고 하는 셈이기 때문입니다. 고른 조합은 모두
+   결정 리포트로 남겨 검토할 수 있게 합니다.
+
+기간이 같은 조합은 표기만 다른 것이므로 원천 식별자 순서로 대표 1건을 고릅니다.
+원천을 부위·형태별 child 로 가르는 기준은 `docs/product-ingredient-storage-normalization-guide.md`
+3.3, 5.6절입니다. 적재는 upsert 로 하며, 대상에서 지우는 행은 1단계 규칙에 걸리는 행(원재료에
+붙은 가공 원천)뿐입니다.
 
 기본 동작은 대상 DB를 바꾸지 않는 dry-run이며, Production 적용에는 확인 문자열이 필요합니다.
 """
@@ -17,9 +30,10 @@ Ingredient로 가르는 기준은 `docs/product-ingredient-storage-normalization
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -30,6 +44,11 @@ from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_CONFIRMATION = "LOAD_STORAGE_GUIDELINE_V1"
+CHILD_RULES_CSV = ROOT / "config" / "foodkeeper_ingredient_child_rules.csv"
+PROCESSED_SOURCES_CSV = ROOT / "config" / "foodkeeper_processed_sources.csv"
+
+# 기간을 일 단위로 맞춰 짧은 쪽을 고릅니다. recsys_sql 의 product_storage_guideline 과 같은 환산입니다.
+UNIT_DAYS = {"시간": Decimal(1) / 24, "일": Decimal(1), "주": Decimal(7), "개월": Decimal(30), "년": Decimal(365)}
 
 # 0013_storage_bootstrap 의 CHECK 와 같은 값입니다. 여기서 먼저 걸러야 트랜잭션 중간이 아니라
 # 적재 전에 무엇이 틀렸는지 알 수 있습니다.
@@ -105,18 +124,74 @@ class Guideline:
         """원천 식별자입니다. 대표를 고르는 순서를 고정하는 데 씁니다."""
         return (self.source_food_name, self.source_food_subtitle or "", self.source_slot)
 
+    @property
+    def days(self) -> Decimal | None:
+        """상한 기간을 일 단위로 바꿉니다. 기간이 없으면 None 입니다."""
+        value = self.duration_max if self.duration_max is not None else self.duration_min
+        if value is None or self.duration_unit is None:
+            return None
+        return value * UNIT_DAYS[self.duration_unit]
+
 
 @dataclass(frozen=True, slots=True)
-class HeldGroup:
-    """적재하지 않고 검토 대상으로 남긴 자연키 조합입니다."""
+class Decision:
+    """기간이 다른 원천이 뭉친 자연키에서 무엇을 골랐는지 남기는 기록입니다."""
 
     ingredient_id: int
     storage_location: str
     storage_context: str
     row_count: int
-    sources: list[str]
-    durations: list[str]
-    reason: str
+    chosen: str
+    chosen_duration: str
+    others: list[str]
+
+
+def read_child_rules(path: Path = CHILD_RULES_CSV) -> dict[tuple[str, str], str]:
+    """(원천 식품명, 부제) -> child 식별키입니다."""
+    with path.open(encoding="utf-8", newline="") as handle:
+        return {
+            (row["source_food_name"], row["source_food_subtitle"]): row["target_source_identity_key"]
+            for row in csv.DictReader(handle)
+        }
+
+
+def read_processed_sources(path: Path = PROCESSED_SOURCES_CSV) -> set[tuple[str, str]]:
+    """가공·조리 카테고리의 (원천 식품명, 부제) 입니다."""
+    with path.open(encoding="utf-8", newline="") as handle:
+        return {(row["source_food_name"], row["source_food_subtitle"]) for row in csv.DictReader(handle)}
+
+
+def drop_processed_from_raw(
+    rows: list[Guideline], processed: set[tuple[str, str]], raw_ingredients: set[int]
+) -> tuple[list[Guideline], int]:
+    """원재료 Ingredient 에 붙은 가공·조리 원천을 뺍니다."""
+    kept = [
+        row
+        for row in rows
+        if row.ingredient_id not in raw_ingredients
+        or (row.source_food_name, row.source_food_subtitle or "") not in processed
+    ]
+    return kept, len(rows) - len(kept)
+
+
+def apply_child_rules(
+    rows: list[Guideline], rules: dict[tuple[str, str], str], children: dict[str, int]
+) -> tuple[list[Guideline], int]:
+    """규칙이 가리키는 원천을 child Ingredient 로 옮깁니다.
+
+    `children` 은 대상 DB 의 child 식별키 -> ingredient_id 입니다. 규칙은 원천 항목 단위로
+    검토한 것이므로 원래 붙어 있던 Ingredient 가 무엇이든 규칙을 따릅니다.
+    """
+    moved = 0
+    result = []
+    for row in rows:
+        key = rules.get((row.source_food_name, row.source_food_subtitle or ""))
+        child = children.get(key) if key else None
+        if child is not None and child != row.ingredient_id:
+            row = replace(row, ingredient_id=child)
+            moved += 1
+        result.append(row)
+    return result, moved
 
 
 def validate_enums(rows: list[Guideline]) -> None:
@@ -131,38 +206,45 @@ def validate_enums(rows: list[Guideline]) -> None:
             raise ValueError(f"허용되지 않은 duration_unit 입니다: {row.duration_unit!r} {where}")
 
 
-def select_representatives(rows: list[Guideline]) -> tuple[list[Guideline], list[HeldGroup]]:
-    """자연키별로 적재할 대표 1건과 보류할 조합을 가릅니다.
+def select_representatives(rows: list[Guideline]) -> tuple[list[Guideline], list[Decision]]:
+    """자연키별로 적재할 대표 1건을 고릅니다.
 
-    같은 자연키에 여러 행이 있어도 기간이 하나면 표기만 다른 것이므로 대표 1건을 고릅니다.
-    기간이 둘 이상이면 서로 다른 원천이 뭉친 것이므로 적재하지 않습니다. 대표는 원천 식별자
-    순서로 고정해, 몇 번을 돌려도 같은 행이 뽑히게 합니다.
+    기간이 하나면 표기만 다른 것이므로 원천 식별자 순서의 첫 행을 씁니다. 기간이 둘 이상이면
+    가장 짧은 기간을 고르고, 기간이 없는 행은 뒤로 보냅니다. 같은 길이면 원천 식별자 순서로
+    고정해 몇 번을 돌려도 같은 행이 뽑히게 합니다.
     """
     groups: dict[tuple[int, str, str], list[Guideline]] = defaultdict(list)
     for row in rows:
         groups[row.key].append(row)
 
     accepted: list[Guideline] = []
-    held: list[HeldGroup] = []
+    decisions: list[Decision] = []
     for key in sorted(groups):
         members = sorted(groups[key], key=lambda row: row.origin)
-        durations = {row.duration for row in members}
-        if len(durations) == 1:
+        if len({row.duration for row in members}) == 1:
             accepted.append(members[0])
             continue
+        chosen = min(members, key=lambda row: (row.days is None, row.days or 0, row.origin))
+        accepted.append(chosen)
         ingredient_id, location, context = key
-        held.append(
-            HeldGroup(
+        decisions.append(
+            Decision(
                 ingredient_id=ingredient_id,
                 storage_location=location,
                 storage_context=context,
                 row_count=len(members),
-                sources=sorted({row.source_food_name for row in members}),
-                durations=sorted({row.duration_text for row in members}),
-                reason="같은 자연키에 기간이 다른 원천이 둘 이상입니다. 자동 병합하지 않습니다.",
+                chosen=" / ".join(filter(None, chosen.origin[:2])),
+                chosen_duration=chosen.duration_text,
+                others=sorted(
+                    {
+                        f"{row.source_food_name} {row.source_food_subtitle or ''}".strip() + f": {row.duration_text}"
+                        for row in members
+                        if row is not chosen
+                    }
+                ),
             )
         )
-    return accepted, held
+    return accepted, decisions
 
 
 def fetch_source(url: str) -> list[Guideline]:
@@ -170,6 +252,18 @@ def fetch_source(url: str) -> list[Guideline]:
     with psycopg.connect(url) as connection, connection.cursor() as cursor:
         cursor.execute(SOURCE_SQL)
         return [Guideline(*row) for row in cursor.fetchall()]
+
+
+def fetch_target_ingredients(url: str, keys: list[str]) -> tuple[dict[str, int], set[int]]:
+    """대상 DB 에서 child 식별키 -> ingredient_id 와 원재료 Ingredient id 집합을 읽습니다."""
+    with psycopg.connect(url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT source_identity_key, ingredient_id FROM ingredient WHERE source_identity_key = ANY(%s)", (keys,)
+        )
+        children = dict(cursor.fetchall())
+        cursor.execute("SELECT ingredient_id FROM ingredient WHERE is_raw_material")
+        raw = {row[0] for row in cursor.fetchall()}
+    return children, raw
 
 
 def missing_ingredients(url: str, rows: list[Guideline]) -> list[int]:
@@ -186,12 +280,30 @@ def missing_ingredients(url: str, rows: list[Guideline]) -> list[int]:
         return sorted(row[0] for row in cursor.fetchall())
 
 
-def write_rows(url: str, rows: list[Guideline]) -> tuple[int, int]:
-    """대표 행을 한 트랜잭션에서 upsert 하고 신규·갱신 건수를 돌려줍니다."""
+PRUNE_PROCESSED_SQL = """
+DELETE FROM storage_guideline sg
+USING ingredient i
+WHERE i.ingredient_id = sg.ingredient_id
+  AND i.is_raw_material
+  AND (sg.source_food_name, COALESCE(sg.source_food_subtitle, '')) IN (
+      SELECT * FROM unnest(%s::text[], %s::text[])
+  )
+"""
+
+
+def write_rows(url: str, rows: list[Guideline], processed: set[tuple[str, str]]) -> tuple[int, int, int]:
+    """대표 행을 한 트랜잭션에서 upsert 하고 신규·갱신·삭제 건수를 돌려줍니다.
+
+    upsert 는 행을 지우지 않으므로, 예전 규칙으로 원재료에 붙은 가공 원천 행(생닭의 너겟 지침)은
+    남습니다. 적재에서 빼는 규칙과 같은 규칙으로 대상에서도 지웁니다. 그 밖의 행은 지우지 않습니다.
+    """
     inserted = 0
     updated = 0
+    names, subtitles = zip(*sorted(processed)) if processed else ((), ())
     with psycopg.connect(url) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(PRUNE_PROCESSED_SQL, (list(names), list(subtitles)))
+            pruned = cursor.rowcount
             for row in rows:
                 cursor.execute(
                     INSERT_SQL,
@@ -215,15 +327,15 @@ def write_rows(url: str, rows: list[Guideline]) -> tuple[int, int]:
                 else:
                     updated += 1
         connection.commit()
-    return inserted, updated
+    return inserted, updated, pruned
 
 
-def write_report(path: Path, held: list[HeldGroup]) -> None:
-    """보류 조합을 JSONL 로 남깁니다. 이 파일이 Ingredient 매핑 과제 목록입니다."""
+def write_report(path: Path, decisions: list[Decision]) -> None:
+    """짧은 기간을 고른 조합을 JSONL 로 남깁니다. 검토와 child 매핑 과제 목록입니다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        for group in sorted(held, key=lambda g: (g.ingredient_id, g.storage_location, g.storage_context)):
-            handle.write(json.dumps(asdict(group), ensure_ascii=False) + "\n")
+        for decision in decisions:
+            handle.write(json.dumps(asdict(decision), ensure_ascii=False) + "\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -233,7 +345,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-url-env", default="DATABASE_URL_KIPIL")
     parser.add_argument("--target-url-env", required=True)
     parser.add_argument("--target", choices=("local", "production"), required=True)
-    parser.add_argument("--report", type=Path, default=ROOT / "data/audits/storage_guideline_holds.jsonl")
+    parser.add_argument("--report", type=Path, default=ROOT / "data/audits/storage_guideline_decisions.jsonl")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm-production")
     return parser.parse_args()
@@ -251,23 +363,27 @@ def main() -> None:
         raise ValueError("source와 target DB가 같습니다.")
 
     source_rows = fetch_source(source_url)
-    accepted, held = select_representatives(source_rows)
+    rules = read_child_rules()
+    children, raw = fetch_target_ingredients(target_url, sorted(set(rules.values())))
+    processed = read_processed_sources()
+    rows, dropped = drop_processed_from_raw(source_rows, processed, raw)
+    rows, moved = apply_child_rules(rows, rules, children)
+    accepted, decisions = select_representatives(rows)
     validate_enums(accepted)
     absent = missing_ingredients(target_url, accepted)
     if absent:
         raise ValueError(f"대상 DB에 없는 ingredient_id 가 {len(absent)}건 있습니다: {absent[:10]}")
 
-    held_rows = sum(group.row_count for group in held)
-    write_report(args.report, held)
+    write_report(args.report, decisions)
     print(f"mode={'APPLIED' if args.apply else 'DRY_RUN'} target={target}")
-    print(f"source_rows={len(source_rows)}")
+    print(f"source_rows={len(source_rows)} processed_dropped={dropped} moved_to_child={moved}")
     print(f"accepted_rows={len(accepted)} accepted_ingredients={len({row.ingredient_id for row in accepted})}")
-    print(f"held_groups={len(held)} held_rows={held_rows} held_ingredients={len({g.ingredient_id for g in held})}")
+    print(f"shortest_picked_groups={len(decisions)}")
     print(f"report={args.report}")
     if not args.apply:
         return
-    inserted, updated = write_rows(target_url, accepted)
-    print(f"inserted={inserted} updated={updated}")
+    inserted, updated, pruned = write_rows(target_url, accepted, processed)
+    print(f"inserted={inserted} updated={updated} pruned_processed={pruned}")
 
 
 if __name__ == "__main__":

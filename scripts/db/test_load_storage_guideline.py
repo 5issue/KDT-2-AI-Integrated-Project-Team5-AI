@@ -10,6 +10,8 @@ from scripts.db._env import validate_confirmation
 from scripts.db.load_storage_guideline import (
     PRODUCTION_CONFIRMATION,
     Guideline,
+    apply_child_rules,
+    drop_processed_from_raw,
     select_representatives,
     validate_enums,
 )
@@ -45,10 +47,10 @@ def guideline(
 
 def test_unique_key_is_accepted_as_is() -> None:
     """자연키가 하나뿐인 행은 그대로 적재 대상입니다."""
-    accepted, held = select_representatives([guideline()])
+    accepted, decisions = select_representatives([guideline()])
 
     assert len(accepted) == 1
-    assert held == []
+    assert decisions == []
 
 
 def test_same_duration_collapses_to_one_row() -> None:
@@ -58,26 +60,69 @@ def test_same_duration_collapses_to_one_row() -> None:
         guideline(source="Cornmeal", text="1-2일"),
     ]
 
-    accepted, held = select_representatives(rows)
+    accepted, decisions = select_representatives(rows)
 
     assert len(accepted) == 1
-    assert held == []
+    assert decisions == []
 
 
-def test_conflicting_duration_is_held_not_merged() -> None:
-    """기간이 다르면 적재하지 않고 원천과 기간을 남깁니다. 최소값을 고르지 않습니다."""
+def test_conflicting_duration_picks_the_shortest_and_records_it() -> None:
+    """기간이 다르면 일 단위로 환산해 가장 짧은 쪽을 고르고, 고른 사실을 남깁니다."""
     rows = [
-        guideline(source="Cornmeal", duration=("2", "4", "개월"), text="2-4개월"),
         guideline(source="Rice", duration=("1", "1", "년"), text="1년"),
+        guideline(source="Cornmeal", duration=("2", "4", "개월"), text="2-4개월"),
+        guideline(source="Unknown", duration=None, text="기간 정보 없음"),
     ]
 
-    accepted, held = select_representatives(rows)
+    accepted, decisions = select_representatives(rows)
 
-    assert accepted == []
-    assert len(held) == 1
-    assert held[0].row_count == 2
-    assert held[0].sources == ["Cornmeal", "Rice"]
-    assert held[0].durations == ["1년", "2-4개월"]
+    assert [row.source_food_name for row in accepted] == ["Cornmeal"]
+    assert len(decisions) == 1
+    assert decisions[0].row_count == 3
+    assert decisions[0].chosen_duration == "2-4개월"
+    assert decisions[0].others == ["Rice: 1년", "Unknown: 기간 정보 없음"]
+
+
+def test_child_rule_wins_over_a_wrong_original_mapping() -> None:
+    """부위 규칙은 원천 단위로 검토한 것이라, 소고기 원천이 돼지고기에 붙어 있어도 규칙대로 옮깁니다."""
+    rules = {("Beef", "short ribs"): "K:소고기:SMALL:갈비"}
+    beef_on_pork = guideline(ingredient_id=404, source="Beef", subtitle="short ribs")
+    other = guideline(ingredient_id=404, source="Pork", subtitle="ground")
+
+    rows, moved = apply_child_rules([beef_on_pork, other], rules, {"K:소고기:SMALL:갈비": 1037})
+
+    assert moved == 1
+    assert [row.ingredient_id for row in rows] == [1037, 404]
+
+
+def test_processed_sources_are_dropped_only_from_raw_ingredients() -> None:
+    """생닭에서는 너겟 지침을 빼고, 원래 가공품인 햄은 가공 원천을 그대로 씁니다."""
+    processed = {("Chicken nuggets, patties", ""), ("Ham", "cooked")}
+    rows = [
+        guideline(ingredient_id=401, source="Chicken nuggets, patties"),
+        guideline(ingredient_id=401, source="Chicken", subtitle="whole"),
+        guideline(ingredient_id=900, source="Ham", subtitle="cooked"),
+    ]
+
+    kept, dropped = drop_processed_from_raw(rows, processed, raw_ingredients={401})
+
+    assert dropped == 1
+    assert [row.source_food_name for row in kept] == ["Chicken", "Ham"]
+
+
+def test_child_rule_splits_a_conflict_before_picking() -> None:
+    """부위로 옮기면 충돌이 풀려 두 부위가 각자 자기 기간을 갖습니다."""
+    rules = {("Pork", "tenderloin"): "K:SMALL:안심"}
+    rows = [
+        guideline(ingredient_id=404, source="Pork", subtitle="tenderloin", duration=("3", "5", "일")),
+        guideline(ingredient_id=404, source="Pork", subtitle="ground", duration=("1", "2", "일")),
+    ]
+
+    moved_rows, _ = apply_child_rules(rows, rules, {"K:SMALL:안심": 1034})
+    accepted, decisions = select_representatives(moved_rows)
+
+    assert sorted(row.ingredient_id for row in accepted) == [404, 1034]
+    assert decisions == []
 
 
 def test_representative_is_stable_across_runs() -> None:
@@ -99,10 +144,10 @@ def test_locations_and_contexts_are_independent_keys() -> None:
         guideline(context="개봉후", duration=("3", "5", "일")),
     ]
 
-    accepted, held = select_representatives(rows)
+    accepted, decisions = select_representatives(rows)
 
     assert len(accepted) == 3
-    assert held == []
+    assert decisions == []
 
 
 def test_enum_values_are_checked_before_loading() -> None:
