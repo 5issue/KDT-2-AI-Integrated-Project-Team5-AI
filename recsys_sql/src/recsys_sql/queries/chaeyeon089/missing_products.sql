@@ -54,21 +54,6 @@ missing AS (
       AND b.ingredient_id IS NULL
       AND NOT i.is_pantry
 ),
-product_coverage AS (
-    -- 상품이 채우는 재료: PRIMARY 재료와 그 부모(1단계). 목심 상품은 돼지고기 요구도 채웁니다.
-    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
-    SELECT DISTINCT pi.product_id,
-           h.ingredient_id
-    FROM product_ingredient pi
-    JOIN product p         ON p.product_id = pi.product_id
-                          AND p.is_active
-                          AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
-    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
-    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
-    WHERE pi.role = 'PRIMARY'
-      AND h.ingredient_id IS NOT NULL
-      AND h.ingredient_id IN (SELECT ingredient_id FROM missing)
-),
 ranked AS (
     SELECT m.ingredient_id,
            p.product_id,
@@ -86,8 +71,13 @@ ranked AS (
     FROM missing m
     -- PRIMARY 만 봅니다. 보유 판정이 PRIMARY 기준이므로, SECONDARY 로 걸린 상품을
     -- 추천하면 그걸 담아도 재료는 계속 부족한 채 남습니다.
-    JOIN product_coverage pc   ON pc.ingredient_id = m.ingredient_id
-    JOIN product p             ON p.product_id = pc.product_id
+    -- PRIMARY 재료가 요구 재료와 정확히 같은 상품만 후보입니다. 계층은 보유 판정에만 씁니다.
+    -- 돼지고기가 부족할 때 목심 상품을 대신 추천하지 않습니다(부위·형태 자동 대체 금지).
+    JOIN product_ingredient pi ON pi.ingredient_id = m.ingredient_id
+                              AND pi.role = 'PRIMARY'
+    JOIN product p             ON p.product_id = pi.product_id
+                              AND p.is_active
+                              AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
     LEFT JOIN recipe_product rp ON rp.recipe_id = :recipe_id
                                AND rp.product_id = p.product_id
                                AND rp.ingredient_id = m.ingredient_id

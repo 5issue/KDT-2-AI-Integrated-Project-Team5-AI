@@ -102,8 +102,8 @@ async def test_child_ingredient_in_fridge_fills_parent_requirement(db_conn: Asyn
     assert seeded.pork not in {row["ingredient_id"] for row in rows}
 
 
-async def test_child_product_can_be_bought_for_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
-    """돼지고기가 부족하면 목심처럼 더 구체적인 Product도 구매 후보가 됩니다."""
+async def test_child_product_is_not_offered_for_parent_requirement(db_conn: AsyncConnection, seeded: SeedIds) -> None:
+    """돼지고기가 부족해도 목심 상품은 추천하지 않습니다. 계층은 보유 판정에만 씁니다(부위 자동 대체 금지)."""
     pork_neck = await seed_child_ingredient(
         db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork
     )
@@ -133,4 +133,5 @@ async def test_child_product_can_be_bought_for_parent_requirement(db_conn: Async
     )
     pork_products = {row["product_id"] for row in rows if row["ingredient_id"] == seeded.pork}
 
-    assert pork_neck_product in pork_products
+    assert pork_products, "돼지고기 자체 상품은 여전히 추천돼야 합니다."
+    assert pork_neck_product not in pork_products
