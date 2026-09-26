@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import cast
 
 import psycopg
+from psycopg.rows import TupleRow
 
 from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
@@ -65,7 +66,7 @@ def read_parts(path: Path = PARTS_CSV) -> list[Part]:
     return parts
 
 
-def plan(connection: psycopg.Connection, parts: list[Part]) -> tuple[list[Part], list[str], dict[str, int]]:
+def plan(connection: psycopg.Connection[TupleRow], parts: list[Part]) -> tuple[list[Part], list[str], dict[str, int]]:
     """새로 넣을 부위, 부모가 없는 부위, 식별키 -> id 를 돌려줍니다."""
     with connection.cursor() as cursor:
         cursor.execute(

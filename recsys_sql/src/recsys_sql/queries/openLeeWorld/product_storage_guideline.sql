@@ -56,9 +56,14 @@ JOIN product_ingredient pi ON pi.product_id = p.product_id
                           AND pi.role = 'PRIMARY'
 JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
 -- 부위(child)에 지침이 없으면 부모 지침을 씁니다. `목심` 에 없으면 `돼지고기` 지침입니다.
--- 부위 자기 지침이 하나라도 있으면 부모 지침과 섞지 않습니다.
+-- 부위 자기 지침이 하나라도 있으면 부모 지침과 섞지 않습니다. 이때 상품 보관 장소와 같은 지침만 셉니다.
+-- 부위에 `냉동` 지침만 있고 상품이 `냉장` 이면 부모의 `냉장` 지침으로 넘어가야 404 가 나지 않습니다.
 JOIN storage_guideline sg  ON sg.ingredient_id = CASE
-         WHEN EXISTS (SELECT 1 FROM storage_guideline own WHERE own.ingredient_id = i.ingredient_id)
+         WHEN EXISTS (
+             SELECT 1 FROM storage_guideline own
+             WHERE own.ingredient_id = i.ingredient_id
+               AND (p.storage_type IS NULL OR own.storage_location = p.storage_type)
+         )
          THEN i.ingredient_id
          ELSE COALESCE(i.parent_ingredient_id, i.ingredient_id)
      END

@@ -368,8 +368,10 @@ def main() -> None:
     processed = read_processed_sources()
     rows, dropped = drop_processed_from_raw(source_rows, processed, raw)
     rows, moved = apply_child_rules(rows, rules, children)
+    # 대표를 고르기 전에 원천 전체를 검사합니다. 고르는 중 days 가 모르는 단위에서 KeyError 로 죽거나,
+    # 탈락한 행의 잘못된 값이 그냥 넘어가지 않게 합니다.
+    validate_enums(rows)
     accepted, decisions = select_representatives(rows)
-    validate_enums(accepted)
     absent = missing_ingredients(target_url, accepted)
     if absent:
         raise ValueError(f"대상 DB에 없는 ingredient_id 가 {len(absent)}건 있습니다: {absent[:10]}")
