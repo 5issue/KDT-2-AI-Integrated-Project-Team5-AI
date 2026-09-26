@@ -28,7 +28,8 @@ indent-style = "space"
 # 레포 루트에 멤버와 같은 이름의 디렉터리가 있어 네임스페이스 패키지로 잡힙니다.
 # src 를 sys.path 앞에 두어 실제 패키지가 먼저 잡히게 합니다.
 pythonpath = ["data_pipeline/src", "rag_lab/src", "recsys_sql/src", "serving/src"]
-testpaths = ["data_pipeline/tests", "rag_lab/tests", "recsys_sql/tests", "serving/tests"]
+# data_pipeline/scripts 는 DB 운영 스크립트와 그 테스트입니다. 패키지 밖이라 따로 올립니다.
+testpaths = ["data_pipeline/tests", "data_pipeline/scripts", "rag_lab/tests", "recsys_sql/tests", "serving/tests"]
 asyncio_mode = "auto"
 markers = [
     "db: 실제 Neon DB 연결이 필요한 테스트 (DATABASE_URL 없으면 skip)",
@@ -43,7 +44,8 @@ typeCheckingMode = "standard"
 include = ["data_pipeline", "rag_lab", "recsys_sql", "serving"]
 exclude = ["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"]
 # pytest 의 pythonpath 와 같은 이유로 src 를 명시합니다.
-extraPaths = ["data_pipeline/src", "rag_lab/src", "recsys_sql/src", "serving/src"]
+# data_pipeline 은 운영 스크립트의 `scripts.db` import 를 풀기 위해 넣습니다.
+extraPaths = ["data_pipeline/src", "data_pipeline", "rag_lab/src", "recsys_sql/src", "serving/src"]
 
 [dependency-groups]
 dev = [

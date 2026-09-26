@@ -22,7 +22,7 @@ import psycopg
 
 from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 POSTGRES_IMAGE = "pgvector/pgvector:pg18"
 PRODUCTION_CONFIRMATION = "PROMOTE_KIPIL_CATALOG_V1"
 
@@ -317,7 +317,7 @@ def main() -> None:
         print(f"{key}={counts[key]}")
     if args.apply:
         # 복제 대상이 아니라 비우기만 한 표입니다. 다시 채우지 않으면 화면에서 보관법이 사라집니다.
-        print("reload_required=storage_guideline (scripts/db/load_storage_guideline.py 를 다시 실행하세요)")
+        print("reload_required=storage_guideline (scripts.db.load_storage_guideline 를 다시 실행하세요)")
 
 
 if __name__ == "__main__":
