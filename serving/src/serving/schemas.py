@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from rag_lab.reason_service import facts_from_row, template_reason
+
 
 class HealthResponse(BaseModel):
     """liveness 응답."""
@@ -63,6 +65,8 @@ class MyRecipeItem(BaseModel):
         """my_recipe_candidates 쿼리 행을 명세 응답 모양으로 바꿉니다.
 
         asyncpg 는 jsonb 를 기본 설정에서 str 로 주기 때문에 여기서 파싱합니다.
+        추천 이유는 규칙 기반 문구(실험 템플릿 v2)로 채웁니다. LLM 문구는 라우터가
+        ``generate_reasons_for_rows`` 결과로 덮어씁니다.
         """
         raw = row["missing_ingredients"]
         parsed = json.loads(raw) if isinstance(raw, str) else raw
@@ -79,23 +83,10 @@ class MyRecipeItem(BaseModel):
             difficulty=row["difficulty"],
             cook_time_min=row["cook_time_min"],
             servings=row["servings"],
-            recommendation_reason=_build_reason(match, missing),
+            recommendation_reason=template_reason(facts_from_row(row)),
             match=match,
             missing_ingredients=missing,
         )
-
-
-def _build_reason(match: RecipeMatch, missing: list[MissingIngredientRef]) -> str:
-    """규칙 기반 추천 이유 문장. 생성 방식(규칙 vs LLM)이 확정되면 여기만 바꿉니다."""
-    if match.missing_ingredients == 0:
-        return "필수 재료를 모두 보유하고 있어요"
-    names = ", ".join(m.name for m in missing[:2])
-    if match.missing_ingredients == 1:
-        return f"{names}만 있으면 만들 수 있어요"
-    return (
-        f"필수 재료 {match.available_ingredients}/{match.required_ingredients}개 보유, "
-        f"{names} 등 {match.missing_ingredients}개가 더 필요해요"
-    )
 
 
 class MyRecipeListResponse(BaseModel):

@@ -22,10 +22,12 @@ COPY rag_lab/pyproject.toml rag_lab/pyproject.toml
 COPY data_pipeline/pyproject.toml data_pipeline/pyproject.toml
 RUN uv sync --frozen --no-dev --no-install-workspace --package serving
 
-# 소스는 serving 과 그 의존성인 recsys_sql 만 복사합니다.
+# 소스는 serving 과 그 의존성인 recsys_sql, rag_lab 만 복사합니다.
 # recsys_sql 의 SQL 카탈로그는 패키지 안(src/recsys_sql/queries)에 있어 휠에 담깁니다.
+# rag_lab 은 reason_service 만 쓰며, 기본 의존성이 httpx 하나라 RAG 실험 패키지는 설치되지 않습니다.
 COPY serving/ serving/
 COPY recsys_sql/ recsys_sql/
+COPY rag_lab/ rag_lab/
 RUN uv sync --frozen --no-dev --no-editable --package serving
 
 # --- 런타임 스테이지: venv 만 가져갑니다 -------------------------------------

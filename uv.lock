@@ -1050,6 +1050,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "rag-lab" },
     { name = "recsys-sql" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1060,6 +1061,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.121.2" },
     { name = "pydantic", specifier = ">=2.12.4" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "rag-lab", editable = "rag_lab" },
     { name = "recsys-sql", editable = "recsys_sql" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
 ]

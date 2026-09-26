@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from rag_lab.reason_service import generate_reasons_for_rows
 from serving.auth import CurrentUserId
-from serving.dependencies import PoolDep
+from serving.dependencies import PoolDep, ReasonDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
 from serving.schemas import (
@@ -31,18 +32,27 @@ MIN_MATCH_RATE = 0.5
 @router.get("/my-recipes", response_model=ApiResponse[MyRecipeListResponse])
 async def read_my_recipes(
     pool: PoolDep,
+    reason: ReasonDep,
     user_id: CurrentUserId,
     limit: int = Query(default=10, ge=1, le=50, description="가져올 개수"),
 ) -> ApiResponse[MyRecipeListResponse]:
-    """My냉장고 재료로 만들 수 있는 레시피를 추천합니다 (명세 21장)."""
+    """My냉장고 재료로 만들 수 있는 레시피를 추천합니다 (명세 21장).
+
+    추천 이유는 ``rag_lab.reason_service`` 가 만듭니다. 앞 카드 몇 장만 LLM 으로 만들고
+    (상한은 서비스 상수), 시간 초과·오류·검사 실패는 그 카드만 규칙 문구로 대체되어
+    돌아오므로 여기서 예외를 다루지 않습니다. 클라이언트가 없으면 전부 규칙 문구입니다.
+    """
     sql, args = build_query(
         "my_recipe_candidates",
         {"user_id": user_id, "min_match_rate": MIN_MATCH_RATE, "max_results": limit},
     )
     async with pool.acquire() as conn:
-        rows = await conn.fetch(sql, *args)
+        rows = [dict(row) for row in await conn.fetch(sql, *args)]
 
-    items = [MyRecipeItem.from_row(dict(row)) for row in rows]
+    items = [MyRecipeItem.from_row(row) for row in rows]
+    results = await generate_reasons_for_rows(rows, reason.client, vocabulary=reason.vocabulary)
+    for item, result in zip(items, results, strict=True):
+        item.recommendation_reason = result.text
     return ApiResponse.success(MyRecipeListResponse(items=items))
 
 
