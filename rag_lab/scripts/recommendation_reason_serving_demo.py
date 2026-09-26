@@ -6,7 +6,7 @@ import 해 ``GET /recommendations/my-recipes?limit=3`` 한 요청을 그대로 �
     SQL(my_recipe_candidates) -> MyRecipeItem.from_row -> generate_reasons_for_rows -> ApiResponse JSON
 
 서빙 담당자가 라우터에 넣을 코드도 아래 ``build_response`` 와 같습니다. 연결 안내는
-``docs/recommendation-reason-serving-guide.md`` 입니다.
+노션의 서빙 연결 가이드에 있습니다.
 
 - DB 세션은 읽기 전용으로 엽니다. 사용자 ID 는 출력하지 않습니다.
 - DB 는 서빙과 같은 설정(``serving/.env`` 의 ``DATABASE_URL``)으로 붙습니다.
