@@ -22,7 +22,7 @@ import psycopg
 
 from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 PARTS_CSV = ROOT / "config" / "ingredient_master_meat_parts.csv"
 PRODUCTION_CONFIRMATION = "ADD_MEAT_PARTS_V1"
 

@@ -52,7 +52,7 @@ mlruns/
 data_pipeline/data/
 
 # DB 스크립트 감사 리포트
-# 적재기(scripts/db/load_storage_guideline.py) 등이 실행할 때마다 새로 쓰는 산출물입니다.
+# 적재기(data_pipeline/scripts/db/load_storage_guideline.py) 등이 실행할 때마다 새로 쓰는 산출물입니다.
 data/audits/
 
 # ai 작업 문서들

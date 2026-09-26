@@ -15,6 +15,14 @@ KDT-2-AI-INTEGRATED-PROJECT-TEAM5 팀명: 5이쉬에 AI팀 깃허브입니다.
 | [`rag_lab/`](rag_lab/README.md) | RAG 실험 환경 (라우팅 -> 검색 -> 생성) | LangGraph, pgvector, openai |
 | [`serving/`](serving/README.md) | 추천 API 서빙 서버 | FastAPI, asyncpg |
 
+멤버가 아닌 루트 폴더:
+
+- `config/` — 적재·시드가 읽는 검토된 설정 CSV (재료 마스터 정렬, 보관 가이드 규칙, 데모 시나리오)
+- `notebooks/` — 여러 스크립트를 순서대로 돌리고 결과를 확인하는 작업 기록 노트북
+
+DB 운영 스크립트(재료 마스터 정렬, 보관 가이드 적재, 카탈로그 승격)는 `data_pipeline/scripts/db/` 에 있습니다.
+패키지 밖 스크립트라 `data_pipeline/` 에서 `uv run python -m scripts.db.<이름>` 으로 실행합니다.
+
 ```
 raw 데이터 ─▶ data_pipeline ─▶ Neon PostgreSQL
               (적재 + embedding)

@@ -27,7 +27,7 @@ import psycopg
 
 from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ALIASES_CSV = ROOT / "config" / "ingredient_master_aliases.csv"
 PROCESSED_CSV = ROOT / "config" / "ingredient_master_processed_exceptions.csv"
 ALIGNMENT_CSV = ROOT / "config" / "ingredient_master_alignment.csv"

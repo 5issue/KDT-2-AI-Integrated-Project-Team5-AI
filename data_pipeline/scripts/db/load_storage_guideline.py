@@ -42,7 +42,7 @@ import psycopg
 
 from scripts.db._env import Target, env_url, load_env, validate_confirmation
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 PRODUCTION_CONFIRMATION = "LOAD_STORAGE_GUIDELINE_V1"
 CHILD_RULES_CSV = ROOT / "config" / "foodkeeper_ingredient_child_rules.csv"
 PROCESSED_SOURCES_CSV = ROOT / "config" / "foodkeeper_processed_sources.csv"
