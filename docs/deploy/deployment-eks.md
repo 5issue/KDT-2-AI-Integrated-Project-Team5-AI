@@ -239,14 +239,16 @@ alembic 으로는 빈 DB 를 못 채웁니다. `0001_baseline.py` 가 **아무�
 
 ```bash
 # AI 팀: Neon 에서 통째로 뽑아 전달 (pg_dump 가 CREATE EXTENSION vector 까지 담습니다)
-pg_dump "$DATABASE_URL" -Fc -f team5-ai.dump        # 압축 포맷 권장 (임베딩이 커서)
+# kipil_raw 는 보관 지침 적재 원천(원본 935행) 백업이라 서비스에는 필요 없습니다.
+pg_dump "$DATABASE_URL" -Fc --exclude-schema=kipil_raw -f team5-ai.dump   # 압축 포맷 권장 (임베딩이 커서)
 
 # 클라우드팀: CNPG 에 복원
 pg_restore -d "$CNPG_URL" --no-owner --no-privileges team5-ai.dump
 ```
 
 - **`-Fc` 를 쓰세요.** `VECTOR(1536)` 5,800여 행이 평문 SQL 이면 100MB 대가 됩니다.
-- 복원 뒤 **`alembic stamp head`** 를 한 번 걸어야 이후 마이그레이션이 이어집니다.
+- 덤프에 `alembic_version` 이 함께 담깁니다. dev 브랜치는 2026-09-28 에 `0015`(head)까지 올렸으므로,
+  복원 뒤 `alembic current` 가 head 인지 확인만 하면 됩니다. 이보다 오래된 덤프라면 `alembic upgrade head`.
 - `pg_dump` 는 서버 버전 이상이어야 합니다. 이 레포에는 설치돼 있지 않으니
   `brew install libpq` 또는 postgres 컨테이너로 뽑으세요.
 - 소유자·권한은 환경이 다르므로 `--no-owner --no-privileges` 로 털어냅니다.
