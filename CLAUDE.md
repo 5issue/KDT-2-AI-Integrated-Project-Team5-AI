@@ -87,7 +87,8 @@ Root pyproject adds `pythonpath` for all four `src/` dirs so `uv run pytest` wor
 
 DB 가 필요한 테스트에는 `@pytest.mark.db` 를 답니다. `DATABASE_URL` 이 비어 있으면
 각 폴더 `conftest.py` 의 `pytest_collection_modifyitems` 가 자동으로 skip 시킵니다.
-CI 는 secret `CI_DATABASE_URL` 로 DB 테스트까지 전부 돌립니다. DB 테스트는 반드시 롤백되게 쓰고
+CI 는 secret `CI_DATABASE_URL` 로 **바뀐 패키지의** DB 테스트까지 돌립니다(`.github/scripts/select_db_tests.py`).
+DB 테스트는 반드시 롤백되게 쓰고
 (`db_conn`·`world` 픽스처), 전용 ID 대역·표식을 쓰세요. 루트 `conftest.py` 가 세션 끝에 남은 행을 세어
 1행이라도 있으면 실패시킵니다. `llm` 마커는 `--run-llm` 을 줄 때만 돕니다.
 

@@ -4,7 +4,9 @@ CI/CD workflow 파일을 관리하는 디렉터리입니다.
 
 ## Workflows
 
-- `ci.yaml`: Python lint/type/test 검증. `uv run pytest` 로 단위 테스트와 DB 통합 테스트를 함께 돌립니다.
+- `ci.yaml`: Python lint/type/test 검증. 단위 테스트(DB 없음)는 항상 전부, DB 통합 테스트는 **바뀐 패키지와
+  그것을 쓰는 쪽만** 돌립니다(`.github/scripts/select_db_tests.py`). 마이그레이션·루트 설정·CI 가 바뀌면 전부,
+  Actions 에서 수동 실행(`workflow_dispatch`)해도 전부 돕니다.
 - `cd-serving.yaml`: serving 이미지 ECR 빌드·배포 (#41)
 
 ## CI 가 쓰는 secret
