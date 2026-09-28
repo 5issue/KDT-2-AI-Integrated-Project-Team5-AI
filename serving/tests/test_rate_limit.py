@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
+from fastapi.dependencies.models import Dependant
 from httpx import ASGITransport, AsyncClient
 
 from serving.app import create_app
@@ -53,6 +54,35 @@ async def test_bubble_products_use_default_limit(limited_client: AsyncClient) ->
     responses = [await limited_client.get(path) for _ in range(4)]
 
     assert [r.status_code for r in responses] == [503, 503, 503, 429]
+
+
+def _uses_dependency(dependant: Dependant, target: object) -> bool:
+    """의존성 트리 어디에서든 ``target`` 을 부르는지."""
+    return dependant.call is target or any(_uses_dependency(child, target) for child in dependant.dependencies)
+
+
+def test_low_limit_covers_exactly_the_routes_that_call_the_llm() -> None:
+    """LLM 을 부르는 라우트(추천 이유 의존성을 쓰는 곳)와 낮은 한도 경로 목록이 같아야 합니다 (PR #42 리뷰).
+
+    목록은 고정 집합이라, LLM 경로가 새로 생겨도 여기에 안 넣으면 조용히 기본 한도(60/분)를 받습니다.
+    반대로 목록에만 있고 실제 라우트가 없으면 오타입니다. 둘 다 여기서 걸립니다.
+    """
+    from fastapi.routing import APIRoute
+
+    from serving.app import API_ROUTERS
+    from serving.constants import API_PREFIX
+    from serving.dependencies import get_reason_context
+    from serving.ratelimit import RECO_PATHS
+
+    llm_routes = {
+        f"{API_PREFIX}{route.path}"
+        for router in API_ROUTERS
+        for route in router.routes
+        if isinstance(route, APIRoute) and _uses_dependency(route.dependant, get_reason_context)
+    }
+
+    assert llm_routes, "추천 이유 의존성을 쓰는 라우트를 찾지 못했습니다. 의존성 이름이 바뀌었는지 보세요."
+    assert llm_routes == RECO_PATHS
 
 
 async def test_users_are_counted_separately(limited_client: AsyncClient) -> None:

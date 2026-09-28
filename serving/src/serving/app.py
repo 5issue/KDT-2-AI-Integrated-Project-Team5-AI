@@ -30,6 +30,10 @@ from serving.routers import fridge, health, home, products, recipes, recommendat
 
 logger = logging.getLogger("serving")
 
+# `/api/v1` 아래에 붙는 라우터. rate limit 테스트가 LLM 을 부르는 라우트와 낮은 한도 경로 목록을 대조할 때도
+# 이 목록을 씁니다. FastAPI 0.141 부터 포함된 라우터가 `app.routes` 에 펼쳐지지 않기 때문입니다.
+API_ROUTERS = (recommendations.router, home.router, products.router, recipes.router, fridge.router)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -118,11 +122,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # 헬스체크는 envelope 적용 대상에서 제외하므로 prefix 밖에 둡니다.
     app.include_router(health.router)
-    app.include_router(recommendations.router, prefix=API_PREFIX)
-    app.include_router(home.router, prefix=API_PREFIX)
-    app.include_router(products.router, prefix=API_PREFIX)
-    app.include_router(recipes.router, prefix=API_PREFIX)
-    app.include_router(fridge.router, prefix=API_PREFIX)
+    for router in API_ROUTERS:
+        app.include_router(router, prefix=API_PREFIX)
     return app
 
 
