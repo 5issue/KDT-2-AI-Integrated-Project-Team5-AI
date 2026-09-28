@@ -16,6 +16,11 @@
 
 9.28~10.2: phase4 문서 작성 + 골든 데이터셋 평가(아마도) + ai팀 발표자료 간략 구성 + E2E QA
 
+## phase4 문서
+
+- `docs/모델 카드 및 운영 가이드.md`: 서빙 구성 요소의 모델 정보·데이터·평가 결과·제한 사항·운영 주의사항 (2026-09-28 기준)
+- AI 안전성 검증 보고서(할루시네이션·Prompt Injection·편향): notebook, 별도 담당
+
 ## docs/ 서브폴더
 
 api, architecture, backlog, decisions 등 필요시 문서들을 주제에 맞게 모아서 정리한다.
