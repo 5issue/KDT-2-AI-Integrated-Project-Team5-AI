@@ -1,0 +1,10 @@
+action,source_identity_key,name,parent_source_identity_key,aliases,is_raw_material,reason
+INSERT,K-FIND:06:06018:고추:MIDDLE:꽈리고추,꽈리고추,K-FIND:06:06018:고추,,true,기준 로더에 있고 Production 에 없는 MIDDLE 재료
+INSERT,K-FIND:18:18053:마늘:MIDDLE:마늘가루,마늘가루,,,true,기준 로더에 있고 Production 에 없는 MIDDLE 재료
+INSERT,K-FIND:18:18056:양파:MIDDLE:양파가루,양파가루,,,true,기준 로더에 있고 Production 에 없는 MIDDLE 재료
+INSERT,TEAM-BASIC:굴소스,굴소스,,,false,기준 로더에 있고 Production 에 없는 PROCESSED_EXCEPTION 재료
+INSERT,TEAM-BASIC:데리야끼소스,데리야끼소스,,데리야끼|데리야키,false,기준 로더에 있고 Production 에 없는 PROCESSED_EXCEPTION 재료
+INSERT,TEAM-BASIC:맛술,맛술,,미림|미향|요리술,false,기준 로더에 있고 Production 에 없는 PROCESSED_EXCEPTION 재료
+RENAME,K-FIND-P:16:16708:부침가루/튀김가루/믹스,부침가루,,,,기준 canonical_name 으로 맞춤. 원천 대표명은 식별키에 남김
+RENAME,K-FIND-P:20:20401:김,조미김,,구운김,,기준 canonical_name 과 검토된 별칭으로 맞춤. K-FIND 원물 김류와 구분
+RENAME,K-FIND-P:17:17502:분쇄가공육,떡갈비,,,,MFDS 대표식품 분쇄가공육 아래 떡갈비를 기준 canonical_name 으로 씀. 대표식품 하나에 재료 하나

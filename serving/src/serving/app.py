@@ -14,9 +14,11 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from rag_lab.reason_service import OpenRouterReasonClient, ReasonSettings
 from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
@@ -35,6 +37,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 테스트나 팩토리에서 넘긴 설정(종료 유예 0 등)이 무시됩니다.
     settings: Settings = getattr(app.state, "settings", None) or get_settings()
     app.state.pool = None
+    # 추천 이유 LLM 클라이언트. 키가 없어 else 를 타지 않아도 종료 코드가 AttributeError 를
+    # 내지 않도록 세 값을 먼저 초기화합니다.
+    app.state.reason_http = None
+    app.state.reason_client = None
+    app.state.ingredient_vocabulary = frozenset()
 
     try:
         dsn = settings.require_database_url()
@@ -46,6 +53,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.pool = await create_pool(settings)
 
     try:
+        reason_settings = ReasonSettings.from_env(settings.reason_environ())
+    except RuntimeError as exc:
+        logger.warning("추천 이유는 규칙 기반 문구만 씁니다: %s", exc)
+    else:
+        # httpx.AsyncClient 는 앱 수명 동안 하나만 씁니다. 키는 클라이언트 안에만 있고 로그에 남지 않습니다.
+        app.state.reason_http = httpx.AsyncClient()
+        app.state.reason_client = OpenRouterReasonClient(app.state.reason_http, reason_settings)
+        if app.state.pool is not None:
+            # 환각 검사 사전. 세 카드 어디에도 없는 재료를 지어냈는지 잡습니다. 한 번만 읽습니다.
+            async with app.state.pool.acquire() as conn:
+                rows = await conn.fetch("SELECT name FROM ingredient")
+            app.state.ingredient_vocabulary = frozenset(str(row["name"]) for row in rows)
+        logger.info(
+            "추천 이유 LLM 생성 사용: model=%s, 사전 %d종",
+            reason_settings.model,
+            len(app.state.ingredient_vocabulary),
+        )
+
+    try:
         yield
     finally:
         # EKS 스팟 회수 등으로 SIGTERM 을 받으면 uvicorn 이 처리 중 요청을 끝낸 뒤
@@ -55,6 +81,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 기다렸다가 정리해야 그 사이 들어온 요청이 502 로 끊기지 않습니다.
         if settings.shutdown_delay_seconds > 0:
             await asyncio.sleep(settings.shutdown_delay_seconds)
+        if app.state.reason_http is not None:
+            await app.state.reason_http.aclose()
+            app.state.reason_http = None
+            app.state.reason_client = None
         if app.state.pool is not None:
             await app.state.pool.close()
             app.state.pool = None

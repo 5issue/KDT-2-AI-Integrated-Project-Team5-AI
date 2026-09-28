@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from recsys_fixtures import SeedIds, seed_child_ingredient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -210,3 +211,29 @@ async def test_conflicting_durations_return_the_shortest(db_conn: AsyncConnectio
 
     assert len(chosen) == 1
     assert chosen[0]["duration_text"] == shortest
+
+
+async def test_child_without_same_location_guideline_falls_back_to_parent(
+    db_conn: AsyncConnection, seeded: SeedIds
+) -> None:
+    """부위에 다른 장소(냉동) 지침만 있으면 상품 장소(냉장)의 부모 지침으로 넘어갑니다. 비면 404 입니다."""
+    neck = await seed_child_ingredient(
+        db_conn, ingredient_id=seeded.pork + 1000, name="목심", parent_id=seeded.pork, repoint_product_id=seeded.pork_a
+    )
+    await db_conn.execute(
+        text("UPDATE product SET storage_type = '냉장' WHERE product_id = :id"), {"id": seeded.pork_a}
+    )
+    for ingredient_id, location in ((seeded.pork, "냉장"), (neck, "냉동")):
+        await db_conn.execute(
+            text(
+                "INSERT INTO storage_guideline "
+                "(ingredient_id, source_food_name, source_slot, storage_location, storage_context, duration_text) "
+                "VALUES (:ingredient_id, 'TEST', 'TEST', :location, '일반', '테스트')"
+            ),
+            {"ingredient_id": ingredient_id, "location": location},
+        )
+
+    rows = await fetch(db_conn, seeded.pork_a)
+
+    assert rows, "부위의 냉동 지침 때문에 부모의 냉장 지침까지 가려졌습니다."
+    assert {row["storage_location"] for row in rows} == {"냉장"}

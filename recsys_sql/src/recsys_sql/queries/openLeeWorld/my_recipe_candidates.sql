@@ -1,6 +1,6 @@
 -- name: my_recipe_candidates
 -- owner: openLeeWorld
--- description: 마이냉장고 기반 레시피 추천. 부족한 재료 목록까지 함께 냅니다
+-- description: 마이냉장고 기반 레시피 추천. 부족·보유·상비 재료 목록까지 함께 냅니다
 -- params: user_id:int, min_match_rate:float, max_results:int
 --
 -- `GET /recommendations/my-recipes` 용입니다.
@@ -19,6 +19,11 @@
 -- 모릅니다. 우선순위가 같으면 매칭률 -> 부족 수 -> 조리시간 -> id 순입니다.
 -- 우선순위는 레시피당 한 번 집계합니다. recipe_product 를 그대로 조인하면 상품 수만큼
 -- 행이 불어납니다.
+--
+-- 세 목록(missing / held / pantry)은 추천 이유 생성(`rag_lab.reason_service`)의 입력입니다.
+-- 생성 서비스는 `len(held) + len(pantry) == available_count`, `len(missing) == missing_count`
+-- 불변식을 검사하고 어긋나면 LLM 을 부르지 않습니다. 그래서 상비재료는 냉장고에 있어도
+-- pantry 에만 넣고 held 에서는 뺍니다. 세 목록은 서로 겹치지 않습니다.
 
 WITH fridge AS (
     -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
@@ -56,7 +61,27 @@ match AS (
                    WHERE ri.is_required AND f.ingredient_id IS NULL AND NOT i.is_pantry
                ),
                '[]'::jsonb
-           ) AS missing_ingredients
+           ) AS missing_ingredients,
+           -- 냉장고 보유 (상비재료 제외). 추천 이유 첫 문장의 근거입니다.
+           COALESCE(
+               JSONB_AGG(
+                   JSONB_BUILD_OBJECT('ingredient_id', i.ingredient_id, 'name', i.name)
+                   ORDER BY i.name
+               ) FILTER (
+                   WHERE ri.is_required AND f.ingredient_id IS NOT NULL AND NOT i.is_pantry
+               ),
+               '[]'::jsonb
+           ) AS held_ingredients,
+           -- 상비재료. 집에 있다고 보고 보유로 치되, 사라고 하면 안 되는 것.
+           COALESCE(
+               JSONB_AGG(
+                   JSONB_BUILD_OBJECT('ingredient_id', i.ingredient_id, 'name', i.name)
+                   ORDER BY i.name
+               ) FILTER (
+                   WHERE ri.is_required AND i.is_pantry
+               ),
+               '[]'::jsonb
+           ) AS pantry_ingredients
     FROM candidate c
     JOIN recipe_ingredient ri ON ri.recipe_id = c.recipe_id
     JOIN ingredient i         ON i.ingredient_id = ri.ingredient_id
@@ -79,7 +104,9 @@ SELECT r.recipe_id,
        m.available_count,
        m.missing_count,
        ROUND(m.available_count::numeric / m.required_count, 3) AS match_rate,
-       m.missing_ingredients
+       m.missing_ingredients,
+       m.held_ingredients,
+       m.pantry_ingredients
 FROM match m
 JOIN recipe r          ON r.recipe_id = m.recipe_id
 LEFT JOIN priority pr  ON pr.recipe_id = m.recipe_id
