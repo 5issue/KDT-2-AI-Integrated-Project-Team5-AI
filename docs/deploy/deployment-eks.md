@@ -247,7 +247,7 @@ pg_restore -d "$CNPG_URL" --no-owner --no-privileges team5-ai.dump
 ```
 
 - **`-Fc` 를 쓰세요.** `VECTOR(1536)` 5,800여 행이 평문 SQL 이면 100MB 대가 됩니다.
-- 덤프에 `alembic_version` 이 함께 담깁니다. dev 브랜치는 2026-09-28 에 `0015`(head)까지 올렸으므로,
+- 덤프에 `alembic_version` 이 함께 담깁니다. dev 브랜치는 2026-09-28 에 `0016`(head)까지 올렸으므로,
   복원 뒤 `alembic current` 가 head 인지 확인만 하면 됩니다. 이보다 오래된 덤프라면 `alembic upgrade head`.
 - `pg_dump` 는 서버 버전 이상이어야 합니다. 이 레포에는 설치돼 있지 않으니
   `brew install libpq` 또는 postgres 컨테이너로 뽑으세요.
