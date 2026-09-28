@@ -57,8 +57,15 @@ jobs:
           echo "DB 테스트 대상: ${dirs:-(없음)}"
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
 
+      - name: DB 통합 건너뜀 (포크 PR)
+        # 포크에서 올린 PR 에는 secret 이 전달되지 않습니다(쓰기 권한 DB 주소를 외부 코드에 주지 않기 위한 GitHub 정책).
+        # 단위 테스트는 위에서 이미 돌았습니다. DB 통합은 머지 전에 같은 저장소 브랜치에서 돌려 확인합니다.
+        if: steps.select.outputs.dirs != '' && github.event.pull_request.head.repo.fork == true
+        run: echo "::warning::포크 PR 이라 DB secret 이 없어 DB 통합 테스트를 건너뜁니다. 대상 ${{ steps.select.outputs.dirs }}"
+
       - name: Pytest DB 통합 (고른 패키지, 전부 롤백)
-        if: steps.select.outputs.dirs != ''
+        # 같은 저장소 PR·push·수동 실행에서만 돕니다. 여기서 secret 이 비면 설정 누락이라 실패시킵니다.
+        if: steps.select.outputs.dirs != '' && github.event.pull_request.head.repo.fork != true
         # - 모든 DB 테스트는 테스트마다 트랜잭션을 열고 롤백합니다. 세션이 끝나면 루트 conftest.py 가
         #   테스트 전용 ID 대역·표식에 남은 행을 세고, 1행이라도 있으면 실패시킵니다.
         # - 경로를 넘기면 pytest 가 그 패키지의 pyproject 를 설정으로 잡아 루트 conftest.py 를 건너뜁니다.

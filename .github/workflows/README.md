@@ -13,7 +13,7 @@ CI/CD workflow 파일을 관리하는 디렉터리입니다.
 
 | 이름                     | 값                               | 비고                                         |
 | ------------------------ | -------------------------------- | -------------------------------------------- |
-| `CI_DATABASE_URL`        | 테스트용 Neon 브랜치 pooler 주소 | DB 테스트 전체. 없으면 CI 가 멈춥니다        |
+| `CI_DATABASE_URL`        | 테스트용 Neon 브랜치 pooler 주소 | DB 테스트 전체. 없으면 CI 가 멈춥니다(포크 PR 은 경고 후 DB 테스트만 건너뜀) |
 | `CI_DATABASE_URL_DIRECT` | 같은 브랜치 직접(unpooled) 주소  | data_pipeline 의 직접 엔드포인트 확인 테스트 |
 
 DB 테스트는 전부 롤백됩니다. 세션 끝에 루트 `conftest.py` 가 테스트 전용 ID 대역
