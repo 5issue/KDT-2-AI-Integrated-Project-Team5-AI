@@ -62,7 +62,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.pool is None:
             logger.warning("DB 가 없어 추천 이유 LLM 을 켜지 않습니다. 재료 사전이 있어야 켭니다.")
     app.state.reason_runtime = ReasonRuntime(reason_settings)
-    await app.state.reason_runtime.try_enable(app.state.pool)
+    # 기동 때는 짧은 상한 없이 DB 명령 제한까지 기다립니다. 요청 경로의 재조회만 1초 상한입니다.
+    await app.state.reason_runtime.try_enable(app.state.pool, timeout=None)
 
     try:
         yield

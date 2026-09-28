@@ -33,6 +33,11 @@ logger = logging.getLogger("serving")
 # 꺼져 있을 때 사전을 다시 읽는 최소 간격(초). 준비 상태 프로브가 10초마다 와도 조회는 분당 한 번입니다.
 RETRY_SECONDS = 60.0
 
+# 요청·프로브 경로에서 사전을 다시 읽을 때의 상한(초). 그 요청이 DB 명령 제한(5초)까지 기다리지 않게 합니다.
+# 넘으면 이번에는 규칙 문구로 답하고 다음 간격에 다시 봅니다. 준비 상태 프로브의 기본 응답 제한도 1초입니다.
+# 기동 때 첫 조회는 이 상한을 쓰지 않습니다(깨어나는 중인 DB 를 기다려도 되는 자리).
+RETRY_TIMEOUT_SECONDS = 1.0
+
 # 사전 조회에서 잡는 예외. 추천 이유는 부가 기능이라 이 조회 실패가 앱 기동이나 요청을 막으면 안 됩니다.
 # asyncpg 의 InterfaceError 와 InternalClientError 는 PostgresError 를 상속하지 않아 따로 적습니다.
 _VOCABULARY_ERRORS = (asyncpg.PostgresError, asyncpg.InterfaceError, asyncpg.InternalClientError, OSError, TimeoutError)
@@ -85,8 +90,12 @@ class ReasonRuntime:
     def enabled(self) -> bool:
         return self.client is not None
 
-    async def try_enable(self, pool: _Pool | None) -> bool:
-        """꺼져 있으면 사전을 읽어 켭니다. 켜져 있거나 켜면 True. 재시도 간격 안이면 읽지 않습니다."""
+    async def try_enable(self, pool: _Pool | None, *, timeout: float | None = RETRY_TIMEOUT_SECONDS) -> bool:
+        """꺼져 있으면 사전을 읽어 켭니다. 켜져 있거나 켜면 True. 재시도 간격 안이면 읽지 않습니다.
+
+        ``timeout`` 은 사전 조회의 상한입니다. 요청·프로브 경로는 기본값(``RETRY_TIMEOUT_SECONDS``)을,
+        기동 때 lifespan 은 None(DB 명령 제한만 적용)을 씁니다.
+        """
         if self.client is not None:
             return True
         if self._settings is None or pool is None or self._clock() < self._next_attempt:
@@ -98,7 +107,11 @@ class ReasonRuntime:
             if self._clock() < self._next_attempt:
                 return False
             self._next_attempt = self._clock() + RETRY_SECONDS
-            vocabulary = await load_ingredient_vocabulary(pool)
+            try:
+                vocabulary = await asyncio.wait_for(load_ingredient_vocabulary(pool), timeout)
+            except TimeoutError:
+                logger.warning("재료 사전 조회가 %.1f초를 넘어 이번에는 규칙 기반 문구만 씁니다", timeout)
+                return False
             if vocabulary is None:
                 return False
             self.vocabulary = vocabulary

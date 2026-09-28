@@ -7,6 +7,7 @@ PR #42 리뷰 B: 기동 때 재료 사전 조회가 한 번 실패하면 파드�
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -24,10 +25,11 @@ from serving.reason_runtime import RETRY_SECONDS, ReasonRuntime
 class _ScriptedPool:
     """사전 조회 결과를 차례로 돌려주는 풀. 예외면 던지고, 목록이면 그 이름들을 냅니다."""
 
-    def __init__(self, *results: list[str] | Exception, gate: asyncio.Event | None = None) -> None:
+    def __init__(self, *results: list[str] | Exception, gate: asyncio.Event | None = None, delay: float = 0.0) -> None:
         self.results = list(results)
         self.fetches = 0
         self.gate = gate
+        self.delay = delay
         self.closed = False
 
     @asynccontextmanager
@@ -38,6 +40,8 @@ class _ScriptedPool:
         self.fetches += 1
         if self.gate is not None:
             await self.gate.wait()
+        if self.delay:
+            await asyncio.sleep(self.delay)
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -117,6 +121,37 @@ async def test_concurrent_requests_load_once_without_waiting() -> None:
     assert pool.fetches == 1
     assert await runtime.try_enable(pool) is True
     assert pool.fetches == 1
+    await runtime.aclose()
+
+
+async def test_slow_reload_does_not_hold_the_request(caplog: pytest.LogCaptureFixture) -> None:
+    """요청·프로브 경로의 재조회는 상한을 넘으면 바로 규칙 문구로 답하고 다음 간격에 다시 봅니다 (PR #42 리뷰).
+
+    상한이 없으면 그 요청이 DB 명령 제한(5초)까지 기다리고, 준비 상태 프로브(기본 응답 제한 1초)도 실패합니다.
+    """
+    clock = _Clock()
+    pool = _ScriptedPool(["두부"], ["두부"], delay=0.5)
+    runtime = ReasonRuntime(SETTINGS, clock=clock)
+
+    started = time.perf_counter()
+    with caplog.at_level("WARNING", logger="serving"):
+        assert await runtime.try_enable(pool, timeout=0.05) is False
+    assert time.perf_counter() - started < 0.4, "상한을 넘겼는데도 조회가 끝날 때까지 기다렸습니다"
+    assert any("넘어 이번에는 규칙 기반 문구만" in r.getMessage() for r in caplog.records)
+
+    assert await runtime.try_enable(pool, timeout=0.05) is False
+    assert pool.fetches == 1, "상한을 넘긴 뒤 재시도 간격 안에서 다시 읽었습니다"
+
+
+async def test_startup_load_waits_without_the_short_cap() -> None:
+    """기동 때 첫 조회(timeout=None)는 짧은 상한 없이 끝까지 기다립니다.
+
+    깨어나는 중인 DB 를 기다려도 되는 자리입니다.
+    """
+    pool = _ScriptedPool(["두부"], delay=0.2)
+    runtime = ReasonRuntime(SETTINGS, clock=_Clock())
+
+    assert await runtime.try_enable(pool, timeout=None) is True
     await runtime.aclose()
 
 
