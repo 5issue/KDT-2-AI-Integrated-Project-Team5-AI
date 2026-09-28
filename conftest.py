@@ -9,11 +9,15 @@ CI 가 공용 Neon 브랜치에 붙어 돌기 때문에, 롤백을 빠뜨린 테
 - 9,200M 대역은 데모 시드(`data-pipeline seed-scenario`)가 **일부러 남기는** 데이터라 보지 않습니다.
 - 확인은 DB 테스트가 실제로 돌았고 환경변수 `DATABASE_URL` 이 있을 때만 합니다(CI). 로컬은 폴더마다
   `.env` 가 달라 확인할 대상이 하나로 정해지지 않습니다.
+
+반대 방향도 막습니다. db 마커가 없는 단위 테스트에서는 DB·LLM 환경변수를 지워, CI 가 DB 테스트용으로
+내려 준 값이 "DB 없이" 도는 테스트에 새어 들지 않게 합니다(`_isolate_unit_tests_from_ci_env`).
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from typing import LiteralString
 
 import psycopg
@@ -33,6 +37,39 @@ RESIDUE_CHECKS: dict[str, LiteralString] = {
 }
 
 DB_TESTS_RAN = pytest.StashKey[bool]()
+
+# 단위 테스트(db 마커 없음)에서 지우는 환경변수. CI 는 DB 테스트를 위해 이 값들을 프로세스 환경변수로
+# 내려 주는데, `Settings(_env_file=None)` 은 `.env` 파일만 막고 환경변수는 그대로 읽습니다. 그래서 "DB 없이"
+# 를 전제로 한 단위 테스트가 CI 에서만 실제 DB 에 붙었습니다(로컬은 값이 .env 에만 있어 드러나지 않음).
+_ISOLATED_ENV = ("DATABASE_URL", "DATABASE_URL_DIRECT", "OPENROUTER_API_KEY", "REASON_MODEL")
+
+
+def _clear_settings_caches() -> None:
+    """패키지마다 `get_settings()` 가 lru_cache 입니다. 환경을 바꿨으면 다시 읽게 비웁니다."""
+    from data_pipeline.config import get_settings as data_pipeline_settings
+    from rag_lab.config import get_settings as rag_lab_settings
+    from recsys_sql.config import get_settings as recsys_sql_settings
+    from serving.config import get_settings as serving_settings
+
+    for get_settings in (data_pipeline_settings, rag_lab_settings, recsys_sql_settings, serving_settings):
+        get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_unit_tests_from_ci_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """db 마커가 없는 테스트는 DB·LLM 환경변수 없이 돕니다. 로컬과 CI 에서 같은 조건이 됩니다.
+
+    테스트가 끝나면 환경변수는 monkeypatch 가 되돌리고, 설정 캐시를 다시 비워 뒤따르는 DB 테스트가
+    환경변수 없는 설정을 물려받지 않게 합니다.
+    """
+    if request.node.get_closest_marker("db") is not None:
+        yield
+        return
+    for key in _ISOLATED_ENV:
+        monkeypatch.delenv(key, raising=False)
+    _clear_settings_caches()
+    yield
+    _clear_settings_caches()
 
 
 def residue_counts(url: str) -> dict[str, int]:
