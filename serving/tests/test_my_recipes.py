@@ -13,13 +13,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import asyncpg
 import httpx
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from rag_lab.reason_service import ReasonResult
+from rag_lab.reason_service.service import ReasonClient
 from serving.app import create_app
 from serving.config import Settings
+from serving.reason_runtime import ReasonRuntime
 from serving.routers import recommendations
 from serving.schemas import MyRecipeItem
 
@@ -64,12 +68,15 @@ class _FakePool:
 
 @asynccontextmanager
 async def _client_with_rows(
-    rows: list[dict[str, Any]], *, reason_client: object | None = None, vocabulary: frozenset[str] = frozenset()
+    rows: list[dict[str, Any]],
+    *,
+    reason_client: ReasonClient | None = None,
+    vocabulary: frozenset[str] = frozenset(),
 ) -> AsyncIterator[AsyncClient]:
     app = create_app(Settings(_env_file=None))  # type: ignore[call-arg]
     app.state.pool = _FakePool(rows)
-    app.state.reason_client = reason_client
-    app.state.ingredient_vocabulary = vocabulary
+    if reason_client is not None:
+        app.state.reason_runtime = ReasonRuntime.enabled_with(reason_client, vocabulary)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
 
@@ -166,10 +173,17 @@ async def test_my_recipes_without_llm_client_uses_template_reason() -> None:
     assert items[0]["recommendation_reason"] == MyRecipeItem.from_row(_sample_row()).recommendation_reason
 
 
+class _UnusedReasonClient:
+    """생성 함수를 바꿔 끼운 테스트에서 넘겨지기만 하는 클라이언트. 불리면 테스트가 틀린 것입니다."""
+
+    async def complete(self, system: str, user: str) -> str:
+        raise AssertionError("생성 함수를 바꿔 끼웠는데 클라이언트가 불렸습니다")
+
+
 async def test_my_recipes_injects_generated_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
     """라우터는 SQL 행 전체와 앱 상태의 클라이언트·사전을 서비스에 넘기고, 결과 문구를 카드에 덮어씁니다."""
     calls: list[dict[str, Any]] = []
-    sentinel_client = object()
+    sentinel_client = _UnusedReasonClient()
     vocabulary = frozenset({"김치", "돼지고기"})
 
     async def fake_generate(rows: list[dict[str, Any]], client: object, **kwargs: Any) -> list[ReasonResult]:
@@ -217,25 +231,25 @@ async def test_my_recipes_keeps_template_reason_when_reason_service_raises() -> 
 
 
 async def test_lifespan_without_openrouter_key_starts_and_stops_cleanly() -> None:
-    """키가 없으면 클라이언트 없이 뜨고, 종료 때 AttributeError 없이 내려갑니다 (팀장 리뷰 반영)."""
+    """키가 없으면 LLM 없이 뜨고, 종료 때 AttributeError 없이 내려갑니다 (팀장 리뷰 반영)."""
     app = create_app(Settings(_env_file=None, shutdown_delay_seconds=0))  # type: ignore[call-arg]
     async with app.router.lifespan_context(app):
-        assert app.state.reason_http is None
-        assert app.state.reason_client is None
-        assert app.state.ingredient_vocabulary == frozenset()
+        runtime = app.state.reason_runtime
+        assert not runtime.enabled
+        assert runtime.vocabulary == frozenset()
 
 
-async def test_lifespan_with_openrouter_key_creates_and_closes_one_http_client() -> None:
-    """키가 있으면 httpx 클라이언트 하나를 만들고 종료 때 닫습니다. DB 가 없으면 사전은 비어 있습니다."""
+async def test_lifespan_with_key_but_no_db_stays_template(caplog: pytest.LogCaptureFixture) -> None:
+    """키가 있어도 DB 가 없으면 재료 사전이 없어 LLM 을 켜지 않습니다 (PR #42 리뷰 A).
+
+    예전에는 빈 사전으로 클라이언트를 만들어, 지어낸 재료 검사가 항상 통과하는 상태로 켜졌습니다.
+    """
     settings = Settings(_env_file=None, shutdown_delay_seconds=0, openrouter_api_key="test-key")  # type: ignore[call-arg]
     app = create_app(settings)
-    async with app.router.lifespan_context(app):
-        http = app.state.reason_http
-        assert isinstance(http, httpx.AsyncClient)
-        assert app.state.reason_client is not None
-        assert app.state.ingredient_vocabulary == frozenset()
-    assert http.is_closed
-    assert app.state.reason_http is None
+    with caplog.at_level("WARNING", logger="serving"):
+        async with app.router.lifespan_context(app):
+            assert not app.state.reason_runtime.enabled
+    assert any("DB 가 없어 추천 이유 LLM 을 켜지 않습니다" in r.getMessage() for r in caplog.records)
 
 
 class _VocabularyPool:
@@ -268,48 +282,59 @@ def _settings_with_db_and_key() -> Settings:
     )
 
 
-async def test_lifespan_loads_ingredient_vocabulary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DB 가 있으면 재료 사전을 읽고 LLM 클라이언트를 켭니다."""
+def _app_with_pool(monkeypatch: pytest.MonkeyPatch, pool: _VocabularyPool) -> FastAPI:
     import serving.app as app_module
-
-    pool = _VocabularyPool(["두부", "대파"])
 
     async def fake_create_pool(settings: Settings) -> _VocabularyPool:
         return pool
 
     monkeypatch.setattr(app_module, "create_pool", fake_create_pool)
-    app = create_app(_settings_with_db_and_key())
+    return create_app(_settings_with_db_and_key())
+
+
+async def test_lifespan_loads_ingredient_vocabulary_and_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DB 가 있으면 재료 사전을 읽고 LLM 을 켭니다. 종료 때 HTTP 클라이언트를 닫습니다."""
+    pool = _VocabularyPool(["두부", "대파"])
+    app = _app_with_pool(monkeypatch, pool)
     async with app.router.lifespan_context(app):
-        assert app.state.ingredient_vocabulary == frozenset({"두부", "대파"})
-        assert app.state.reason_client is not None
+        runtime = app.state.reason_runtime
+        assert runtime.enabled
+        assert runtime.vocabulary == frozenset({"두부", "대파"})
+        http = runtime._http
+        assert isinstance(http, httpx.AsyncClient)
+    assert http.is_closed
+    assert not runtime.enabled
     assert pool.closed
 
 
-async def test_lifespan_survives_vocabulary_failure(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("pool", "expected_warning"),
+    [
+        # 데이터 복원 전 DB. 예전에는 이 조회가 lifespan 을 깨뜨려 파드 전체가 CrashLoop 였습니다.
+        (
+            _VocabularyPool([], error=asyncpg.UndefinedTableError('relation "ingredient" does not exist')),
+            "UndefinedTableError",
+        ),
+        # PostgresError 를 상속하지 않는 asyncpg 예외도 기동을 막지 않습니다 (PR #42 리뷰 C).
+        (_VocabularyPool([], error=asyncpg.InterfaceError("pool is closing")), "InterfaceError"),
+        (_VocabularyPool([], error=asyncpg.InternalClientError("unexpected")), "InternalClientError"),
+        # 마이그레이션은 됐지만 카탈로그가 비어 있는 DB. 빈 사전으로 켜면 검사가 무력화됩니다 (리뷰 A).
+        (_VocabularyPool([]), "비어 있어(0종)"),
+    ],
+    ids=["undefined-table", "interface-error", "internal-client-error", "empty-vocabulary"],
+)
+async def test_lifespan_keeps_llm_off_when_vocabulary_is_unusable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pool: _VocabularyPool,
+    expected_warning: str,
 ) -> None:
-    """재료 사전 조회가 실패해도 앱은 뜨고, LLM 은 켜지 않고 규칙 문구로 내려갑니다.
-
-    예전에는 이 조회가 lifespan 을 그대로 깨뜨려, 데이터 복원 전 DB 에 키를 넣고 배포하면
-    부가 기능 때문에 파드 전체가 CrashLoop 에 빠졌습니다.
-    """
-    import asyncpg
-
-    import serving.app as app_module
-
-    pool = _VocabularyPool([], error=asyncpg.UndefinedTableError('relation "ingredient" does not exist'))
-
-    async def fake_create_pool(settings: Settings) -> _VocabularyPool:
-        return pool
-
-    monkeypatch.setattr(app_module, "create_pool", fake_create_pool)
-    app = create_app(_settings_with_db_and_key())
+    """사전을 쓸 수 없으면 앱은 뜨고 LLM 만 꺼 둔 채 규칙 문구로 내려갑니다."""
+    app = _app_with_pool(monkeypatch, pool)
     with caplog.at_level("WARNING", logger="serving"):
         async with app.router.lifespan_context(app):
             assert app.state.pool is pool
-            assert app.state.reason_client is None
-            assert app.state.reason_http is None
-            assert app.state.ingredient_vocabulary == frozenset()
+            assert not app.state.reason_runtime.enabled
     assert pool.closed
     warnings = [r.getMessage() for r in caplog.records if r.name == "serving" and r.levelname == "WARNING"]
-    assert any("재료 사전을 읽지 못해" in message and "UndefinedTableError" in message for message in warnings)
+    assert any(expected_warning in message for message in warnings), warnings

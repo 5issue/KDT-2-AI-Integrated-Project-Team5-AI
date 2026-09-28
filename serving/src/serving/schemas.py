@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,7 +20,11 @@ class HealthResponse(BaseModel):
 
 
 class DbHealthResponse(BaseModel):
-    """readiness 응답. 호스트나 자격증명은 담지 않습니다."""
+    """readiness 응답. 호스트나 자격증명은 담지 않습니다.
+
+    ``reason_llm`` 은 추천 이유 LLM 이 켜져 있는지입니다. 부가 기능이라 ``ok`` 판정에는 넣지 않습니다.
+    꺼져 있으면(키 없음, 재료 사전 없음) my-recipes 는 200 으로 규칙 문구만 냅니다.
+    """
 
     ok: bool
     latency_ms: float
@@ -30,6 +34,7 @@ class DbHealthResponse(BaseModel):
     pool_idle: int | None = None
     detail: str | None = None
     notes: list[str] = Field(default_factory=list)
+    reason_llm: Literal["on", "off"] = "off"
 
 
 class MissingIngredientRef(BaseModel):

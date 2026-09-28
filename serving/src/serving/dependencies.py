@@ -8,8 +8,9 @@ from typing import Annotated
 import asyncpg
 from fastapi import Depends, HTTPException, Request, status
 
-from rag_lab.reason_service import OpenRouterReasonClient
+from rag_lab.reason_service.service import ReasonClient
 from serving.config import Settings, get_settings
+from serving.reason_runtime import ReasonRuntime
 
 
 def get_pool(request: Request) -> asyncpg.Pool:
@@ -27,17 +28,16 @@ def get_pool(request: Request) -> asyncpg.Pool:
 class ReasonContext:
     """추천 이유 생성에 필요한 앱 상태. ``client`` 가 None 이면 규칙 기반 문구만 씁니다."""
 
-    client: OpenRouterReasonClient | None
+    client: ReasonClient | None
     vocabulary: frozenset[str]
 
 
-def get_reason_context(request: Request) -> ReasonContext:
-    """lifespan 이 붙여 둔 LLM 클라이언트와 환각 검사 사전을 꺼냅니다. 없으면 규칙 문구 모드입니다."""
+async def get_reason_context(request: Request) -> ReasonContext:
+    """LLM 클라이언트와 환각 검사 사전을 꺼냅니다. 꺼져 있으면 재시도 간격마다 다시 켜 봅니다."""
     state = request.app.state
-    return ReasonContext(
-        client=getattr(state, "reason_client", None),
-        vocabulary=getattr(state, "ingredient_vocabulary", frozenset()),
-    )
+    runtime: ReasonRuntime = state.reason_runtime
+    await runtime.try_enable(getattr(state, "pool", None))
+    return ReasonContext(client=runtime.client, vocabulary=runtime.vocabulary)
 
 
 PoolDep = Annotated[asyncpg.Pool, Depends(get_pool)]

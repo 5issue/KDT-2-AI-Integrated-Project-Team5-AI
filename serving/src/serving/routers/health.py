@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 
 from serving import __version__
 from serving.db import check_health
 from serving.dependencies import PoolDep, SettingsDep
+from serving.reason_runtime import ReasonRuntime
 from serving.schemas import DbHealthResponse, HealthResponse
 
 router = APIRouter(tags=["health"])
@@ -23,10 +24,19 @@ async def read_health(settings: SettingsDep) -> HealthResponse:
 
 
 @router.get("/health/db", response_model=DbHealthResponse)
-async def read_db_health(pool: PoolDep, settings: SettingsDep, response: Response) -> DbHealthResponse:
-    """DB readiness. 실패해도 예외 대신 503 과 상세 없는 사유를 돌려줍니다."""
+async def read_db_health(
+    request: Request, pool: PoolDep, settings: SettingsDep, response: Response
+) -> DbHealthResponse:
+    """DB readiness. 실패해도 예외 대신 503 과 상세 없는 사유를 돌려줍니다.
+
+    추천 이유 LLM 이 꺼져 있으면 여기서도 다시 켜 봅니다(재시도 간격마다 한 번). 트래픽이 없어도
+    준비 상태 프로브가 복구를 이어 가게 하려는 것입니다. 결과는 ``ok`` 에 넣지 않습니다.
+    """
     health = await check_health(pool, settings=settings)
-    if not health.ok:
+    runtime: ReasonRuntime = request.app.state.reason_runtime
+    if health.ok:
+        await runtime.try_enable(pool)
+    else:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return DbHealthResponse(
         ok=health.ok,
@@ -37,4 +47,5 @@ async def read_db_health(pool: PoolDep, settings: SettingsDep, response: Respons
         pool_idle=health.pool_idle,
         detail=health.detail,
         notes=health.notes,
+        reason_llm="on" if runtime.enabled else "off",
     )

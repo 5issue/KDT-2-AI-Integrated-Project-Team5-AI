@@ -23,6 +23,7 @@ import pytest
 from api_test_harness import World, in_days, open_world, stock_fridge
 
 from serving.config import Settings
+from serving.reason_runtime import ReasonRuntime
 from serving.routers.fridge import DUPLICATE_ITEM, INACTIVE_PRODUCT, NO_PRIMARY_INGREDIENT
 
 pytestmark = pytest.mark.db
@@ -426,8 +427,10 @@ async def test_my_recipes_with_real_openrouter(world: World, caplog: pytest.LogC
     await stock_fridge(world, ids.kimchi_a, ids.neck_a)
 
     async with httpx.AsyncClient() as http:
-        world.app.state.reason_client = OpenRouterReasonClient(http, reason_settings)
-        world.app.state.ingredient_vocabulary = frozenset(str(row["name"]) for row in rows)
+        vocabulary = frozenset(str(row["name"]) for row in rows)
+        world.app.state.reason_runtime = ReasonRuntime.enabled_with(
+            OpenRouterReasonClient(http, reason_settings), vocabulary
+        )
         with caplog.at_level("INFO", logger="rag_lab.reason_service.service"):
             items = (await world.api.get("/recommendations/my-recipes", user=ids.me)).expect(200).data["items"]
 

@@ -14,39 +14,21 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import asyncpg
-import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from rag_lab.reason_service import OpenRouterReasonClient, ReasonSettings
+from rag_lab.reason_service import ReasonSettings
 from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
 from serving.logging_setup import configure_logging
 from serving.ratelimit import RateLimitMiddleware
+from serving.reason_runtime import ReasonRuntime
 from serving.request_log import RequestLogMiddleware
 from serving.routers import fridge, health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
-
-
-async def _load_ingredient_vocabulary(pool: asyncpg.Pool) -> frozenset[str] | None:
-    """환각 검사 사전. 세 카드 어디에도 없는 재료를 지어냈는지 잡습니다. 앱 시작 때 한 번 읽습니다.
-
-    읽지 못하면 None 이고, 그러면 LLM 을 켜지 않습니다. 추천 이유는 부가 기능이라 이 조회 실패가
-    앱 기동을 막으면 안 됩니다(데이터 복원 전 DB 에서는 CrashLoop 이었습니다). 그렇다고 사전 없이
-    LLM 을 켜면 지어낸 재료를 못 거르므로, 검사를 다 갖추지 못하면 규칙 문구로 내려갑니다.
-    """
-    try:
-        async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT name FROM ingredient")
-    except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
-        # 예외 메시지에 호스트가 들어갈 수 있어 타입만 남깁니다.
-        logger.warning("재료 사전을 읽지 못해 추천 이유는 규칙 기반 문구만 씁니다: %s", type(exc).__name__)
-        return None
-    return frozenset(str(row["name"]) for row in rows)
 
 
 @asynccontextmanager
@@ -56,11 +38,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 테스트나 팩토리에서 넘긴 설정(종료 유예 0 등)이 무시됩니다.
     settings: Settings = getattr(app.state, "settings", None) or get_settings()
     app.state.pool = None
-    # 추천 이유 LLM 클라이언트. 키가 없어 else 를 타지 않아도 종료 코드가 AttributeError 를
-    # 내지 않도록 세 값을 먼저 초기화합니다.
-    app.state.reason_http = None
-    app.state.reason_client = None
-    app.state.ingredient_vocabulary = frozenset()
 
     try:
         dsn = settings.require_database_url()
@@ -71,20 +48,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("커넥션 풀 생성: %s", mask_dsn(dsn))
         app.state.pool = await create_pool(settings)
 
+    # 추천 이유 LLM. 켜지 못해도 기동은 계속하고, 꺼져 있으면 요청 때 다시 켜 봅니다(reason_runtime).
+    reason_settings: ReasonSettings | None = None
     try:
         reason_settings = ReasonSettings.from_env(settings.reason_environ())
     except RuntimeError as exc:
         logger.warning("추천 이유는 규칙 기반 문구만 씁니다: %s", exc)
     else:
-        vocabulary: frozenset[str] | None = frozenset()
-        if app.state.pool is not None:
-            vocabulary = await _load_ingredient_vocabulary(app.state.pool)
-        if vocabulary is not None:
-            app.state.ingredient_vocabulary = vocabulary
-            # httpx.AsyncClient 는 앱 수명 동안 하나만 씁니다. 키는 클라이언트 안에만 있고 로그에 남지 않습니다.
-            app.state.reason_http = httpx.AsyncClient()
-            app.state.reason_client = OpenRouterReasonClient(app.state.reason_http, reason_settings)
-            logger.info("추천 이유 LLM 생성 사용: model=%s, 사전 %d종", reason_settings.model, len(vocabulary))
+        if app.state.pool is None:
+            logger.warning("DB 가 없어 추천 이유 LLM 을 켜지 않습니다. 재료 사전이 있어야 켭니다.")
+    app.state.reason_runtime = ReasonRuntime(reason_settings)
+    await app.state.reason_runtime.try_enable(app.state.pool)
 
     try:
         yield
@@ -96,10 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 기다렸다가 정리해야 그 사이 들어온 요청이 502 로 끊기지 않습니다.
         if settings.shutdown_delay_seconds > 0:
             await asyncio.sleep(settings.shutdown_delay_seconds)
-        if app.state.reason_http is not None:
-            await app.state.reason_http.aclose()
-            app.state.reason_http = None
-            app.state.reason_client = None
+        await app.state.reason_runtime.aclose()
         if app.state.pool is not None:
             await app.state.pool.close()
             app.state.pool = None
@@ -121,6 +92,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    # lifespan 이 키와 사전을 보고 교체합니다. lifespan 없이 쓰는 앱(테스트)은 규칙 문구 상태로 둡니다.
+    app.state.reason_runtime = ReasonRuntime(None)
 
     if settings.cors_allow_origins:
         app.add_middleware(

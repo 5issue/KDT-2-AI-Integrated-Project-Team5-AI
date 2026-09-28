@@ -149,10 +149,16 @@ import 하지 않으므로 넣어도 아무 효과가 없습니다. 특히 `LLM_
 INFO serving: 추천 이유 LLM 생성 사용: model=google/gemini-3.5-flash-lite, 사전 955종   <- 켜짐
 WARNING serving: 추천 이유는 규칙 기반 문구만 씁니다: OPENROUTER_API_KEY 가 비어 있습니다.  <- 꺼짐 (키 없음)
 WARNING serving: 재료 사전을 읽지 못해 추천 이유는 규칙 기반 문구만 씁니다: UndefinedTableError  <- 꺼짐 (DB)
+WARNING serving: 재료 사전이 비어 있어(0종) 추천 이유는 규칙 기반 문구만 씁니다              <- 꺼짐 (빈 카탈로그)
 ```
 
-재료 사전(`SELECT name FROM ingredient`)은 LLM 문구의 지어낸 재료를 거르는 데 씁니다. 읽지 못하면
-앱은 그대로 뜨고 LLM 만 켜지 않습니다. 데이터 복원 전 DB 에 배포했다면 복원 후 파드를 재시작하세요(5-3).
+재료 사전(`SELECT name FROM ingredient`)은 LLM 문구의 지어낸 재료를 거르는 데 씁니다. 읽지 못하거나
+비어 있으면 앱은 그대로 뜨고 LLM 만 켜지 않습니다(사전 없이 켜면 그 검사가 항상 통과하기 때문).
+
+**꺼진 LLM 은 스스로 다시 켜집니다.** 요청이나 준비 상태 프로브(`/health/db`)가 올 때 60초에 한 번
+사전을 다시 읽어, 읽히면 켜고 `추천 이유 LLM 생성 사용` 로그를 남깁니다. 일시 장애나 데이터 복원 전
+배포라도 재시작할 필요가 없습니다. 지금 상태는 `/health/db` 의 `reason_llm`(`on`/`off`)으로 봅니다.
+LLM 은 부가 기능이라 `ok` 판정에는 넣지 않습니다. 꺼져 있어도 파드는 트래픽을 받습니다.
 
 키가 틀려도 파드는 정상으로 뜨고 `my-recipes` 도 200 입니다. 카드마다 규칙 문구로 대체될 뿐이라
 응답만 봐서는 모릅니다. 요청 로그에서 대체 건수를 보세요(7절).
@@ -495,7 +501,7 @@ kubectl get pods -l app=serving
 
 kubectl port-forward svc/serving 8080:80
 curl -s localhost:8080/health      # {"status":"ok","version":"0.1.0","environment":"prod"}
-curl -s localhost:8080/health/db   # ok:true, latency_ms, pool_size ...
+curl -s localhost:8080/health/db   # ok:true, latency_ms, pool_size, reason_llm(on/off) ...
 ```
 
 **`/health` 의 `version` 으로는 어떤 이미지가 떠 있는지 알 수 없습니다.**
