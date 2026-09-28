@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -11,6 +12,15 @@ from httpx import ASGITransport, AsyncClient
 
 from serving.app import create_app
 from serving.config import Settings
+from serving.logging_setup import LOGGER_NAMES
+
+
+@pytest.fixture(autouse=True)
+def _propagate_logs_to_caplog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``caplog`` 은 루트 로거에서 받습니다. 운영 로깅 설정은 중복 출력을 막으려고 서빙·rag_lab 로거의
+    전파를 끄므로(logging_setup), 테스트 동안에만 다시 켭니다. 끝나면 monkeypatch 가 되돌립니다."""
+    for name in LOGGER_NAMES:
+        monkeypatch.setattr(logging.getLogger(name), "propagate", True)
 
 
 def database_url_configured() -> bool:

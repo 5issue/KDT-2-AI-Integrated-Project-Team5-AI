@@ -17,6 +17,7 @@ import sys
 from serving.request_log import access_logger
 
 LOGGER_NAMES = ("serving", "rag_lab")
+UVICORN_ACCESS_LOGGER = "uvicorn.access"
 
 
 class _Formatter(logging.Formatter):
@@ -33,11 +34,16 @@ class _Formatter(logging.Formatter):
 
 
 def configure_logging() -> None:
-    """두 로거를 INFO 로 stderr 에 냅니다. 여러 번 불러도 핸들러는 하나입니다.
+    """두 로거를 INFO 로 stderr 에 내고, uvicorn 의 평문 액세스 로그를 끕니다. 여러 번 불러도 같습니다.
 
-    밖에서 이미 설정한 로거(uvicorn `--log-config` 등)는 건드리지 않습니다. 핸들러가 없을 때만
-    달고, 레벨이 정해지지 않았을 때만 INFO 로 둡니다. `propagate` 는 그대로 두어 pytest 의
-    `caplog`(루트에서 받음)가 계속 동작하게 합니다. 운영에서는 루트에 핸들러가 없어 중복되지 않습니다.
+    - 밖에서 이미 핸들러를 단 로거(uvicorn `--log-config` 로 `serving` 을 직접 설정한 경우)는 건드리지
+      않습니다. 수집 형식을 바꾸려면 두 로거에 핸들러를 직접 지정하면 됩니다.
+    - 핸들러를 달 때는 루트로 전파하지 않습니다. 루트에도 핸들러가 있으면(`basicConfig`, 루트만 설정한
+      `--log-config`) 한 줄이 두 번, 그중 하나는 루트 형식으로 나가 액세스 로그의 JSON 한 줄 계약이
+      깨지기 때문입니다. 테스트의 `caplog` 는 루트에서 받으므로 각 테스트 conftest 가 전파를 다시 켭니다.
+    - 액세스 로그는 앱이 JSON 한 줄로 남깁니다(request_log.py). uvicorn 의 평문 액세스 로그는 요청마다
+      같은 내용을 한 줄 더 찍고, 앱이 일부러 빼는 헬스체크 프로브도 찍습니다. 실행 플래그
+      (`--no-access-log`)에만 맡기면 매니페스트가 command 를 바꿀 때 조용히 되살아나므로 여기서 끕니다.
     """
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_Formatter())
@@ -47,3 +53,5 @@ def configure_logging() -> None:
             logger.setLevel(logging.INFO)
         if not logger.handlers:
             logger.addHandler(handler)
+            logger.propagate = False
+    logging.getLogger(UVICORN_ACCESS_LOGGER).disabled = True

@@ -532,8 +532,12 @@ kubectl logs -l app=serving | grep '"request_id":"<값>"'
 
 헬스체크(`/health`, `/health/db`)는 로그를 남기지 않습니다. 프로브가 30초마다 찍는 노이즈를
 막기 위한 것이라, 프로브 실패는 로그가 아니라 `kubectl describe pod` 로 봅니다.
-같은 이유로 `Dockerfile` 의 `CMD` 가 uvicorn 의 평문 액세스 로그를 끕니다(`--no-access-log`).
-액세스 로그는 앱의 JSON 한 줄뿐입니다.
+같은 이유로 앱이 uvicorn 의 평문 액세스 로그를 코드에서 끕니다(`logging_setup.py`). 매니페스트가
+`command` 를 바꿔 `--no-access-log` 가 빠져도 같습니다. 액세스 로그는 앱의 JSON 한 줄뿐입니다.
+
+`serving`·`rag_lab` 로그는 앱이 단 핸들러로 stderr 에 나가고 루트로 전파하지 않습니다. 루트에도
+핸들러가 있으면 한 줄이 두 번(하나는 루트 형식) 찍혀 JSON 한 줄 계약이 깨지기 때문입니다. 수집 형식을
+바꾸려면 uvicorn `--log-config` 에서 두 로거에 핸들러를 직접 지정하세요. 그러면 앱은 그 설정을 건드리지 않습니다.
 
 ### 추천 이유 LLM 확인
 
