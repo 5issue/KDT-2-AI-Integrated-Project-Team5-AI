@@ -23,6 +23,7 @@ from serving import __version__
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
+from serving.logging_setup import configure_logging
 from serving.ratelimit import RateLimitMiddleware
 from serving.request_log import RequestLogMiddleware
 from serving.routers import fridge, health, home, products, recipes, recommendations
@@ -94,6 +95,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """앱 인스턴스를 만듭니다."""
+    # uvicorn 은 앱을 import 하기 전에 자기 로거만 설정합니다. 앱 로그는 여기서 켭니다.
+    configure_logging()
     settings = settings or get_settings()
     app = FastAPI(
         title="5issue AI 추천 API",

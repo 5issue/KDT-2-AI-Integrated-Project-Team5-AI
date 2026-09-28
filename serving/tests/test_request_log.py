@@ -96,6 +96,42 @@ async def test_unhandled_exception_log_carries_traceback(
     assert entry["request_id"]
 
 
+def test_logs_reach_stderr_in_a_real_process() -> None:
+    """위 테스트들은 caplog 가 로거 레벨을 직접 올려서 통과합니다. 실제 프로세스에서도 나가는지 봅니다.
+
+    로깅 설정이 없을 때 컨테이너에서는 액세스 로그가 0줄이었고, 추천 이유 LLM 이 401 로 전부 실패해도
+    로그에 아무것도 남지 않았습니다. uvicorn 이 앱 import 전에 자기 로깅 설정을 올리는 순서를 재현합니다.
+    """
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "import logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "logging.config.dictConfig(LOGGING_CONFIG)\n"
+        "from serving.app import create_app\n"
+        "from serving.config import Settings\n"
+        # 모듈 수준 app 이 이미 한 번 불렀으므로 두 번째 호출입니다. 핸들러가 늘면 줄이 중복됩니다.
+        "create_app(Settings(_env_file=None))\n"
+        "logging.getLogger('serving.access').info('{\"request_id\": \"abc12345\"}')\n"
+        "logging.getLogger('serving').info('graceful shutdown 완료')\n"
+        "logging.getLogger('rag_lab.reason_service.service').info('추천 이유 생성: 카드 3장')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        check=True,
+    )
+    lines = result.stderr.splitlines()
+    # 액세스 로그는 접두사 없이 JSON 한 줄 그대로, 한 번만 나갑니다.
+    assert lines.count('{"request_id": "abc12345"}') == 1, lines
+    assert "INFO serving: graceful shutdown 완료" in lines, lines
+    assert "INFO rag_lab.reason_service.service: 추천 이유 생성: 카드 3장" in lines, lines
+
+
 async def test_health_is_not_logged(offline_client: AsyncClient, caplog: pytest.LogCaptureFixture) -> None:
     """헬스체크는 액세스 로그를 남기지 않습니다 (프로브 노이즈 방지)."""
     with caplog.at_level("INFO", logger="serving.access"):

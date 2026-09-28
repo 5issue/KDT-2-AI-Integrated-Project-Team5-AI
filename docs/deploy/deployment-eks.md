@@ -8,13 +8,15 @@
 
 ## 1. 한 이미지에 무엇이 들어가나
 
-`serving` 과 그 워크스페이스 의존성인 `recsys_sql` 둘뿐입니다.
-`rag_lab` 과 `data_pipeline` 은 들어가지 않습니다.
+`serving` 과 그 워크스페이스 의존성인 `recsys_sql`, `rag_lab` 셋입니다. `data_pipeline` 은
+들어가지 않습니다. `rag_lab` 은 추천 이유 생성(`rag_lab.reason_service`)만 쓰며, 기본 의존성이
+`httpx` 하나라 LangGraph·OpenAI SDK 같은 RAG 실험 패키지는 설치되지 않습니다(#33, #38).
 
 ```
 /app/.venv/          uv 가 락파일 그대로 설치한 가상환경 (non-root, 사용자 serving)
   serving/           FastAPI 앱
   recsys_sql/        SQL 카탈로그. queries/ 가 패키지 안에 있어 휠에 함께 담깁니다
+  rag_lab/           추천 이유 LLM 생성. 서빙은 reason_service 만 import 합니다
 ```
 
 **빌드 컨텍스트는 레포 루트입니다.** `serving/` 이 아닙니다. 락파일을 풀려면 워크스페이스
@@ -64,7 +66,7 @@ curl -s localhost:8000/health && curl -s localhost:8000/health/db
 | 키 | 값 형태 | 누가 채우나 | 비고 |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | `postgresql://USER:PASS@HOST/db?sslmode=...` | **클라우드팀** | 운영 DB(CNPG)의 DSN. AI 팀의 Neon 개발 브랜치를 그대로 쓰지 않습니다 (3-6) |
-| `LLM_API_KEY` | `sk-...` | AI 팀 | **rag_lab 연결 후** 필요. 그 전에는 없어도 됩니다 |
+| `OPENROUTER_API_KEY` | `sk-or-...` | AI 팀 | 추천 이유 LLM 생성용. 없으면 규칙 문구로만 뜹니다 (3-3) |
 
 **ConfigMap** (그대로 복사해서 값만 확인하시면 됩니다)
 
@@ -81,9 +83,8 @@ CORS_ALLOW_ORIGINS=
 FORWARDED_ALLOW_IPS=*
 # NEON_BRANCH 는 Neon 을 쓸 때만. CNPG 면 넣지 않습니다 (3-6)
 NEON_BRANCH=
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4.1-mini
-LLM_BASE_URL=
+# 비우면 코드 기본값(google/gemini-3.5-flash-lite)을 씁니다 (3-3)
+REASON_MODEL=google/gemini-3.5-flash-lite
 ```
 
 **환경별로 다른 값은 셋뿐입니다.**
@@ -123,33 +124,39 @@ LLM_BASE_URL=
 
 `FORWARDED_ALLOW_IPS` 만 `Settings` 필드가 아니라 uvicorn 이 직접 읽는 값입니다.
 
-### 3-3. LLM 변수 (rag_lab 연결 후)
+### 3-3. 추천 이유 LLM 변수
 
-추천 문구(`recommendation_reason`)를 LLM 생성으로 바꾸면 넷이 추가됩니다.
-**아직 이미지에 rag_lab 이 들어 있지 않습니다** - `serving/pyproject.toml` 에 의존성이 없고
-현재 문구는 `serving/schemas.py` 의 규칙 템플릿이 만듭니다. 연결 PR 이 올라오면 유효해집니다.
+`my-recipes` 의 `recommendation_reason` 은 앞 카드 3장만 OpenRouter 로 만들고 나머지는 규칙
+문구입니다(#38). 필요한 변수는 **둘뿐**이고, 둘 다 `serving` 의 `Settings` 가 읽어
+`rag_lab.reason_service` 에 넘깁니다.
 
 | 변수 | 기본값 | 어디에 | 설명 |
 | --- | --- | --- | --- |
-| `LLM_API_KEY` | `None` | **Secret** | 없으면 추천 문구 호출 시점에 실패합니다 |
-| `LLM_PROVIDER` | `openai` | ConfigMap | `openai` / `openrouter` / `anthropic` / `custom` |
-| `LLM_MODEL` | `gpt-4.1-mini` | ConfigMap | OpenRouter 는 접두사 필요 (`anthropic/claude-sonnet-4`) |
-| `LLM_BASE_URL` | `''` | ConfigMap | `custom` 일 때만. 나머지는 공급자 레지스트리가 채웁니다 |
+| `OPENROUTER_API_KEY` | `None` | **Secret** | 비어 있으면 LLM 을 부르지 않고 전부 규칙 문구입니다. 서비스는 정상입니다 |
+| `REASON_MODEL` | `google/gemini-3.5-flash-lite` | ConfigMap | OpenRouter 모델명(`<vendor>/<model>`). 비우면 기본값 |
 
-**rag_lab 의 나머지 16개 변수는 넣지 않아도 됩니다.**
+**환경변수가 아닌 것:** 카드별 제한 시간(2초)과 LLM 카드 수(3장)는 `reason_service/service.py`
+의 상수입니다. 설정으로 풀 수 없게 일부러 막아 두었습니다.
 
-| 묶음 | 왜 |
-| --- | --- |
-| `LLM_EMBEDDING_*`, `EMBEDDING_DIM` | 임베딩은 검색 경로. 추천 문구는 검색을 쓰지 않습니다 |
-| `JUDGE_*` 4종 | 루브릭 채점 = 실험 전용 |
-| `TOP_K`, `SCORE_THRESHOLD`, `DISTANCE_METRIC` | 벡터 검색용 |
-| `DATABASE_URL_DIRECT`, `EXPERIMENT_OWNER` | 실험·적재용 |
+**넣지 않는 것:** `LLM_API_KEY`, `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL` 과 `LLM_EMBEDDING_*`,
+`JUDGE_*` 등은 `rag_lab` 의 **RAG 실험용** `Settings` 가 읽는 이름입니다. 서빙 경로는 그 설정을
+import 하지 않으므로 넣어도 아무 효과가 없습니다. 특히 `LLM_API_KEY` 에 키를 넣으면 LLM 이
+켜진 줄 알지만 실제로는 규칙 문구만 나갑니다.
 
-전부 기본값이 있어 빠져도 기동은 됩니다.
+**켜졌는지는 기동 로그로 확인합니다.**
 
-> **이름이 겹칩니다.** `rag_lab` 도 접두사 없이 `DATABASE_URL`, `NEON_BRANCH` 를 읽습니다.
-> 같은 파드에서 serving 의 값을 그대로 집어가는데, 추천 문구 경로는 DB 를 열지 않아
-> 지금은 무해합니다. 따로 관리할 필요 없습니다.
+```
+INFO serving: 추천 이유 LLM 생성 사용: model=google/gemini-3.5-flash-lite, 사전 955종   <- 켜짐
+WARNING serving: 추천 이유는 규칙 기반 문구만 씁니다: OPENROUTER_API_KEY 가 비어 있습니다.  <- 꺼짐
+```
+
+키가 틀려도 파드는 정상으로 뜨고 `my-recipes` 도 200 입니다. 카드마다 규칙 문구로 대체될 뿐이라
+응답만 봐서는 모릅니다. 요청 로그에서 대체 건수를 보세요(7절).
+
+```
+INFO rag_lab.reason_service.service: 추천 이유 생성 실패, 템플릿으로 대체: ReasonClientError
+INFO rag_lab.reason_service.service: 추천 이유 생성: 카드 3장, LLM 0장, 대체 3장
+```
 
 ### 3-4. `ENVIRONMENT` 값에 따라 스웨거가 열립니다
 
@@ -249,8 +256,8 @@ metadata:
 type: Opaque
 stringData:
   DATABASE_URL: "postgresql://USER:PASS@HOST/db?sslmode=require"
-  # rag_lab 연결 후에만 필요합니다 (3-3). 그 전에는 이 줄을 빼 두세요.
-  LLM_API_KEY: "sk-..."
+  # 추천 이유 LLM 생성 (3-3). 빼 두면 규칙 문구로만 뜹니다.
+  OPENROUTER_API_KEY: "sk-or-..."
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -269,10 +276,8 @@ data:
   NEON_BRANCH: "dev/kipil"
   # LB/인그레스를 거치면 반드시 채웁니다 (5-5). 파드 CIDR 또는 "*"
   FORWARDED_ALLOW_IPS: "*"
-  # rag_lab 연결 후 (3-3). 그 전에는 있어도 무해합니다.
-  LLM_PROVIDER: "openai"
-  LLM_MODEL: "gpt-4.1-mini"
-  LLM_BASE_URL: ""
+  # 추천 이유 LLM 모델 (3-3). 비우면 코드 기본값입니다.
+  REASON_MODEL: "google/gemini-3.5-flash-lite"
 ```
 
 **ConfigMap 값은 전부 따옴표로 감싸 문자열로 두세요.** `DB_POOL_MAX_SIZE: 10` 처럼 쓰면
@@ -410,7 +415,8 @@ terminationGracePeriodSeconds  >  SHUTDOWN_DELAY_SECONDS + 처리 중 요청 최
 ```
 
 로컬과 테스트에서는 `SHUTDOWN_DELAY_SECONDS=0` 으로 두세요. 안 그러면 `Ctrl+C` 마다 5초씩
-기다립니다.
+기다립니다. 로컬 `docker stop` 도 같습니다. 2026-09-28 Docker Desktop(29.8)에서 기본값으로 멈추면
+약 3초 만에 강제 종료(exit 137)됐고, `docker stop -t 20` 이면 5.4초에 정상 종료(exit 0)했습니다.
 
 정상 종료는 로그 세 줄로 확인합니다. 이 줄이 없으면 강제 종료된 것입니다.
 
@@ -456,8 +462,8 @@ spec:
   data:
     - secretKey: DATABASE_URL
       remoteRef: { key: prod/serving, property: DATABASE_URL }
-    - secretKey: LLM_API_KEY
-      remoteRef: { key: prod/serving, property: LLM_API_KEY }
+    - secretKey: OPENROUTER_API_KEY
+      remoteRef: { key: prod/serving, property: OPENROUTER_API_KEY }
 ```
 
 5-3 의 재시작 문제는 Reloader 같은 컨트롤러로 자동화할 수 있습니다.
@@ -501,6 +507,17 @@ kubectl logs -l app=serving | grep '"request_id":"<값>"'
 
 헬스체크(`/health`, `/health/db`)는 로그를 남기지 않습니다. 프로브가 30초마다 찍는 노이즈를
 막기 위한 것이라, 프로브 실패는 로그가 아니라 `kubectl describe pod` 로 봅니다.
+같은 이유로 `Dockerfile` 의 `CMD` 가 uvicorn 의 평문 액세스 로그를 끕니다(`--no-access-log`).
+액세스 로그는 앱의 JSON 한 줄뿐입니다.
+
+### 추천 이유 LLM 확인
+
+```bash
+kubectl logs -l app=serving | grep "추천 이유"
+```
+
+기동 때 `추천 이유 LLM 생성 사용` 이 있어야 하고, `my-recipes` 요청마다
+`카드 3장, LLM n장, 대체 m장` 이 남습니다. `LLM 0장` 이 계속되면 키나 모델명을 의심하세요(3-3).
 
 ### rate limit 동작 확인
 
@@ -536,3 +553,5 @@ for i in $(seq 1 70); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/
 | #24 | `/api/v1` rate limit (429 + `Retry-After`) | 3, 5-4, 5-5 |
 | #25 | 요청 id + 구조화 액세스 로그, graceful shutdown | 5-6, 7 |
 | #29 | `dev` 에서 스웨거 개방 | 3 |
+| #38 | `my-recipes` 추천 이유 LLM 생성 (`OPENROUTER_API_KEY`, `REASON_MODEL`) | 1, 3-3, 7 |
+| - | 앱 로그 출력 설정. 이전에는 INFO 로그(액세스 로그 포함)가 컨테이너에서 나가지 않았습니다 | 5-6, 7 |

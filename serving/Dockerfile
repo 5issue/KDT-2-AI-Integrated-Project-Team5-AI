@@ -49,4 +49,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
 
-CMD ["/app/.venv/bin/uvicorn", "serving.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# 액세스 로그는 앱이 JSON 한 줄로 남깁니다(request_log.py). uvicorn 의 평문 액세스 로그까지 켜면
+# 요청마다 두 줄이 되고, 앱이 일부러 빼는 헬스체크 프로브도 30초마다 찍힙니다.
+CMD ["/app/.venv/bin/uvicorn", "serving.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
