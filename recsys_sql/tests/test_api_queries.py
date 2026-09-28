@@ -320,6 +320,44 @@ class TestMyFridge:
         for row in rows:
             assert len(row["missing_ingredients"]) == row["missing_count"]
 
+    async def test_my_recipes_carry_held_and_pantry_lists(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """추천 이유 생성(rag_lab.reason_service)은 보유·상비 목록으로 첫 문장을 씁니다.
+
+        상비재료는 냉장고에 있어도 pantry 쪽에만 둡니다. 두 목록이 겹치면 생성 서비스의
+        불변식(보유 + 상비 = available_count)이 깨집니다.
+        """
+        rows = await fetch(
+            db_conn,
+            "my_recipe_candidates",
+            {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100},
+        )
+        by_id = {row["recipe_id"]: row for row in rows if row["recipe_id"] in seeded.recipes}
+
+        stew = by_id[seeded.kimchi_stew]
+        assert [item["name"] for item in stew["held_ingredients"]] == ["돼지고기", "배추김치"]
+        assert stew["pantry_ingredients"] == []
+
+        grill = by_id[seeded.pork_grill]
+        assert [item["name"] for item in grill["held_ingredients"]] == ["돼지고기"]
+        assert [item["name"] for item in grill["pantry_ingredients"]] == ["소금"]
+        assert {"ingredient_id", "name"} == set(grill["pantry_ingredients"][0])
+
+    async def test_held_and_pantry_lists_match_available_count(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
+        """세 목록의 길이가 count 세 개와 정확히 맞아야 생성 서비스가 행을 받아 줍니다."""
+        rows = await fetch(
+            db_conn,
+            "my_recipe_candidates",
+            {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 100},
+        )
+        assert rows
+        for row in rows:
+            held = {item["name"] for item in row["held_ingredients"]}
+            pantry = {item["name"] for item in row["pantry_ingredients"]}
+            missing = {item["name"] for item in row["missing_ingredients"]}
+            assert len(held) + len(pantry) == row["available_count"]
+            assert len(missing) == row["missing_count"]
+            assert not (held & pantry) and not (held & missing) and not (pantry & missing)
+
 
 class TestRecipeProductPriority:
     """레시피 지정 상품 우선순위."""
@@ -508,7 +546,7 @@ class TestRecommendationPriorityOrdering:
         assert order[:2] == [seeded.kimchi_stew, seeded.pork_grill]
 
     async def test_priority_does_not_add_a_column(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
-        """정렬만 바꿉니다. Serving 응답을 바꾸는 새 컬럼은 내지 않습니다."""
+        """정렬만 바꿉니다. 컬럼 집합은 추천 이유 생성에 필요한 세 목록까지로 고정합니다."""
         rows = await fetch(
             db_conn, "my_recipe_candidates", {"user_id": seeded.user, "min_match_rate": 0.0, "max_results": 1}
         )
@@ -525,6 +563,8 @@ class TestRecommendationPriorityOrdering:
             "missing_count",
             "match_rate",
             "missing_ingredients",
+            "held_ingredients",
+            "pantry_ingredients",
         }
 
     async def test_multiple_designated_products_count_once(self, db_conn: AsyncConnection, seeded: SeedIds) -> None:
