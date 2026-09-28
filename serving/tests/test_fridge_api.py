@@ -8,10 +8,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
+from serving import fridge_sql
+from serving.app import create_app
+from serving.config import Settings
+from serving.routers.fridge import DUPLICATE_ITEM, INACTIVE_PRODUCT, NO_PRIMARY_INGREDIENT
 from serving.schemas import FridgeItem
 
 PATH = "/api/v1/users/me/fridge"
@@ -84,6 +90,87 @@ async def test_patch_requires_at_least_one_field(validating_client: AsyncClient)
 
     assert response.status_code == 422
     assert response.json()["error"] == "INVALID_INPUT_VALUE"
+
+
+class _PostConnection:
+    """POST 가 부르는 문장(상품 확인, 중복 확인, 삽입)에 정해진 결과를 냅니다. SQL 은 실행하지 않습니다.
+
+    ``exists`` 는 중복 확인을 부를 때마다 앞에서 하나씩 꺼내 씁니다. 동시 요청이 끼어든 상황을
+    "처음엔 없었는데 삽입 뒤에는 있다" 로 흉내 냅니다.
+    """
+
+    def __init__(self, *, product: dict[str, Any] | None, exists: list[bool], inserted: list[dict[str, Any]]) -> None:
+        self.product = product
+        self.exists = list(exists)
+        self.inserted = inserted
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[_PostConnection]:
+        yield self
+
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+        if sql == fridge_sql.EXISTS_ITEM:
+            return {"?column?": 1} if self.exists.pop(0) else None
+        return self.product
+
+    async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        assert sql == fridge_sql.INSERT_ITEM
+        return self.inserted
+
+
+def _product(*, is_active: bool = True) -> dict[str, Any]:
+    return {"product_id": 101, "name": "한돈 앞다리살 500g", "is_active": is_active}
+
+
+@asynccontextmanager
+async def _client_for(connection: _PostConnection) -> AsyncIterator[AsyncClient]:
+    app = create_app(Settings(_env_file=None))  # type: ignore[call-arg]
+    app.state.pool = connection
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        yield client
+
+
+async def test_post_adds_item() -> None:
+    """정상 상품은 담기고 요청 값을 그대로 돌려줍니다."""
+    connection = _PostConnection(product=_product(), exists=[False], inserted=[{"ingredient_id": 12}])
+    async with _client_for(connection) as client:
+        response = await client.post(PATH, headers=USER, json=BODY)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["product_id"] == 101
+
+
+async def test_post_rejects_inactive_product() -> None:
+    """판매 중지 상품은 추천·구매 경로와 같은 규칙으로 새로 담지 못합니다 (H5)."""
+    connection = _PostConnection(product=_product(is_active=False), exists=[False], inserted=[{"ingredient_id": 12}])
+    async with _client_for(connection) as client:
+        response = await client.post(PATH, headers=USER, json=BODY)
+
+    assert response.status_code == 409
+    assert response.json()["message"] == INACTIVE_PRODUCT
+
+
+async def test_post_race_reports_duplicate() -> None:
+    """두 번 누른 요청이 중복 확인 뒤에 끼어들면 삽입이 0행입니다. 재료 미연결이 아니라 중복으로 답합니다 (H6).
+
+    예전에는 0행을 전부 "재료 정보가 연결되지 않은 상품" 으로 읽어, 다시 눌러도 같은 틀린 안내가 나왔습니다.
+    """
+    connection = _PostConnection(product=_product(), exists=[False, True], inserted=[])
+    async with _client_for(connection) as client:
+        response = await client.post(PATH, headers=USER, json=BODY)
+
+    assert response.status_code == 409
+    assert response.json()["message"] == DUPLICATE_ITEM
+
+
+async def test_post_without_primary_ingredient_is_rejected() -> None:
+    """PRIMARY 재료가 없는 상품은 삽입이 0행이고 다시 확인해도 없으므로 재료 미연결로 답합니다."""
+    connection = _PostConnection(product=_product(), exists=[False, False], inserted=[])
+    async with _client_for(connection) as client:
+        response = await client.post(PATH, headers=USER, json=BODY)
+
+    assert response.status_code == 409
+    assert response.json()["message"] == NO_PRIMARY_INGREDIENT
 
 
 def test_fridge_item_maps_row_to_spec_shape() -> None:
