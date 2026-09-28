@@ -33,7 +33,7 @@ testpaths = ["data_pipeline/tests", "data_pipeline/scripts", "rag_lab/tests", "r
 asyncio_mode = "auto"
 markers = [
     "db: 실제 Neon DB 연결이 필요한 테스트 (DATABASE_URL 없으면 skip)",
-    "llm: 실제 OpenAI API 호출이 필요한 테스트 (기본 skip)",
+    "llm: 실제 LLM API 호출 테스트(과금). serving 은 --run-llm 을 줄 때만 돕니다",
 ]
 
 [tool.pyright]

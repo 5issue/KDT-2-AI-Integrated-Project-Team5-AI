@@ -34,22 +34,36 @@ def database_url_configured() -> bool:
     return settings.database_url is not None and bool(settings.database_url.get_secret_value().strip())
 
 
+RUN_LLM_OPTION = "--run-llm"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """실제 LLM 호출 테스트를 켜는 명시 플래그. 과금이 있어 기본은 꺼져 있습니다."""
+    parser.addoption(
+        RUN_LLM_OPTION,
+        action="store_true",
+        default=False,
+        help="llm 마커 테스트(실제 OpenRouter 호출, 과금)를 돌립니다. 없으면 skip 합니다.",
+    )
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """DATABASE_URL 이 없으면 db 마커를, `-m` 에 llm 이 없으면 llm 마커를 건너뜁니다.
+    """DATABASE_URL 이 없으면 db 마커를, `--run-llm` 이 없으면 llm 마커를 건너뜁니다.
 
     이 훅은 세션 전체 item 목록을 받습니다. 이 폴더 아래 테스트만 걸러내지 않으면,
     .env 가 없는 폴더의 훅이 다른 폴더의 DB 테스트까지 skip 시켜 버립니다.
 
-    llm 테스트는 실제 OpenRouter 를 불러 과금이 있습니다. `-m db` 로 DB 테스트를 돌릴 때
-    딸려 가지 않게, `-m llm` 처럼 직접 지목했을 때만 돕니다.
+    llm 테스트는 실제 OpenRouter 를 불러 과금이 있습니다. 예전에는 `-m` 표현식에 `llm` 이라는 글자가
+    있는지로 판단해, `-m "db or not llm"` 처럼 오히려 빼려는 표현식이나 `llm_mock` 같은 다른 마커 이름에도
+    열렸습니다(PR #42 리뷰). 표현식을 해석하지 않고 명시 플래그로만 켭니다.
     """
     own_tests = Path(__file__).parent.resolve()
     own_items = [item for item in items if own_tests in Path(str(item.path)).resolve().parents]
 
-    if "llm" not in (config.getoption("markexpr", default="") or ""):
-        skip_llm = pytest.mark.skip(reason="실제 LLM 호출 테스트입니다. `-m llm` 으로 지목하면 돕니다.")
+    if not config.getoption(RUN_LLM_OPTION):
+        skip_llm = pytest.mark.skip(reason=f"실제 LLM 호출 테스트입니다(과금). `{RUN_LLM_OPTION}` 을 주면 돕니다.")
         for item in own_items:
-            if "llm" in item.keywords:
+            if item.get_closest_marker("llm") is not None:
                 item.add_marker(skip_llm)
 
     if database_url_configured():

@@ -8,7 +8,7 @@ supertest 처럼 앱 전체(미들웨어 -> 라우터 -> 카탈로그 SQL -> 응
 
 - 테스트마다 트랜잭션을 열고 끝나면 롤백합니다. 공용 dev 브랜치에 아무것도 남지 않습니다.
 - 시드로 결과를 순서·값까지 단정합니다. 버블과 보관 가이드처럼 적재 데이터가 입력인 API 만 성질을 봅니다.
-- 실제 OpenRouter 경로는 맨 아래 `llm` 테스트 하나가 보며, `-m llm` 으로만 돕니다.
+- 실제 OpenRouter 경로는 맨 아래 `llm` 테스트 하나가 보며, `--run-llm` 을 줄 때만 돕니다.
 """
 
 from __future__ import annotations
@@ -407,7 +407,7 @@ async def test_bubbles_and_bubble_products_on_loaded_catalog(world: World) -> No
     (await world.api.get("/recommendations/products", bubble_id="NO_SUCH_BUBBLE")).expect(404)
 
 
-# --- 실제 LLM (기본 skip, `-m llm` 으로만) -----------------------------------
+# --- 실제 LLM (기본 skip, `--run-llm` 으로만) --------------------------------
 
 
 @pytest.mark.llm
