@@ -9,6 +9,8 @@ SQL 은 `recsys_sql` 카탈로그에 있습니다. 이 폴더는 .sql 파일을 
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, status
 
 from rag_lab.reason_service import generate_reasons_for_rows
@@ -22,6 +24,7 @@ from serving.schemas import (
     MyRecipeListResponse,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 # 필수 재료의 절반 이상을 보유한 레시피만 추천합니다. FE 합의로 파라미터 대신
@@ -39,8 +42,10 @@ async def read_my_recipes(
     """My냉장고 재료로 만들 수 있는 레시피를 추천합니다 (명세 21장).
 
     추천 이유는 ``rag_lab.reason_service`` 가 만듭니다. 앞 카드 몇 장만 LLM 으로 만들고
-    (상한은 서비스 상수), 시간 초과·오류·검사 실패는 그 카드만 규칙 문구로 대체되어
-    돌아오므로 여기서 예외를 다루지 않습니다. 클라이언트가 없으면 전부 규칙 문구입니다.
+    (상한은 서비스 상수), 시간 초과·HTTP 오류·검사 실패는 그 카드만 규칙 문구로 대체되어
+    돌아옵니다. 서비스가 잡지 않는 예외는 여기서 요청 단위로 받아, 카드가 이미 갖고 있는
+    규칙 문구를 그대로 둡니다. 추천 이유는 부가 정보라 카드 목록까지 잃지 않게 합니다.
+    클라이언트가 없으면 전부 규칙 문구입니다.
     """
     sql, args = build_query(
         "my_recipe_candidates",
@@ -50,7 +55,12 @@ async def read_my_recipes(
         rows = [dict(row) for row in await conn.fetch(sql, *args)]
 
     items = [MyRecipeItem.from_row(row) for row in rows]
-    results = await generate_reasons_for_rows(rows, reason.client, vocabulary=reason.vocabulary)
+    try:
+        results = await generate_reasons_for_rows(rows, reason.client, vocabulary=reason.vocabulary)
+    except Exception as exc:  # noqa: BLE001 - 서비스가 안 잡은 예외는 요청 단위로 규칙 문구 유지
+        # 원인 종류만 남깁니다. 응답 본문이나 키가 로그에 실리지 않게 합니다.
+        logger.warning("추천 이유 생성이 실패해 규칙 문구를 유지합니다: %s", type(exc).__name__)
+        return ApiResponse.success(MyRecipeListResponse(items=items))
     for item, result in zip(items, results, strict=True):
         item.recommendation_reason = result.text
     return ApiResponse.success(MyRecipeListResponse(items=items))

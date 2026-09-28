@@ -191,6 +191,31 @@ async def test_my_recipes_injects_generated_reasons(monkeypatch: pytest.MonkeyPa
     assert "held_ingredients" in calls[0]["rows"][0]
 
 
+class _ExplodingReasonClient:
+    """reason_service 가 카드 단위로 잡지 않는 종류의 예외를 던지는 클라이언트."""
+
+    async def complete(self, system: str, user: str) -> str:
+        raise KeyError("unexpected")
+
+
+async def test_my_recipes_keeps_template_reason_when_reason_service_raises() -> None:
+    """서비스가 예상 못 한 예외를 던져도 요청은 성공하고 카드는 규칙 문구를 유지합니다 (#33 리뷰 합의).
+
+    reason_service 는 시간 초과·HTTP·RuntimeError·ValueError 만 카드 단위로 대체하고 나머지는 밖으로
+    던집니다. 그 경계를 라우터가 요청 단위로 받습니다. 추천 이유는 부가 정보라 카드 자체를 잃으면 안 됩니다.
+    """
+    rows = [_sample_row(), {**_sample_row(), "recipe_id": 1002, "name": "두부조림"}]
+    async with _client_with_rows(rows, reason_client=_ExplodingReasonClient()) as client:
+        response = await client.get(PATH, headers=USER_HEADER)
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert [item["recipe_id"] for item in items] == [1001, 1002]
+    assert [item["recommendation_reason"] for item in items] == [
+        MyRecipeItem.from_row(row).recommendation_reason for row in rows
+    ]
+
+
 async def test_lifespan_without_openrouter_key_starts_and_stops_cleanly() -> None:
     """키가 없으면 클라이언트 없이 뜨고, 종료 때 AttributeError 없이 내려갑니다 (팀장 리뷰 반영)."""
     app = create_app(Settings(_env_file=None, shutdown_delay_seconds=0))  # type: ignore[call-arg]
