@@ -942,6 +942,11 @@ name = "rag-lab"
 version = "0.1.0"
 source = { editable = "rag_lab" }
 dependencies = [
+    { name = "httpx" },
+]
+
+[package.dev-dependencies]
+rag = [
     { name = "asyncpg" },
     { name = "langgraph" },
     { name = "openai" },
@@ -952,7 +957,10 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [
+requires-dist = [{ name = "httpx", specifier = ">=0.28.1" }]
+
+[package.metadata.requires-dev]
+rag = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "langgraph", specifier = ">=1.0.6" },
     { name = "openai", specifier = ">=2.6.0" },
