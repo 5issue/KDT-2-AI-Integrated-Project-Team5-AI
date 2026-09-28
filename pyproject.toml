@@ -41,7 +41,7 @@ venvPath = "."
 venv = ".venv"
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
-include = ["data_pipeline", "rag_lab", "recsys_sql", "serving"]
+include = ["data_pipeline", "rag_lab", "recsys_sql", "serving", "conftest.py"]
 exclude = ["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"]
 # pytest 의 pythonpath 와 같은 이유로 src 를 명시합니다.
 # data_pipeline 은 운영 스크립트의 `scripts.db` import 를 풀기 위해 넣습니다.
