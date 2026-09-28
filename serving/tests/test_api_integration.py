@@ -298,6 +298,18 @@ async def test_fridge_post_contract(world: World) -> None:
     (await world.api.post("/users/me/fridge", {**body, "quantity": 0}, user=ids.me)).expect(422)
 
 
+async def test_fridge_deactivated_item_stays_and_re_adding_is_duplicate(world: World) -> None:
+    """담은 뒤 판매 중지된 상품은 냉장고에 그대로 보이고, 다시 담으면 "판매 중지" 가 아니라 "이미 담긴 상품" 입니다."""
+    ids = world.ids
+    await stock_fridge(world, ids.kimchi_a)
+    await world.conn.execute("UPDATE product SET is_active = FALSE WHERE product_id = $1", ids.kimchi_a)
+
+    body = {"product_id": ids.kimchi_a, "quantity": 1, "unit": "개"}
+    (await world.api.post("/users/me/fridge", body, user=ids.me)).expect(409, message=DUPLICATE_ITEM)
+    items = (await world.api.get("/users/me/fridge", user=ids.me)).expect(200).data["items"]
+    assert [item["product"]["product_id"] for item in items] == [ids.kimchi_a]
+
+
 async def test_fridge_mealkit_is_one_item(world: World) -> None:
     """PRIMARY 가 둘인 상품은 DB 에 두 행이지만 목록에서는 한 칸, 재료는 배열입니다. 삭제는 두 행을 다 지웁니다."""
     ids = world.ids

@@ -50,18 +50,24 @@ async def read_fridge_items(pool: PoolDep, user_id: CurrentUserId) -> ApiRespons
 async def create_fridge_item(
     pool: PoolDep, user_id: CurrentUserId, body: FridgeItemCreate
 ) -> ApiResponse[FridgeItemSummary]:
-    """품목을 추가합니다. 판매 중지 상품, 이미 담긴 상품, 재료 미연결 상품은 409 로 거절합니다."""
+    """품목을 추가합니다. 이미 담긴 상품, 판매 중지 상품, 재료 미연결 상품은 409 로 거절합니다.
+
+    409 는 FE 가 ``message`` 로 분기하는 계약이라, 여러 경우에 걸치면 이 순서로 하나만 냅니다.
+    이미 담긴 상품이 나중에 판매 중지되어도 "이미 담긴 상품" 입니다. 품목은 냉장고에 그대로 보이기 때문입니다.
+    """
     async with pool.acquire() as conn:
         detail_sql, detail_args = build_query("product_detail", {"product_id": body.product_id})
         product = await conn.fetchrow(detail_sql, *detail_args)
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="상품을 찾을 수 없습니다.")
+        # 삽입 전에 중복을 먼저 봅니다. 삽입의 ON CONFLICT 로만 가리면, PRIMARY 재료가 나중에 늘어난 상품은
+        # 새 재료 행만 들어가 성공(200)으로 답하고, 한 품목이 수량이 다른 두 줄이 됩니다.
+        if await conn.fetchrow(fridge_sql.EXISTS_ITEM, user_id, body.product_id) is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_ITEM)
         if not product["is_active"]:
             # 판매 중지 상품은 추천·구매 경로(missing_products, bubble_products)에서 빠집니다. 새로 담는 것도
             # 같은 규칙으로 막습니다. 상세 조회와 이미 담긴 품목은 그대로 보입니다.
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INACTIVE_PRODUCT)
-        if await conn.fetchrow(fridge_sql.EXISTS_ITEM, user_id, body.product_id) is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_ITEM)
         inserted = await conn.fetch(
             fridge_sql.INSERT_ITEM, user_id, body.product_id, body.quantity, body.unit, body.expires_at
         )

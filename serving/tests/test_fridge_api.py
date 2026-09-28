@@ -150,6 +150,19 @@ async def test_post_rejects_inactive_product() -> None:
     assert response.json()["message"] == INACTIVE_PRODUCT
 
 
+async def test_post_already_added_product_that_was_deactivated_reports_duplicate() -> None:
+    """이미 담긴 상품이 나중에 판매 중지되면, 다시 담기는 "판매 중지" 가 아니라 "이미 담긴 상품" 입니다 (PR #42 리뷰).
+
+    FE 는 409 를 message 로 분기합니다. 품목은 냉장고에 그대로 보이므로 중복 안내가 맞습니다.
+    """
+    connection = _PostConnection(product=_product(is_active=False), exists=[True], inserted=[])
+    async with _client_for(connection) as client:
+        response = await client.post(PATH, headers=USER, json=BODY)
+
+    assert response.status_code == 409
+    assert response.json()["message"] == DUPLICATE_ITEM
+
+
 async def test_post_race_reports_duplicate() -> None:
     """두 번 누른 요청이 중복 확인 뒤에 끼어들면 삽입이 0행입니다. 재료 미연결이 아니라 중복으로 답합니다 (H6).
 
