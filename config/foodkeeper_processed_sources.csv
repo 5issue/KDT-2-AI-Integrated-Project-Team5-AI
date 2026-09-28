@@ -1,0 +1,51 @@
+source_food_name,source_food_subtitle,source_category_id,category
+Bacon,fully cooked,11,육류 상온 가공
+Ham,shelf-stable cans,11,육류 상온 가공
+Jerky,commercially dried,11,육류 상온 가공
+Jerky,homemade,11,육류 상온 가공
+Meat products,canned,11,육류 상온 가공
+Retort pouches or boxes,,11,육류 상온 가공
+Bacon,,12,육류 델리·염장
+Bacon,uncured,12,육류 델리·염장
+Bratwurst,smoked and processed,12,육류 델리·염장
+Chorizo,"smoked and processed, cooked",12,육류 델리·염장
+Chorizo,"smoked and processed, uncooked",12,육류 델리·염장
+Corned beef,in pouch with pickling juices,12,육류 델리·염장
+Ham,canned (“keep refrigerated” label),12,육류 델리·염장
+Ham,country ham (whole or half),12,육류 델리·염장
+Ham,"fresh, cook-before-eating, arm picnic shoulder, boneless",12,육류 델리·염장
+Ham,"fresh, cook-before-eating, bone-in, half",12,육류 델리·염장
+Ham,"fresh, cook-before-eating, bone-in, whole",12,육류 델리·염장
+Ham,"fresh, cook-before-eating, shank or butt portion, bone-in",12,육류 델리·염장
+Ham,"fresh, cook-before-eating, shoulder roll (butt), boneless",12,육류 델리·염장
+Ham,"fresh, uncooked, half leg, bone-in",12,육류 델리·염장
+Ham,"fresh, uncooked, whole leg, bone-in",12,육류 델리·염장
+Ham,"fresh, uncooked, whole leg, boneless",12,육류 델리·염장
+Ham,"fully cooked, arm picnic shoulder, boneless",12,육류 델리·염장
+Ham,"fully cooked, bone-in, half",12,육류 델리·염장
+Ham,"fully cooked, bone-in, whole",12,육류 델리·염장
+Ham,"fully cooked, canned, boneless (refrigerated)",12,육류 델리·염장
+Ham,"fully cooked, slices, half, or spiral cut",12,육류 델리·염장
+Ham,"fully cooked, vacuum packed, boneless",12,육류 델리·염장
+Ham,"uncured, fresh, cooked",12,육류 델리·염장
+Hot dogs,,12,육류 델리·염장
+Pastrami,,12,육류 델리·염장
+Pate,meat,12,육류 델리·염장
+Pork roll,,12,육류 델리·염장
+Prosciutto,,12,육류 델리·염장
+Sausage,"fully cooked smoked links, kielbasa",12,육류 델리·염장
+Sausage,"hard, dry (pepperoni), sliced",12,육류 델리·염장
+Sausage,raw bulk type or patties,12,육류 델리·염장
+Raw kabobs with vegetables,,13,육류 속 채움·조립
+"Stuffed, raw pork chops",,13,육류 속 채움·조립
+"Chicken nuggets, patties",,14,가금류 조리·가공
+Cooked poultry dishes,,14,가금류 조리·가공
+Fried chicken,,14,가금류 조리·가공
+Pate,poultry,14,가금류 조리·가공
+Rotisserie chicken,,14,가금류 조리·가공
+Turkey bacon,,14,가금류 조리·가공
+Canned chicken,,16,가금류 상온 가공
+Retort pouches or boxes,,16,가금류 상온 가공
+Raw kabobs with vegetables,,17,가금류 속 채움·조립
+"Stuffed, raw chicken breasts",,17,가금류 속 채움·조립
+Turducken,,17,가금류 속 채움·조립

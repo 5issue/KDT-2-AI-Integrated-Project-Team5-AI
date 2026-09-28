@@ -1,0 +1,67 @@
+source_dataset,large_category_code,large_category_name,representative_source_code,representative_source_name,middle_category_code,middle_category_name,canonical_name,aliases,parent_mode,is_raw_material,reason,requested_by
+MFDS,06,두부류 또는 묵류,06001,두부,,,두부,,INDEPENDENT,false,MFDS 가공식품 대표식품 두부 1053행. 연두부·부침두부·찌개두부·순두부는 form이며 별도 Ingredient가 아니다,PM_SCENARIO_2026-09
+MFDS,19,유가공품류,19900,치즈,,,치즈,모짜렐라치즈|모차렐라|슬라이스치즈|체다치즈|피자치즈,INDEPENDENT,false,MFDS 가공식품 대표식품 치즈 3329행. 모짜렐라·슬라이스·체다는 form 또는 style이며 별도 Ingredient가 아니다,PM_SCENARIO_2026-09
+MFDS,12,장류,12010,고추장,,,고추장,,INDEPENDENT,false,MFDS 가공식품 대표식품 고추장 590행. K-FIND 원재료성식품에 고추장 Concept이 없다,PM_SCOPE_2026-09
+MFDS,13,조미식품,13203,토마토케첩,,,토마토케첩,케첩|케찹|케챱,INDEPENDENT,false,MFDS 가공식품 대표식품 토마토케첩 122행,PM_SCOPE_2026-09
+MFDS,13,조미식품,13202,마요네즈,,,마요네즈,마요,INDEPENDENT,false,MFDS 가공식품 대표식품 마요네즈 150행,PM_SCOPE_2026-09
+MFDS,13,조미식품,13101,식초,,,식초,양조식초|현미식초|사과식초,INDEPENDENT,false,MFDS 가공식품 대표식품 식초 838행. 발사믹식초는 style로 보고 이번 범위에서 별도 Ingredient를 만들지 않는다,PM_SCOPE_2026-09
+MFDS,13,조미식품,13301,카레,,,카레,카레가루|커리,INDEPENDENT,false,MFDS 가공식품 대표식품 카레 355행,PM_SCOPE_2026-09
+MFDS,19,유가공품류,19801,버터,,,버터,무염버터|가염버터,INDEPENDENT,false,MFDS 가공식품 대표식품 버터 71행. 레시피 3·6의 필수 구매 재료,PM_SCENARIO_2026-09
+MFDS,06,두부류 또는 묵류,06002,유부,,,유부,,INDEPENDENT,false,MFDS 가공식품 대표식품 유부 205행. 레시피6 유부초밥의 재료,PM_SCENARIO_2026-09
+MFDS,16,농산가공식품류,16708,부침가루/튀김가루/믹스,,,부침가루,튀김가루,INDEPENDENT,false,MFDS 가공식품 대표식품 부침가루/튀김가루/믹스 345행. canonical은 대표식품명보다 좁은 범위이며 basis_name에 원천명을 보존한다,PM_SCENARIO_2026-09
+MFDS,20,수산가공식품류,20401,김,2000004,조미김,조미김,구운김,INDEPENDENT,false,MFDS 대표식품 김의 중분류 조미김 641행. K-FIND 해조류 김류는 원물이며 조미 가공김과 구분한다,PM_SCENARIO_2026-09
+MFDS,17,식육가공품 및 포장육,17502,분쇄가공육,,,떡갈비,,INDEPENDENT,false,MFDS 분쇄가공육(양념육류) 대표식품 아래 떡갈비 식품명 691행. PM 선택 플로우 레시피2·5·6의 필수 보유 재료이므로 예외 승격하며 canonical은 대표식품명보다 좁다,PM_SCENARIO_2026-09
+INTERNAL,,,,,,,굴소스,,INDEPENDENT,false,MFDS에 대표식품이 없고 조미식품 기타 소스류(13206) 식품명 83행으로만 확인된다. 내부 승인 예외로 등록한다,PM_SCOPE_2026-09
+INTERNAL,,,,,,,맛술,미림|미향|요리술,INDEPENDENT,false,MFDS에 대표식품이 없고 조미식품 기타 소스류(13206) 식품명 맛술 12행·미림 3행으로만 확인된다. 내부 승인 예외로 등록한다,PM_SCOPE_2026-09
+INTERNAL,,,,,,,데리야끼소스,데리야끼|데리야키,INDEPENDENT,false,MFDS에 대표식품이 없고 조미식품 기타 소스류(13206) 식품명 65행으로만 확인된다. 레시피1의 구매 필요 재료,PM_SCENARIO_2026-09
+MFDS,01,과자류·빵류 또는 떡류,01202,마시멜로,,,마시멜로,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 6건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01403,바게트/치아바타,,,바게트/치아바타,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 9건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01407,식빵,,,식빵,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 36건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01410,페이스트리,,,페이스트리,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 46건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01419,곡물빵,,,곡물빵,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 1건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01421,또띠아/난,,,또띠아/난,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 8건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,01,과자류·빵류 또는 떡류,01501,떡,,,떡,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 2건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,03,코코아가공품류 또는 초콜릿류,03101,초콜릿,,,초콜릿,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 8건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,03,코코아가공품류 또는 초콜릿류,03201,코코아,,,코코아,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 17건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,04,당류,04201,시럽,,,시럽,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 7건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,04,당류,04601,물엿,,,물엿,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 28건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,05,잼류,05001,잼,,,잼,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 33건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,07,식용유지류,07304,쇼트닝,,,쇼트닝,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 14건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,07,식용유지류,07305,마가린,,,마가린,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 26건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,08,면류,08003,라면,,,라면,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 7건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,08,면류,08007,라이스페이퍼,,,라이스페이퍼,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 10건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,08,면류,08010,쌀국수,,,쌀국수,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 2건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,08,면류,08011,우동면,,,우동면,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 9건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,09,음료류,09203,원두/원두분말,,,원두/원두분말,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 1건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,09,음료류,09302,과·채주스,,,과·채주스,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 4건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,09,음료류,09402,탄산수,,,탄산수,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 8건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,09,음료류,09500,두유,,,두유,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 22건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,12,장류,12005,청국장,,,청국장,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 8건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,13,조미식품,13205,드레싱,,,드레싱,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 7건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,14,절임류 또는 조림류,14101,배추김치,,,배추김치,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 26건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,14,절임류 또는 조림류,14202,단무지/피클,,,단무지/피클,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 1건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,15,주류,15104,맥주,,,맥주,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 4건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,16,농산가공식품류,16301,땅콩버터,,,땅콩버터,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 13건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,16,농산가공식품류,16706,빵가루,,,빵가루,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 59건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,17,식육가공품 및 포장육,17100,햄,,,햄,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 22건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,17,식육가공품 및 포장육,17201,소시지,,,소시지,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 10건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,17,식육가공품 및 포장육,17300,베이컨,,,베이컨,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 25건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,19,유가공품류,19001,전지/탈지분유,,,전지/탈지분유,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 1건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,19,유가공품류,19204,가공우유,,,가공우유,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 1건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,19,유가공품류,19603,연유,,,연유,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 33건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,19,유가공품류,19701,유크림,,,유크림,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 2건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,20,수산가공식품류,20104,어묵,,,어묵,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 5건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,20,수산가공식품류,20108,골뱅이,,,골뱅이,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 2건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,20,수산가공식품류,20113,참치,,,참치,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 14건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,20,수산가공식품류,20200,젓갈/액젓,,,젓갈/액젓,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 11건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,23,즉석식품류,23202,누룽지,,,누룽지,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 5건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+MFDS,23,즉석식품류,23230,육수,,,육수,,INDEPENDENT,false,Production 에 이미 있고 상품·레시피가 36건 참조하는 MFDS 가공 대표식품. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,물,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 464건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,바닐라추출물,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 211건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,베이킹소다,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 131건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,베이킹파우더,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 158건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,사워크림,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 33건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,생크림,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 177건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,식용유,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 287건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,우스터소스,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 10건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23
+INTERNAL,,,,,,,크림치즈,,INDEPENDENT,false,Production 의 팀 기본 재료(TEAM-BASIC). 상품·레시피가 52건 참조. 기준에 편입,MASTER_ALIGNMENT_2026-09-23

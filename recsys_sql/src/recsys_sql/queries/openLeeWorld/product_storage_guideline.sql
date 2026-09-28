@@ -9,6 +9,7 @@
 --
 -- 조회 경로:
 --   product -> product_ingredient(role = PRIMARY) -> ingredient -> storage_guideline
+--   (부위에 지침이 없으면 ingredient.parent_ingredient_id 의 지침)
 --
 -- **PRIMARY 재료가 둘 이상이면 아무것도 내지 않습니다.** 밀키트나 양념육처럼 구성이 여러
 -- 개인 상품에 단일 보관법을 붙이는 것은 논리적으로 맞지 않습니다. 지금 적재분에서 상품
@@ -54,7 +55,18 @@ FROM product p
 JOIN product_ingredient pi ON pi.product_id = p.product_id
                           AND pi.role = 'PRIMARY'
 JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
-JOIN storage_guideline sg  ON sg.ingredient_id = i.ingredient_id
+-- 부위(child)에 지침이 없으면 부모 지침을 씁니다. `목심` 에 없으면 `돼지고기` 지침입니다.
+-- 부위 자기 지침이 하나라도 있으면 부모 지침과 섞지 않습니다. 이때 상품 보관 장소와 같은 지침만 셉니다.
+-- 부위에 `냉동` 지침만 있고 상품이 `냉장` 이면 부모의 `냉장` 지침으로 넘어가야 404 가 나지 않습니다.
+JOIN storage_guideline sg  ON sg.ingredient_id = CASE
+         WHEN EXISTS (
+             SELECT 1 FROM storage_guideline own
+             WHERE own.ingredient_id = i.ingredient_id
+               AND (p.storage_type IS NULL OR own.storage_location = p.storage_type)
+         )
+         THEN i.ingredient_id
+         ELSE COALESCE(i.parent_ingredient_id, i.ingredient_id)
+     END
 WHERE p.product_id = :product_id
   AND (p.storage_type IS NULL OR sg.storage_location = p.storage_type)
   -- PRIMARY 가 둘 이상인 상품은 통째로 제외합니다.
