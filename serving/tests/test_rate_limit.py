@@ -1,6 +1,6 @@
 """rate limit 테스트. DB 없이 돕니다.
 
-정책: /api/v1 아래에만 적용. 추천 엔드포인트는 더 낮은 한도. 식별 키는
+정책: /api/v1 아래에만 적용. LLM 을 부르는 my-recipes 만 더 낮은 한도. 식별 키는
 X-User-Id 가 있으면 사용자, 없으면 클라이언트 IP. 초과 시 429 envelope +
 Retry-After 헤더. 헬스체크는 제외.
 """
@@ -41,6 +41,18 @@ async def test_reco_endpoint_hits_lower_limit(limited_client: AsyncClient) -> No
     assert body["status"] == "ERROR"
     assert body["error"] == "TOO_MANY_REQUESTS"
     assert "Retry-After" in blocked.headers
+
+
+async def test_bubble_products_use_default_limit(limited_client: AsyncClient) -> None:
+    """버블 상품은 비로그인 경로라 추천 한도(2)가 아니라 기본 한도(3)를 씁니다.
+
+    BFF 가 원 사용자 IP 를 넘기지 않으면 비로그인 요청은 전부 BFF IP 하나로 셉니다. 여기에 추천
+    한도를 걸면 BFF 뒤의 비로그인 사용자 전체가 합쳐서 분당 10번만 버블을 누를 수 있었습니다.
+    """
+    path = "/api/v1/recommendations/products?bubble_id=QUICK_15MIN"
+    responses = [await limited_client.get(path) for _ in range(4)]
+
+    assert [r.status_code for r in responses] == [503, 503, 503, 429]
 
 
 async def test_users_are_counted_separately(limited_client: AsyncClient) -> None:

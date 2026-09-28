@@ -117,10 +117,10 @@ REASON_MODEL=google/gemini-3.5-flash-lite
 | `DB_COMMAND_TIMEOUT` | `5.0` | ConfigMap | 쿼리 하나의 상한(초) |
 | `SHUTDOWN_DELAY_SECONDS` | `5.0` | ConfigMap | SIGTERM 후 대기(초). EKS 는 5, 로컬·테스트는 0 (5-6) |
 | `RATE_LIMIT_PER_MINUTE` | `60` | ConfigMap | `/api/v1` 분당 한도. 0 이면 비활성 |
-| `RATE_LIMIT_RECO_PER_MINUTE` | `10` | ConfigMap | 추천 경로 전용(더 낮은) 한도. 0 이면 기본 한도를 따름 |
+| `RATE_LIMIT_RECO_PER_MINUTE` | `10` | ConfigMap | LLM 을 부르는 `my-recipes` 전용(더 낮은) 한도. 0 이면 기본 한도를 따름 |
 | `CORS_ALLOW_ORIGINS` | `()` | ConfigMap | 쉼표 구분. 비우면 CORS 미들웨어를 안 켭니다 |
 | `NEON_BRANCH` | `''` | ConfigMap(선택) | **Neon 전용.** `/health/db` 응답 메모에만 씁니다. CNPG 면 비웁니다 (3-6) |
-| `FORWARDED_ALLOW_IPS` | uvicorn 기본 `127.0.0.1` | ConfigMap | **LB 뒤에서는 반드시 설정** (5-5) |
+| `FORWARDED_ALLOW_IPS` | uvicorn 기본 `127.0.0.1` | ConfigMap | BFF 가 `X-Forwarded-For` 를 넘기면 설정. 안 하면 비로그인 한도가 전원 공용 (5-5) |
 
 `FORWARDED_ALLOW_IPS` 만 `Settings` 필드가 아니라 uvicorn 이 직접 읽는 값입니다.
 
@@ -147,16 +147,23 @@ import 하지 않으므로 넣어도 아무 효과가 없습니다. 특히 `LLM_
 
 ```
 INFO serving: 추천 이유 LLM 생성 사용: model=google/gemini-3.5-flash-lite, 사전 955종   <- 켜짐
-WARNING serving: 추천 이유는 규칙 기반 문구만 씁니다: OPENROUTER_API_KEY 가 비어 있습니다.  <- 꺼짐
+WARNING serving: 추천 이유는 규칙 기반 문구만 씁니다: OPENROUTER_API_KEY 가 비어 있습니다.  <- 꺼짐 (키 없음)
+WARNING serving: 재료 사전을 읽지 못해 추천 이유는 규칙 기반 문구만 씁니다: UndefinedTableError  <- 꺼짐 (DB)
 ```
+
+재료 사전(`SELECT name FROM ingredient`)은 LLM 문구의 지어낸 재료를 거르는 데 씁니다. 읽지 못하면
+앱은 그대로 뜨고 LLM 만 켜지 않습니다. 데이터 복원 전 DB 에 배포했다면 복원 후 파드를 재시작하세요(5-3).
 
 키가 틀려도 파드는 정상으로 뜨고 `my-recipes` 도 200 입니다. 카드마다 규칙 문구로 대체될 뿐이라
 응답만 봐서는 모릅니다. 요청 로그에서 대체 건수를 보세요(7절).
 
 ```
-INFO rag_lab.reason_service.service: 추천 이유 생성 실패, 템플릿으로 대체: ReasonClientError
+WARNING rag_lab.reason_service.service: 추천 이유 생성 실패, 템플릿으로 대체: openrouter_http_401
 INFO rag_lab.reason_service.service: 추천 이유 생성: 카드 3장, LLM 0장, 대체 3장
 ```
+
+`openrouter_http_401` 은 키, `402` 는 크레딧, `400`/`404` 는 대개 모델명 문제입니다. 고치기 전까지
+매 요청 반복되므로 WARNING 으로 남습니다. `429`·`5xx`·시간 초과는 일시 장애라 INFO 입니다.
 
 ### 3-4. `ENVIRONMENT` 값에 따라 스웨거가 열립니다
 
@@ -274,7 +281,7 @@ data:
   RATE_LIMIT_RECO_PER_MINUTE: "10"
   CORS_ALLOW_ORIGINS: ""
   NEON_BRANCH: "dev/kipil"
-  # LB/인그레스를 거치면 반드시 채웁니다 (5-5). 파드 CIDR 또는 "*"
+  # BFF 가 X-Forwarded-For 로 원 사용자 IP 를 넘길 때 효과가 있습니다 (5-5). BFF 파드 CIDR 또는 "*"
   FORWARDED_ALLOW_IPS: "*"
   # 추천 이유 LLM 모델 (3-3). 비우면 코드 기본값입니다.
   REASON_MODEL: "google/gemini-3.5-flash-lite"
@@ -370,7 +377,7 @@ kubectl rollout restart deployment/serving
 **분당 120** 입니다. 게다가 어느 파드로 갈지는 LB 가 정하므로 한 사용자의 한도가
 일정하지 않습니다. 정확한 한도가 필요해지면 Redis 백엔드로 바꿔야 합니다.
 
-### 5-5. LB 뒤에서는 rate limit 이 전원 공용 한 통이 됩니다
+### 5-5. BFF 뒤에서는 비로그인 요청이 한도 하나를 나눠 씁니다
 
 `ratelimit.py` 의 식별 키는 **`X-User-Id` 가 있으면 사용자, 없으면 클라이언트 IP** 입니다.
 
@@ -378,24 +385,34 @@ kubectl rollout restart deployment/serving
 key = request.headers.get("X-User-Id") or (request.client.host if request.client else "unknown")
 ```
 
-문제는 ALB/인그레스를 거치면 `request.client.host` 가 **원 클라이언트가 아니라 LB 의 IP** 라는
-점입니다. uvicorn 은 `proxy_headers=True` 가 기본이지만 `forwarded_allow_ips` 기본값이
-`127.0.0.1` 이라, 바로 앞 홉이 LB 면 `X-Forwarded-For` 를 **신뢰하지 않고 버립니다.**
+서빙은 `ClusterIP` 뒤에 있고 바로 앞 홉은 **Next.js BFF 파드**입니다. 그래서
+`request.client.host` 는 원 사용자가 아니라 **BFF 파드의 IP** 입니다. BFF 가 `X-User-Id` 를
+싣지 않는 비로그인 요청은 전부 키 하나를 공유하고, `RATE_LIMIT_PER_MINUTE=60` 이면
+**BFF 파드 하나 뒤의 비로그인 사용자 전체가 합쳐 분당 60건** 입니다.
 
-그래서 비로그인 요청 전부가 키 하나("LB IP")를 공유합니다. `RATE_LIMIT_PER_MINUTE=60` 이면
-**전 사용자 합쳐 분당 60건** 이 되어, 조금만 몰려도 서로가 서로를 429 로 막습니다.
+서빙 쪽에서 먼저 막은 것: 낮은 한도(`RATE_LIMIT_RECO_PER_MINUTE`, 10/분)는 LLM 을 부르는
+`my-recipes` 에만 겁니다. 이 경로는 `X-User-Id` 가 필수라 사용자별로 셉니다. 예전에는
+`/recommendations` 전체에 걸려 있어, 비로그인 버블 상품 조회가 **전원 합쳐 분당 10건**에서
+막혔습니다(2026-09-28 수정).
 
--> `FORWARDED_ALLOW_IPS` 를 설정하세요. 값이 채워지면 uvicorn 이 `X-Forwarded-For` 를 반영해
-`request.client.host` 를 원 클라이언트로 바꿔 줍니다.
+나머지를 풀려면 **BFF 가 원 사용자 IP 를 넘겨야** 합니다(FE 협의 필요).
+
+1. BFF 가 서빙을 부를 때 `X-Forwarded-For: <원 사용자 IP>` 를 싣습니다.
+   로그인 사용자는 공개 API 에도 `X-User-Id` 를 함께 실으면 사용자별로 셉니다.
+2. 서빙에 `FORWARDED_ALLOW_IPS` 를 설정합니다. 그래야 uvicorn 이 그 헤더를 믿고
+   `request.client.host` 를 원 사용자로 바꿉니다. 기본값 `127.0.0.1` 이면 헤더를 버립니다.
 
 ```yaml
-FORWARDED_ALLOW_IPS: "*"        # 신뢰 경계가 LB 하나로 확실할 때
-# 또는 파드 CIDR 등 실제 프록시 대역만
+FORWARDED_ALLOW_IPS: "*"        # 서빙에 닿는 것이 BFF 뿐일 때 (ClusterIP 전제)
+# 또는 BFF 파드 CIDR 만
 ```
 
-**`"*"` 는 "앞단 프록시가 헤더를 덮어쓴다" 는 전제에서만 안전합니다.** 파드에 직접 도달할 수
-있는 경로가 있으면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를
-`ClusterIP` 로 두라는 8절 권고와 같은 이유입니다.
+**`"*"` 는 "서빙 앞단이 헤더를 덮어쓴다" 는 전제에서만 안전합니다.** 서빙에 직접 닿는 경로가
+생기면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를 `ClusterIP` 로
+두라는 8절 권고와 같은 이유입니다.
+
+BFF 가 헤더를 넘기기 전까지는 공개 API 한도가 전원 공용이므로, 발표·시연처럼 한꺼번에 몰리는
+자리에서는 `RATE_LIMIT_PER_MINUTE` 를 넉넉히(예: 600) 올려 두는 것이 안전합니다.
 
 참고로 액세스 로그(`request_log.py`)는 `X-Forwarded-For` 를 직접 읽습니다. 다만 그건
 **추적용이고 위조 가능한 값이라고 명시**되어 있어, 판단에 쓰는 rate limit 과는 성격이 다릅니다.
@@ -525,8 +542,8 @@ kubectl logs -l app=serving | grep "추천 이유"
 for i in $(seq 1 70); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/api/v1/home/bubbles; done
 ```
 
-기본 한도(60/분)를 넘으면 `429` 와 `Retry-After` 헤더가 나옵니다. 추천 경로
-(`/api/v1/recommendations/...`)는 별도 한도(10/분)입니다.
+기본 한도(60/분)를 넘으면 `429` 와 `Retry-After` 헤더가 나옵니다. LLM 을 부르는
+`/api/v1/recommendations/my-recipes` 만 별도 한도(10/분)입니다. 버블 상품 등 나머지 추천 경로는 기본 한도입니다.
 
 ## 8. 아직 안 된 것
 

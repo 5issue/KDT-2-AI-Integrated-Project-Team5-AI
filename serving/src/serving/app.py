@@ -14,6 +14,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import asyncpg
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,23 @@ from serving.request_log import RequestLogMiddleware
 from serving.routers import fridge, health, home, products, recipes, recommendations
 
 logger = logging.getLogger("serving")
+
+
+async def _load_ingredient_vocabulary(pool: asyncpg.Pool) -> frozenset[str] | None:
+    """환각 검사 사전. 세 카드 어디에도 없는 재료를 지어냈는지 잡습니다. 앱 시작 때 한 번 읽습니다.
+
+    읽지 못하면 None 이고, 그러면 LLM 을 켜지 않습니다. 추천 이유는 부가 기능이라 이 조회 실패가
+    앱 기동을 막으면 안 됩니다(데이터 복원 전 DB 에서는 CrashLoop 이었습니다). 그렇다고 사전 없이
+    LLM 을 켜면 지어낸 재료를 못 거르므로, 검사를 다 갖추지 못하면 규칙 문구로 내려갑니다.
+    """
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT name FROM ingredient")
+    except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
+        # 예외 메시지에 호스트가 들어갈 수 있어 타입만 남깁니다.
+        logger.warning("재료 사전을 읽지 못해 추천 이유는 규칙 기반 문구만 씁니다: %s", type(exc).__name__)
+        return None
+    return frozenset(str(row["name"]) for row in rows)
 
 
 @asynccontextmanager
@@ -58,19 +76,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except RuntimeError as exc:
         logger.warning("추천 이유는 규칙 기반 문구만 씁니다: %s", exc)
     else:
-        # httpx.AsyncClient 는 앱 수명 동안 하나만 씁니다. 키는 클라이언트 안에만 있고 로그에 남지 않습니다.
-        app.state.reason_http = httpx.AsyncClient()
-        app.state.reason_client = OpenRouterReasonClient(app.state.reason_http, reason_settings)
+        vocabulary: frozenset[str] | None = frozenset()
         if app.state.pool is not None:
-            # 환각 검사 사전. 세 카드 어디에도 없는 재료를 지어냈는지 잡습니다. 한 번만 읽습니다.
-            async with app.state.pool.acquire() as conn:
-                rows = await conn.fetch("SELECT name FROM ingredient")
-            app.state.ingredient_vocabulary = frozenset(str(row["name"]) for row in rows)
-        logger.info(
-            "추천 이유 LLM 생성 사용: model=%s, 사전 %d종",
-            reason_settings.model,
-            len(app.state.ingredient_vocabulary),
-        )
+            vocabulary = await _load_ingredient_vocabulary(app.state.pool)
+        if vocabulary is not None:
+            app.state.ingredient_vocabulary = vocabulary
+            # httpx.AsyncClient 는 앱 수명 동안 하나만 씁니다. 키는 클라이언트 안에만 있고 로그에 남지 않습니다.
+            app.state.reason_http = httpx.AsyncClient()
+            app.state.reason_client = OpenRouterReasonClient(app.state.reason_http, reason_settings)
+            logger.info("추천 이유 LLM 생성 사용: model=%s, 사전 %d종", reason_settings.model, len(vocabulary))
 
     try:
         yield

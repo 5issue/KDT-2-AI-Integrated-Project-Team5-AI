@@ -236,3 +236,80 @@ async def test_lifespan_with_openrouter_key_creates_and_closes_one_http_client()
         assert app.state.ingredient_vocabulary == frozenset()
     assert http.is_closed
     assert app.state.reason_http is None
+
+
+class _VocabularyPool:
+    """lifespan 이 재료 사전을 읽을 풀. ``error`` 가 있으면 조회가 그 예외로 실패합니다."""
+
+    def __init__(self, names: list[str], error: Exception | None = None) -> None:
+        self.names = names
+        self.error = error
+        self.closed = False
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[_VocabularyPool]:
+        yield self
+
+    async def fetch(self, sql: str) -> list[dict[str, str]]:
+        if self.error is not None:
+            raise self.error
+        return [{"name": name} for name in self.names]
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _settings_with_db_and_key() -> Settings:
+    return Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        shutdown_delay_seconds=0,
+        database_url="postgresql://user:pass@localhost/db",
+        openrouter_api_key="test-key",
+    )
+
+
+async def test_lifespan_loads_ingredient_vocabulary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DB 가 있으면 재료 사전을 읽고 LLM 클라이언트를 켭니다."""
+    import serving.app as app_module
+
+    pool = _VocabularyPool(["두부", "대파"])
+
+    async def fake_create_pool(settings: Settings) -> _VocabularyPool:
+        return pool
+
+    monkeypatch.setattr(app_module, "create_pool", fake_create_pool)
+    app = create_app(_settings_with_db_and_key())
+    async with app.router.lifespan_context(app):
+        assert app.state.ingredient_vocabulary == frozenset({"두부", "대파"})
+        assert app.state.reason_client is not None
+    assert pool.closed
+
+
+async def test_lifespan_survives_vocabulary_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """재료 사전 조회가 실패해도 앱은 뜨고, LLM 은 켜지 않고 규칙 문구로 내려갑니다.
+
+    예전에는 이 조회가 lifespan 을 그대로 깨뜨려, 데이터 복원 전 DB 에 키를 넣고 배포하면
+    부가 기능 때문에 파드 전체가 CrashLoop 에 빠졌습니다.
+    """
+    import asyncpg
+
+    import serving.app as app_module
+
+    pool = _VocabularyPool([], error=asyncpg.UndefinedTableError('relation "ingredient" does not exist'))
+
+    async def fake_create_pool(settings: Settings) -> _VocabularyPool:
+        return pool
+
+    monkeypatch.setattr(app_module, "create_pool", fake_create_pool)
+    app = create_app(_settings_with_db_and_key())
+    with caplog.at_level("WARNING", logger="serving"):
+        async with app.router.lifespan_context(app):
+            assert app.state.pool is pool
+            assert app.state.reason_client is None
+            assert app.state.reason_http is None
+            assert app.state.ingredient_vocabulary == frozenset()
+    assert pool.closed
+    warnings = [r.getMessage() for r in caplog.records if r.name == "serving" and r.levelname == "WARNING"]
+    assert any("재료 사전을 읽지 못해" in message and "UndefinedTableError" in message for message in warnings)
