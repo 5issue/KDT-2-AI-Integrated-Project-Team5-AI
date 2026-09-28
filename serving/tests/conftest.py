@@ -24,20 +24,29 @@ def database_url_configured() -> bool:
     return settings.database_url is not None and bool(settings.database_url.get_secret_value().strip())
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """DATABASE_URL 이 없으면 db 마커가 붙은 테스트를 건너뜁니다.
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """DATABASE_URL 이 없으면 db 마커를, `-m` 에 llm 이 없으면 llm 마커를 건너뜁니다.
 
     이 훅은 세션 전체 item 목록을 받습니다. 이 폴더 아래 테스트만 걸러내지 않으면,
     .env 가 없는 폴더의 훅이 다른 폴더의 DB 테스트까지 skip 시켜 버립니다.
+
+    llm 테스트는 실제 OpenRouter 를 불러 과금이 있습니다. `-m db` 로 DB 테스트를 돌릴 때
+    딸려 가지 않게, `-m llm` 처럼 직접 지목했을 때만 돕니다.
     """
+    own_tests = Path(__file__).parent.resolve()
+    own_items = [item for item in items if own_tests in Path(str(item.path)).resolve().parents]
+
+    if "llm" not in (config.getoption("markexpr", default="") or ""):
+        skip_llm = pytest.mark.skip(reason="실제 LLM 호출 테스트입니다. `-m llm` 으로 지목하면 돕니다.")
+        for item in own_items:
+            if "llm" in item.keywords:
+                item.add_marker(skip_llm)
+
     if database_url_configured():
         return
     skip = pytest.mark.skip(reason="DATABASE_URL 이 없어 건너뜁니다. serving/.env 를 채우면 실행됩니다.")
-    own_tests = Path(__file__).parent.resolve()
-    for item in items:
-        if "db" not in item.keywords:
-            continue
-        if own_tests in Path(str(item.path)).resolve().parents:
+    for item in own_items:
+        if "db" in item.keywords:
             item.add_marker(skip)
 
 

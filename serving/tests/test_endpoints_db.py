@@ -36,7 +36,7 @@ async def test_my_recipes_query_runs(live_client: AsyncClient) -> None:
     response = await live_client.get(
         "/api/v1/recommendations/my-recipes",
         headers={"X-User-Id": "1"},
-        params={"min_match_rate": 0.5, "limit": 5},
+        params={"limit": 5},
     )
 
     assert response.status_code == 200
