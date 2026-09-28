@@ -10,12 +10,17 @@
 -- `fridge_recipe_match` 와 같은 정의를 씁니다. 두 쿼리가 보유 재료를 다르게 보면
 -- "부족하다고 했는데 목록에는 없는" 재료가 생깁니다.
 WITH fridge AS (
-    SELECT DISTINCT pi.ingredient_id
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
+    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND h.ingredient_id IS NOT NULL
 ),
 missing AS (
     SELECT ri.ingredient_id

@@ -36,6 +36,7 @@ EXPECTED_COMMANDS = {
     "profile",
     "resolve",
     "seed-demo",
+    "seed-scenario",
     "status",
     "submit",
     "sync-master",

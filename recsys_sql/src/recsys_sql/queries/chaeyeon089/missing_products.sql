@@ -11,7 +11,7 @@
 -- 방금 담은 상품을 다시 추천하는 일이 없게 합니다.
 --
 -- 보유 판정은 fridge_recipe_match / my_recipe_candidates 와 같은 정의를 씁니다
--- (냉장고 상품의 PRIMARY 재료 + 상비재료). 다르면 "추천에서 부족하다던 재료가
+-- (냉장고 상품의 PRIMARY 재료와 부모 계층 + 상비재료). 다르면 "추천에서 부족하다던 재료가
 -- 여기에는 없는" 불일치가 생깁니다.
 --
 -- user_id 0 은 냉장고 갈래 미사용(비로그인), base_product_id 0 은 기준 상품 미사용입니다.
@@ -19,18 +19,28 @@
 -- 비활성/품절 제외. stock_quantity NULL 은 품절이 아니라 "수량 미상"이라 후보에 남깁니다.
 
 WITH base AS (
-    SELECT pi.ingredient_id
+    -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM product_ingredient pi
+    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.product_id = :base_product_id
       AND pi.role = 'PRIMARY'
+      AND h.ingredient_id IS NOT NULL
 ),
 fridge AS (
-    SELECT DISTINCT pi.ingredient_id
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
+    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND h.ingredient_id IS NOT NULL
 ),
 missing AS (
     SELECT ri.ingredient_id
@@ -61,6 +71,8 @@ ranked AS (
     FROM missing m
     -- PRIMARY 만 봅니다. 보유 판정이 PRIMARY 기준이므로, SECONDARY 로 걸린 상품을
     -- 추천하면 그걸 담아도 재료는 계속 부족한 채 남습니다.
+    -- PRIMARY 재료가 요구 재료와 정확히 같은 상품만 후보입니다. 계층은 보유 판정에만 씁니다.
+    -- 돼지고기가 부족할 때 목심 상품을 대신 추천하지 않습니다(부위·형태 자동 대체 금지).
     JOIN product_ingredient pi ON pi.ingredient_id = m.ingredient_id
                               AND pi.role = 'PRIMARY'
     JOIN product p             ON p.product_id = pi.product_id

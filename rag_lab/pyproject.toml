@@ -3,7 +3,16 @@ name = "rag-lab"
 version = "0.1.0"
 description = "RAG 실험 환경 (LangGraph + pgvector)"
 requires-python = "==3.11.*"
+# 서빙이 import 하는 `rag_lab.reason_service` 가 필요로 하는 것만 둡니다. 서빙에 딸려 가는 목록입니다.
+# RAG 실험 의존성을 여기 두면 서빙 이미지에 LangGraph·OpenAI SDK 가 설치되므로 아래 그룹으로 분리했습니다.
 dependencies = [
+    "httpx>=0.28.1",
+]
+
+# RAG 실험(LangGraph, pgvector, OpenAI SDK)과 실험 실행기가 쓰는 의존성. `uv sync` 가 기본으로
+# 설치하지만, 다른 멤버가 rag_lab 에 의존해도 따라가지 않습니다 (dependency-groups 는 전파되지 않음).
+[dependency-groups]
+rag = [
     "asyncpg>=0.30.0",
     "langgraph>=1.0.6",
     "openai>=2.6.0",
@@ -12,6 +21,9 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "sqlalchemy[asyncio]>=2.0.44",
 ]
+
+[tool.uv]
+default-groups = ["rag"]
 
 [project.scripts]
 rag-lab = "rag_lab.cli:main"

@@ -19,18 +19,28 @@
 -- 선택 재료(`is_required = false`)까지 전부 내고, 필수 여부는 컬럼으로 구분합니다.
 
 WITH base AS (
-    SELECT pi.ingredient_id
+    -- 기준 상품의 PRIMARY 재료와 그 부모(1단계).
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM product_ingredient pi
+    LEFT JOIN ingredient i ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE pi.product_id = :base_product_id
       AND pi.role = 'PRIMARY'
+      AND h.ingredient_id IS NOT NULL
 ),
 fridge AS (
-    SELECT DISTINCT pi.ingredient_id
+    -- 냉장고 상품의 PRIMARY 재료와 그 부모(1단계). 계층은 1단계까지만 둡니다.
+    -- 한 번 읽고 행마다 (자기 재료, 부모 재료) 두 값을 펼칩니다. 부모가 없으면 NULL 이라 거릅니다.
+    SELECT DISTINCT h.ingredient_id
     FROM user_fridge uf
     JOIN product_ingredient pi ON pi.product_id = uf.product_id
                               AND pi.role = 'PRIMARY'
+    LEFT JOIN ingredient i     ON i.ingredient_id = pi.ingredient_id
+    CROSS JOIN LATERAL (VALUES (pi.ingredient_id), (i.parent_ingredient_id)) AS h(ingredient_id)
     WHERE uf.user_id = :user_id
       AND (uf.expires_at IS NULL OR uf.expires_at >= NOW())
+      AND h.ingredient_id IS NOT NULL
 )
 SELECT ri.recipe_id,
        i.ingredient_id,

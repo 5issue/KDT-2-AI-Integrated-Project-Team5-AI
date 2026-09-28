@@ -1,0 +1,19 @@
+source_item_id,source_food_name,source_food_subtitle,target_source_identity_key,target_ingredient_name,reason
+34,Beef,"rib roast, bone-in",K-FIND:09:09027:소고기:SMALL:갈비,갈비,원본 부위명이 rib roast로 하나의 갈비 child를 가리킴
+35,Beef,"rib roast; boneless, rolled",K-FIND:09:09027:소고기:SMALL:갈비,갈비,원본 부위명이 rib roast로 하나의 갈비 child를 가리킴
+37,Beef,"tenderloin, whole",K-FIND:09:09027:소고기:SMALL:안심,안심,원본 부위명이 tenderloin으로 하나의 안심 child를 가리킴
+38,Beef,"tenderloin, half",K-FIND:09:09027:소고기:SMALL:안심,안심,원본 부위명이 tenderloin으로 하나의 안심 child를 가리킴
+42,Beef,short ribs,K-FIND:09:09027:소고기:SMALL:갈비,갈비,원본 부위명이 short ribs로 하나의 갈비 child를 가리킴
+60,Pork,"loin roast, bone-in",K-FIND:09:09014:돼지고기:SMALL:등심,등심,원본 부위명이 loin roast로 하나의 등심 child를 가리킴
+61,Pork,"loin roast, boneless",K-FIND:09:09014:돼지고기:SMALL:등심,등심,원본 부위명이 loin roast로 하나의 등심 child를 가리킴
+63,Pork,"loin chops, bone-in",K-FIND:09:09014:돼지고기:SMALL:등심,등심,원본 부위명이 loin chops로 하나의 등심 child를 가리킴
+64,Pork,"loin chops, boneless",K-FIND:09:09014:돼지고기:SMALL:등심,등심,원본 부위명이 loin chops로 하나의 등심 child를 가리킴
+67,Pork,tenderloin,K-FIND:09:09014:돼지고기:SMALL:안심,안심,원본 부위명이 tenderloin으로 하나의 안심 child를 가리킴
+72,Pork,ribs,K-FIND:09:09014:돼지고기:SMALL:갈비,갈비,원본 부위명이 ribs로 하나의 갈비 child를 가리킴
+75,Pork,"loin, cubes",K-FIND:09:09014:돼지고기:SMALL:등심,등심,원본 부위명이 loin으로 하나의 등심 child를 가리킴
+44,Lamb,"leg, bone-in - small",K-FIND:09:09036:양고기:SMALL:다리,다리,원본 부위명이 leg로 하나의 양고기 다리 child를 가리킴
+45,Lamb,"leg, bone-in - large",K-FIND:09:09036:양고기:SMALL:다리,다리,원본 부위명이 leg로 하나의 양고기 다리 child를 가리킴
+46,Lamb,"leg; boneless, rolled",K-FIND:09:09036:양고기:SMALL:다리,다리,원본 부위명이 leg로 하나의 양고기 다리 child를 가리킴
+52,Lamb,leg steaks,K-FIND:09:09036:양고기:SMALL:다리,다리,원본 부위명이 leg로 하나의 양고기 다리 child를 가리킴
+116,Chicken parts,"breast halves, bone-in",K-FIND:09:09008:닭고기:SMALL:가슴,가슴,원본 부위명이 breast로 하나의 닭고기 가슴 child를 가리킴
+117,Chicken parts,"breast halves, boneless",K-FIND:09:09008:닭고기:SMALL:가슴,가슴,원본 부위명이 breast로 하나의 닭고기 가슴 child를 가리킴

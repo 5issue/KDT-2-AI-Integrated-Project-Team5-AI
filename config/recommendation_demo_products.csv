@@ -1,0 +1,7 @@
+role,source_type,source_product_id,expected_name,expected_ingredient,expected_parent_ingredient
+FRIDGE,KURLY_CRAWL,10153238,[하이포크] 무항생제 한돈 목살 구이용 300g (냉장),목심,돼지고기
+FRIDGE,KURLY_CRAWL,1001317137,[Kurly's] 국산콩 두부 3종 (택1),두부,
+FRIDGE,KURLY_CRAWL,5049247,[팜송] 한끼 대파 250g,대파,
+FRIDGE,KURLY_CRAWL,10156890,양파 900g,양파,
+MISSING_PRIMARY,KURLY_CRAWL,5027766,[팜송] 청양고추 80g,고추,
+MISSING_PRIMARY,KURLY_CRAWL,5063827,[Kurly's] 시원한 배추김치 1.5kg,배추김치,
