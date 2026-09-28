@@ -59,16 +59,18 @@ sequenceDiagram
 ## 보안
 
 - 로그와 헬스 응답에 DSN·호스트·자격증명을 남기지 않습니다(`mask_dsn`).
-- `ENVIRONMENT` 가 `local` 이 아니면 `/docs` 와 `/openapi.json` 을 닫습니다.
+- `ENVIRONMENT` 가 `prod` 일 때만 `/docs` 와 `/openapi.json` 을 닫습니다. `local`·`dev` 는 FE 연동 확인용으로 엽니다.
 - `.dockerignore` 가 `.env`·키·가상환경·데이터를 빌드 컨텍스트에서 뺍니다(`tests/test_build_context.py`).
 
 ## 지금 상태
 
 | 있음 | 없음 |
 | --- | --- |
-| `/health`, `/health/db` | api_spec 의 읽기 엔드포인트 10개 (받칠 SQL 은 카탈로그에 전부 있음) |
-| `/api/v1/users/{id}/recipe-recommendations` | 냉장고 쓰기 3개 (POST / PATCH / DELETE) - 카탈로그에 대응 쿼리 없음 |
-| `/api/v1/users/{id}/reorder-candidates` | `recommendation_reason` 연결 (rag_lab 진입점은 준비됨) |
-| envelope, 풀, 화이트리스트, `.dockerignore` | `Dockerfile` 본문 |
+| `/health`, `/health/db` (`reason_llm` 켜짐 여부 포함) | `/metrics` (지연·에러율은 JSON 액세스 로그로 집계) |
+| 읽기 8개: HOME-01, RECO-01/02, PROD-01~03, RECIPE-01/03 | 상품 `image_url` 응답 필드 (0015 로 컬럼만 생김) |
+| My냉장고 4개: 목록·추가·수정·삭제 (FRIDGE-01~04) | 여러 파드가 공유하는 rate limit (지금은 프로세스 메모리) |
+| 추천 이유 LLM (앞 3장, `rag_lab.reason_service`, 꺼지면 스스로 다시 켬) | |
+| envelope, 풀, 화이트리스트, rate limit, 요청 id·JSON 액세스 로그 | |
+| `Dockerfile`, `.dockerignore`, ECR 배포 워크플로(#41) | |
 
-`api_spec.md` 는 endpoint 와 envelope 변경으로 갱신 예정이라, 라우터 확장은 새 명세가 나온 뒤에 합니다.
+엔드포인트와 응답 계약의 정본은 `docs/api/api-v1.md` 이고, 배포와 환경변수는 `docs/deploy/deployment-eks.md` 입니다.

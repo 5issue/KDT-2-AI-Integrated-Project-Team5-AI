@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     @property
     def docs_url(self) -> str | None:
-        """local 이 아니면 문서 페이지를 닫습니다. 스키마 노출을 줄입니다."""
+        """prod 에서만 문서 페이지를 닫습니다. local·dev 는 열어 둡니다."""
         # FE 가 연동 전 dev 데모에서 계약을 확인할 수 있게 prod 에서만 닫습니다.
         return "/docs" if self.environment in ("local", "dev") else None
 
