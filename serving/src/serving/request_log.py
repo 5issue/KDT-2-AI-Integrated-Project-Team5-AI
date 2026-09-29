@@ -22,6 +22,8 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from serving.auth import peek_user_key
+
 REQUEST_ID_HEADER = "X-Request-Id"
 _VALID_REQUEST_ID = re.compile(r"^[0-9A-Za-z._-]{8,64}$")
 _SKIP_PATHS = frozenset({"/health", "/health/db"})
@@ -63,7 +65,7 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
             "client_ip": _client_ip(request),
             "method": request.method,
             "path": request.url.path,
-            "user_id": request.headers.get("X-User-Id"),
+            "user_id": peek_user_key(request),
         }
         try:
             response = await call_next(request)

@@ -33,6 +33,7 @@
     load           -> load.bulk_insert.run_load
     embed          -> load.embedding.run_embedding
     seed-demo      -> load.demo_seed.run_demo_seed
+    export-products -> load.product_export.run_export_products
 
 예외는 `submit` 과 `collect` 입니다. 둘은 `--stage` 로 세 단계에 나눠 보내는
 디스패치라 어느 한 도메인에 속하지 않습니다.
@@ -62,6 +63,7 @@ from data_pipeline.load.demo_scenario import run_demo_scenario
 from data_pipeline.load.demo_seed import run_demo_seed
 from data_pipeline.load.embedding import TARGETS as EMBEDDING_TARGETS
 from data_pipeline.load.embedding import run_embedding
+from data_pipeline.load.product_export import run_export_products
 from data_pipeline.stages import (
     STAGE_EXTRACT,
     STAGE_PROFILE,
@@ -289,6 +291,13 @@ def command_seed_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_export_products(args: argparse.Namespace) -> int:
+    """BE 동기화용 category/product DML 파일을 씁니다. DB 는 읽기만 합니다."""
+    report = asyncio.run(run_export_products(settings=get_settings(), out_path=args.out))
+    print(report.render())
+    return 0
+
+
 def command_seed_scenario(args: argparse.Namespace) -> int:
     """데모 시나리오를 설정대로 맞추고 검증 결과를 보여줍니다."""
     report = asyncio.run(
@@ -408,6 +417,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="바꾸기 전 상태로 되돌리는 SQL 을 남길 경로",
     )
     scenario.set_defaults(func=command_seed_scenario)
+
+    export = sub.add_parser("export-products", help="BE product-service 동기화용 category/product DML 내보내기")
+    export.add_argument(
+        "--out", type=Path, default=None, help="출력 경로 (기본 data_pipeline/sql/export/product_dml.sql)"
+    )
+    export.set_defaults(func=command_export_products)
 
     load = sub.add_parser("load", help="staging -> 타깃 테이블 적재")
     load.add_argument("--truncate-staging", action="store_true", help="적재 후 staging 비우기")

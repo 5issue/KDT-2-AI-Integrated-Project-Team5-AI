@@ -45,18 +45,34 @@ class Settings(BaseSettings):
     cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     environment: Environment = "local"
 
+    # JWT 서명 검증(BE 보안 정책: 동기 호출은 JWT 원문을 전파하고 각 서비스가 JWKS 로 검증).
+    # JWKS URL 이 비어 있으면 X-User-Id 헤더 방식(BFF 만 닿는 private network 전제)으로 돕니다.
+    # 켜지면 X-User-Id 는 무시합니다. 둘을 같이 받으면 헤더 한 줄로 검증을 우회할 수 있기 때문입니다.
+    jwt_jwks_url: str = ""
+    jwt_issuer: str = ""
+    jwt_audience: str = ""
+    jwt_algorithms: Annotated[tuple[str, ...], NoDecode] = ("RS256",)
+    jwt_leeway_seconds: float = Field(default=30.0, ge=0)
+    jwt_jwks_cache_seconds: int = Field(default=300, ge=1)
+    jwt_jwks_timeout_seconds: float = Field(default=5.0, gt=0)
+
     # 추천 이유 LLM 생성(rag_lab.reason_service). 키가 비어 있으면 규칙 기반 문구만 나갑니다.
     # 제한 시간과 LLM 카드 수는 환경변수가 아니라 reason_service 의 상수입니다.
     openrouter_api_key: SecretStr | None = None
     reason_model: str = ""
 
-    @field_validator("cors_allow_origins", mode="before")
+    @field_validator("cors_allow_origins", "jwt_algorithms", mode="before")
     @classmethod
     def split_csv(cls, value: object) -> object:
         """쉼표로 구분된 환경변수 문자열을 튜플로 바꿉니다."""
         if isinstance(value, str):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
+
+    @property
+    def jwt_enabled(self) -> bool:
+        """JWKS URL 이 있으면 Bearer JWT 검증, 없으면 X-User-Id 헤더 방식입니다."""
+        return bool(self.jwt_jwks_url.strip())
 
     @property
     def docs_url(self) -> str | None:

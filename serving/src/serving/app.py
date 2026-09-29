@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from rag_lab.reason_service import ReasonSettings
 from serving import __version__
+from serving.auth import JwtVerifier
 from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
@@ -104,6 +105,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    # 인증 방식은 설정으로 고릅니다(auth 모듈 문서). 켜지면 X-User-Id 는 무시됩니다.
+    app.state.jwt_verifier = JwtVerifier(settings) if settings.jwt_enabled else None
+    if app.state.jwt_verifier is None:
+        logger.warning("JWT_JWKS_URL 이 비어 있어 X-User-Id 헤더로 사용자를 식별합니다 (BFF 전용 private network 전제)")
     # lifespan 이 키와 사전을 보고 교체합니다. lifespan 없이 쓰는 앱(테스트)은 규칙 문구 상태로 둡니다.
     app.state.reason_runtime = ReasonRuntime(None)
 

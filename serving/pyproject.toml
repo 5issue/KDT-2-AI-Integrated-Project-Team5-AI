@@ -13,6 +13,7 @@ dependencies = [
     # 추천 이유 생성(rag_lab.reason_service). 기본 의존성은 httpx 하나라 LangGraph 는 안 따라옵니다.
     "rag-lab",
     "uvicorn[standard]>=0.38.0",
+    "pyjwt[crypto]>=2.10.1",
 ]
 
 [tool.uv.sources]

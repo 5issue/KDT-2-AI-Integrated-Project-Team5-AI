@@ -28,6 +28,7 @@ EXPECTED_COMMANDS = {
     "check-db",
     "collect",
     "embed",
+    "export-products",
     "extract",
     "inspect",
     "load",

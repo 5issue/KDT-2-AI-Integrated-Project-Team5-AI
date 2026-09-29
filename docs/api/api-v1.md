@@ -48,18 +48,23 @@ FE/BE 통합 인터페이스 명세(노션 v0.2)에서 AI 파트 몫을 옮겨 �
 
 ## 인증
 
-Next.js BFF(서버)가 FastAPI 를 호출하는 구조입니다. 사용자 식별은 **`X-User-Id` 헤더로
-확정**했습니다(2026-09-22 FE 협의, Bearer 전환 보류). BFF 만 FastAPI 에 닿는
-**private network 전제**이며, 구현은 `serving/src/serving/auth.py` 한 곳에 있습니다.
+BE 보안 정책(2026-09-29 BE 답변)에 맞춰 **Bearer JWT** 로 사용자를 식별합니다. 동기 호출은 JWT
+원문을 전파하고, 서빙은 auth 서버의 `GET /.well-known/jwks.json` 공개키로 서명을 검증한 뒤
+`sub`(user_db `users.id`)를 사용자 id 로 씁니다. 구현은 `serving/src/serving/auth.py` 한 곳이고,
+설정과 BE 에 받아야 하는 값은 `docs/api/be-sync.md` 2절에 있습니다.
 경로에 user id 를 받는 방식은 IDOR 위험이 있어 쓰지 않습니다.
 
-- 필수: `RECO-02`, `FRIDGE-01~04`. 헤더가 없거나 양의 정수가 아니면 401 `UNAUTHORIZED` 입니다.
-- 선택: `RECIPE-03`. 헤더가 있으면 냉장고를 반영하고, 없으면 익명으로 계산합니다. 헤더가 있는데
-  형식이 틀리면 401 입니다.
+- 요청 헤더: `Authorization: Bearer <JWT>`.
+- 필수: `RECO-02`, `FRIDGE-01~04`, `FAV/RECENT`. 토큰이 없거나 서명·만료·발급자 검증에 실패하면
+  401 `UNAUTHORIZED` 입니다(사유는 로그에만). JWKS 를 받지 못하면 503 `SERVICE_UNAVAILABLE`.
+- 선택: `RECIPE-03`. 토큰이 있으면 냉장고를 반영하고, 없으면 익명으로 계산합니다. 있는데
+  틀리면 401 입니다.
 - 나머지(`HOME-01`, `RECO-01`, `PROD-*`, `RECIPE-01`)는 사용자 맥락을 쓰지 않습니다.
-- `X-User-Id` 는 rate limit 의 사용자 키이기도 합니다. 로그인 사용자는 공개 API 에도 실어
+- 토큰의 `sub` 는 rate limit 의 사용자 키이기도 합니다. 로그인 사용자는 공개 API 에도 실어
   보내면 사용자별로 셉니다. 비로그인 요청은 BFF 가 `X-Forwarded-For` 로 원 사용자 IP 를
   넘겨야 사용자별로 셉니다(넘기지 않으면 BFF IP 하나로 합산).
+- **로컬 전용 대안**: `JWT_JWKS_URL` 이 비어 있으면 예전 방식대로 `X-User-Id` 헤더(양의 정수)를
+  받습니다. JWT 가 켜지면 이 헤더는 무시합니다. 배포 환경은 항상 JWT 를 켭니다.
 
 ## 엔드포인트
 
@@ -86,7 +91,7 @@ Base URL: `/api/v1`
 | RECENT-02 | 레시피 조회 기록 | POST | `/users/me/recent-recipes/{recipe_id}` | 구현됨 |
 
 - `RECIPE-03` 은 18장(missing-ingredients)과 통일한 단일 API 입니다 (팀 합의).
-  부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. `X-User-Id` 없으면(비로그인)
+  부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. 토큰이 없으면(비로그인)
   냉장고 갈래 없이, `base_product_id=0` 이면 기준 상품 갈래 없이 계산합니다.
   살 수 있는 상품이 없는 재료는 목록에 내지 않습니다(기획 합의 — 품절 표시는 일반
   검색 몫). 상품 `image_url` 은 product 컬럼 migration 이 올라오면 추가합니다.
@@ -125,7 +130,7 @@ Base URL: `/api/v1`
 
 `GET /api/v1/recommendations/my-recipes`
 
-- Header: `X-User-Id` (필수)
+- Header: `Authorization: Bearer <JWT>` (필수)
 - Query: `limit` (1~50, 기본 10). 매칭률 하한은 서버 고정 0.5 (FE 합의로 파라미터 제거)
 - SQL: 카탈로그 `my_recipe_candidates` (보유 판정: 냉장고 상품의 PRIMARY 재료 +
   상비재료, 만료 재료 제외)
@@ -170,7 +175,7 @@ Base URL: `/api/v1`
 
 ## FAV / RECENT 상세 (구현됨)
 
-My 레시피 화면 하단 "최근 본 레시피" / "찜한 레시피" 두 줄입니다. 모두 `X-User-Id` 필수.
+My 레시피 화면 하단 "최근 본 레시피" / "찜한 레시피" 두 줄입니다. 모두 인증 필수.
 표는 migration `0017_user_recipe_activity` 의 `user_recipe_favorite`, `user_recipe_view`
 이고, 읽기 SQL 은 카탈로그 `chaeyeon089/user_favorite_recipes`, `user_recent_recipes`,
 쓰기는 `serving/user_recipe_sql.py` 입니다.
