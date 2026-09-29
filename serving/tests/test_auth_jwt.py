@@ -15,6 +15,8 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
+from jwt.algorithms import RSAAlgorithm
+from jwt.exceptions import PyJWKClientConnectionError
 
 from serving.app import create_app
 from serving.auth import bearer_token
@@ -40,7 +42,7 @@ def other_key() -> rsa.RSAPrivateKey:
 @pytest.fixture(scope="module")
 def jwks(signing_key: rsa.RSAPrivateKey) -> dict[str, Any]:
     """auth 서버가 내는 JWKS 모양. 공개키 하나에 kid 를 붙입니다."""
-    public = jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
+    public = RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
     return {"keys": [{**public, "kid": KID, "use": "sig", "alg": "RS256"}]}
 
 
@@ -181,7 +183,7 @@ async def test_jwks_unreachable_is_503(
     """auth 서버에 닿지 못하면 위조가 아니라 장애라 503 입니다 (풀 자리표시자라 DB 503 과 구분됩니다)."""
 
     def fail(self: jwt.PyJWKClient) -> dict[str, Any]:
-        raise jwt.exceptions.PyJWKClientConnectionError("down")
+        raise PyJWKClientConnectionError("down")
 
     monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", fail)
     response = await rejecting.get(FRIDGE, headers=bearer(make_token(signing_key)))
