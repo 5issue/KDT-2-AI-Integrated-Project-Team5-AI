@@ -18,10 +18,12 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
+import asyncpg
 import httpx
 import pytest
-from api_test_harness import World, in_days, open_world, stock_fridge
+from api_test_harness import World, connect, in_days, open_world, stock_fridge
 
+from serving import fridge_sql
 from serving.config import Settings
 from serving.reason_runtime import ReasonRuntime
 from serving.routers.fridge import DUPLICATE_ITEM, INACTIVE_PRODUCT, NO_PRIMARY_INGREDIENT
@@ -308,6 +310,36 @@ async def test_fridge_deactivated_item_stays_and_re_adding_is_duplicate(world: W
     (await world.api.post("/users/me/fridge", body, user=ids.me)).expect(409, message=DUPLICATE_ITEM)
     items = (await world.api.get("/users/me/fridge", user=ids.me)).expect(200).data["items"]
     assert [item["product"]["product_id"] for item in items] == [ids.kimchi_a]
+
+
+async def _waits_for_add_lock(conn: asyncpg.Connection, user_id: int, product_id: int) -> bool:
+    """다른 커넥션에서 담기 잠금을 잡아 봅니다. 누가 쥐고 있으면 잠시 기다리다 포기하고 True 입니다."""
+    try:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL lock_timeout = '200ms'")
+            await conn.execute(fridge_sql.LOCK_ITEM, user_id, product_id)
+    except asyncpg.LockNotAvailableError:
+        return True
+    return False
+
+
+async def test_fridge_add_is_serialized_per_user_and_product(world: World) -> None:
+    """담기는 사용자·상품 잠금 아래에서 중복 확인과 삽입을 합니다 (PR #42 리뷰).
+
+    잠금이 없으면 두 번 누른 요청이 둘 다 중복 확인을 통과하고, 그 사이 PRIMARY 재료가 바뀐 상품은 한 품목이
+    두 줄이 됩니다. 잠금은 담은 트랜잭션이 끝날 때까지 쥐어지므로(여기서는 테스트 롤백까지), 다른 커넥션의
+    같은 담기는 기다립니다. 다른 상품이나 다른 사용자의 담기는 기다리지 않습니다.
+    """
+    ids = world.ids
+    await stock_fridge(world, ids.kimchi_a)
+
+    other = await connect()
+    try:
+        assert await _waits_for_add_lock(other, ids.me, ids.kimchi_a), "담기가 사용자·상품 잠금을 잡지 않았습니다"
+        assert not await _waits_for_add_lock(other, ids.me, ids.neck_a)
+        assert not await _waits_for_add_lock(other, ids.other, ids.kimchi_a)
+    finally:
+        await other.close()
 
 
 async def test_fridge_mealkit_is_one_item(world: World) -> None:

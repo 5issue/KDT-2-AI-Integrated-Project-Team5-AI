@@ -262,15 +262,20 @@ class World:
     ids: Ids
 
 
-@asynccontextmanager
-async def open_world() -> AsyncIterator[World]:
-    """시드를 넣은 트랜잭션 위에 앱을 띄웁니다. 빠져나오면 전부 롤백합니다.
+async def connect() -> asyncpg.Connection:
+    """serving 설정의 DB 에 커넥션 하나를 엽니다. 닫는 것은 부른 쪽 몫입니다.
 
     DB 주소는 serving 설정(`serving/.env` 또는 환경변수 `DATABASE_URL`)에서 읽습니다.
     """
     settings = Settings()
     dsn, connect_kwargs = normalize_neon_dsn(settings.require_database_url())
-    conn = await asyncpg.connect(dsn, command_timeout=settings.db_command_timeout, **connect_kwargs)
+    return await asyncpg.connect(dsn, command_timeout=settings.db_command_timeout, **connect_kwargs)
+
+
+@asynccontextmanager
+async def open_world() -> AsyncIterator[World]:
+    """시드를 넣은 트랜잭션 위에 앱을 띄웁니다. 빠져나오면 전부 롤백합니다."""
+    conn = await connect()
     transaction = conn.transaction()
     await transaction.start()
     try:

@@ -93,28 +93,47 @@ async def test_patch_requires_at_least_one_field(validating_client: AsyncClient)
 
 
 class _PostConnection:
-    """POST 가 부르는 문장(상품 확인, 중복 확인, 삽입)에 정해진 결과를 냅니다. SQL 은 실행하지 않습니다.
+    """POST 가 부르는 문장(상품 확인, 잠금, 중복 확인, 삽입)에 정해진 결과를 냅니다. SQL 은 실행하지 않습니다.
 
-    ``exists`` 는 중복 확인을 부를 때마다 앞에서 하나씩 꺼내 씁니다. 동시 요청이 끼어든 상황을
-    "처음엔 없었는데 삽입 뒤에는 있다" 로 흉내 냅니다.
+    부른 순서를 ``calls`` 에 남깁니다. 중복 확인과 삽입이 잠금을 잡은 트랜잭션 안에서 도는지 봅니다.
+    잠금이 실제로 같은 사용자·상품의 담기를 줄 세우는지는 통합 테스트가 실제 DB 로 봅니다.
     """
 
-    def __init__(self, *, product: dict[str, Any] | None, exists: list[bool], inserted: list[dict[str, Any]]) -> None:
+    def __init__(self, *, product: dict[str, Any] | None, exists: bool, inserted: list[dict[str, Any]]) -> None:
         self.product = product
-        self.exists = list(exists)
+        self.exists = exists
         self.inserted = inserted
+        self.calls: list[str] = []
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[_PostConnection]:
         yield self
 
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        self.calls.append("begin")
+        try:
+            yield
+        except BaseException:
+            self.calls.append("rollback")
+            raise
+        self.calls.append("commit")
+
+    async def execute(self, sql: str, *args: Any) -> str:
+        assert sql == fridge_sql.LOCK_ITEM
+        assert args == (1, 101), "잠금 키가 사용자·상품이 아닙니다"
+        self.calls.append("lock")
+        return "SELECT 1"
+
     async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
         if sql == fridge_sql.EXISTS_ITEM:
-            return {"?column?": 1} if self.exists.pop(0) else None
+            self.calls.append("exists")
+            return {"?column?": 1} if self.exists else None
         return self.product
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         assert sql == fridge_sql.INSERT_ITEM
+        self.calls.append("insert")
         return self.inserted
 
 
@@ -132,7 +151,7 @@ async def _client_for(connection: _PostConnection) -> AsyncIterator[AsyncClient]
 
 async def test_post_adds_item() -> None:
     """정상 상품은 담기고 요청 값을 그대로 돌려줍니다."""
-    connection = _PostConnection(product=_product(), exists=[False], inserted=[{"ingredient_id": 12}])
+    connection = _PostConnection(product=_product(), exists=False, inserted=[{"ingredient_id": 12}])
     async with _client_for(connection) as client:
         response = await client.post(PATH, headers=USER, json=BODY)
 
@@ -140,9 +159,25 @@ async def test_post_adds_item() -> None:
     assert response.json()["data"]["product_id"] == 101
 
 
+async def test_post_checks_and_inserts_under_the_item_lock() -> None:
+    """중복 확인과 삽입은 사용자·상품 잠금을 먼저 잡은 한 트랜잭션에서 돕니다 (PR #42 리뷰).
+
+    잠금 없이 두 번 누른 요청이 둘 다 중복 확인을 통과하면, 그 사이 PRIMARY 재료가 바뀐 상품은 뒤 요청도
+    새 재료 행만 넣고 200 으로 답해 한 품목이 두 줄이 됩니다. 거절되면 트랜잭션은 롤백됩니다.
+    """
+    added = _PostConnection(product=_product(), exists=False, inserted=[{"ingredient_id": 12}])
+    duplicate = _PostConnection(product=_product(), exists=True, inserted=[])
+    for connection, expected in ((added, 200), (duplicate, 409)):
+        async with _client_for(connection) as client:
+            assert (await client.post(PATH, headers=USER, json=BODY)).status_code == expected
+
+    assert added.calls == ["begin", "lock", "exists", "insert", "commit"]
+    assert duplicate.calls == ["begin", "lock", "exists", "rollback"]
+
+
 async def test_post_rejects_inactive_product() -> None:
     """판매 중지 상품은 추천·구매 경로와 같은 규칙으로 새로 담지 못합니다 (H5)."""
-    connection = _PostConnection(product=_product(is_active=False), exists=[False], inserted=[{"ingredient_id": 12}])
+    connection = _PostConnection(product=_product(is_active=False), exists=False, inserted=[{"ingredient_id": 12}])
     async with _client_for(connection) as client:
         response = await client.post(PATH, headers=USER, json=BODY)
 
@@ -155,20 +190,7 @@ async def test_post_already_added_product_that_was_deactivated_reports_duplicate
 
     FE 는 409 를 message 로 분기합니다. 품목은 냉장고에 그대로 보이므로 중복 안내가 맞습니다.
     """
-    connection = _PostConnection(product=_product(is_active=False), exists=[True], inserted=[])
-    async with _client_for(connection) as client:
-        response = await client.post(PATH, headers=USER, json=BODY)
-
-    assert response.status_code == 409
-    assert response.json()["message"] == DUPLICATE_ITEM
-
-
-async def test_post_race_reports_duplicate() -> None:
-    """두 번 누른 요청이 중복 확인 뒤에 끼어들면 삽입이 0행입니다. 재료 미연결이 아니라 중복으로 답합니다 (H6).
-
-    예전에는 0행을 전부 "재료 정보가 연결되지 않은 상품" 으로 읽어, 다시 눌러도 같은 틀린 안내가 나왔습니다.
-    """
-    connection = _PostConnection(product=_product(), exists=[False, True], inserted=[])
+    connection = _PostConnection(product=_product(is_active=False), exists=True, inserted=[])
     async with _client_for(connection) as client:
         response = await client.post(PATH, headers=USER, json=BODY)
 
@@ -177,8 +199,8 @@ async def test_post_race_reports_duplicate() -> None:
 
 
 async def test_post_without_primary_ingredient_is_rejected() -> None:
-    """PRIMARY 재료가 없는 상품은 삽입이 0행이고 다시 확인해도 없으므로 재료 미연결로 답합니다."""
-    connection = _PostConnection(product=_product(), exists=[False, False], inserted=[])
+    """PRIMARY 재료가 없는 상품은 삽입이 0행입니다. 중복은 잠금 아래에서 먼저 걸렀으므로 재료 미연결로 답합니다."""
+    connection = _PostConnection(product=_product(), exists=False, inserted=[])
     async with _client_for(connection) as client:
         response = await client.post(PATH, headers=USER, json=BODY)
 
