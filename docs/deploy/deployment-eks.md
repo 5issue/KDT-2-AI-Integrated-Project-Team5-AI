@@ -100,8 +100,9 @@ REASON_MODEL=google/gemini-3.5-flash-lite
 | 항목 | 값 | 왜 |
 | --- | --- | --- |
 | `Service.type` | `ClusterIP` | 인증이 `X-User-Id` 헤더 방식(private network 전제)입니다 |
+| `NetworkPolicy` | BFF 파드만 ingress 허용 | `ClusterIP` 는 클러스터 밖만 막습니다. 안의 다른 파드도 막아야 전제가 섭니다 (4-3) |
 | `terminationGracePeriodSeconds` | `30` | `SHUTDOWN_DELAY_SECONDS` + 처리 중 요청보다 커야 합니다 (5-6) |
-| `readinessProbe` | `/health/db` | `/health` 로 두면 DB 미연결을 못 잡습니다 (5-1) |
+| `readinessProbe` | `/health/db`, `timeoutSeconds: 3` | `/health` 로 두면 DB 미연결을 못 잡습니다 (5-1). 기본 응답 제한 1초는 DB 왕복에 빠듯합니다 (4-2) |
 | `livenessProbe` | `/health` | DB 상태로 컨테이너를 재시작시키지 않기 위해 |
 | `replicas` | 우선 `1` | 늘리면 rate limit 실효 한도가 배수가 됩니다 (5-4) |
 
@@ -161,6 +162,8 @@ WARNING serving: 재료 사전이 비어 있어(0종) 추천 이유는 규칙 �
 LLM 은 부가 기능이라 `ok` 판정에는 넣지 않습니다. 꺼져 있어도 파드는 트래픽을 받습니다.
 다시 읽는 조회는 1초가 상한입니다. 넘으면 그 요청은 규칙 문구로 답하고 다음 간격에 다시 봅니다
 (`재료 사전 조회가 1.0초를 넘어...` 로그). 기동 때 첫 조회만 DB 명령 제한(5초)까지 기다립니다.
+프로브 쪽 재조회는 분당 한 번이라 DB 확인과 합쳐 1초를 넘더라도 연속 실패로 이어지지 않지만, 여유를 두려고
+readinessProbe 응답 제한을 3초로 둡니다(4-2).
 
 키가 틀려도 파드는 정상으로 뜨고 `my-recipes` 도 200 입니다. 카드마다 규칙 문구로 대체될 뿐이라
 응답만 봐서는 모릅니다. 요청 로그에서 대체 건수를 보세요(7절).
@@ -336,6 +339,8 @@ spec:
             httpGet: { path: /health/db, port: 8000 }
             initialDelaySeconds: 3
             periodSeconds: 10
+            # 기본 1초는 DB 왕복(Neon 이면 리전 간·깨어나는 시간 포함)과 LLM 재조회(3-3)에 빠듯합니다.
+            timeoutSeconds: 3
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits:   { memory: "512Mi" }
@@ -345,11 +350,52 @@ kind: Service
 metadata:
   name: serving
 spec:
-  type: ClusterIP          # 7절 참고. 외부 노출은 아직 이릅니다
+  type: ClusterIP          # 외부 노출은 아직 이릅니다 (8절). 클러스터 안의 접근은 4-3 이 막습니다
   selector: { app: serving }
   ports:
-    - port: 80
+    # VPC CNI 로 NetworkPolicy 를 집행하면 Service 포트와 컨테이너 포트가 같아야 합니다 (4-3).
+    # BFF 는 http://serving:8000 으로 부릅니다.
+    - port: 8000
       targetPort: 8000
+```
+
+### 4-3. BFF 만 서빙에 닿게 하기 (NetworkPolicy)
+
+인증이 `X-User-Id` 헤더 방식이라 서빙은 **BFF 만 부른다는 전제**에 기댑니다(8절). `ClusterIP` 는
+클러스터 밖에서 오는 요청만 막고, 같은 클러스터의 다른 파드는 Service 로 그대로 닿습니다. 그 파드가
+헤더 한 줄로 다른 사용자의 냉장고를 읽고 고칠 수 있으므로, BFF 파드만 들어오게 막습니다.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: serving-allow-bff-only
+spec:
+  podSelector:
+    matchLabels: { app: serving }
+  policyTypes: [Ingress]     # 나가는 쪽(Neon, OpenRouter)은 막지 않습니다
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: bff }   # BFF 파드의 실제 라벨로 바꿉니다
+          # BFF 가 다른 네임스페이스면 같은 항목에 네임스페이스 조건을 함께 둡니다.
+          # namespaceSelector:
+          #   matchLabels: { kubernetes.io/metadata.name: <BFF 네임스페이스> }
+      ports:
+        - protocol: TCP
+          port: 8000
+```
+
+- **정책을 집행하는 CNI 가 있어야 효과가 있습니다.** 집행기가 없으면 정책을 만들어도 오류 없이 아무것도
+  막지 않습니다. EKS 기본 VPC CNI 는 애드온 설정에서 `enableNetworkPolicy: "true"` 를 켜야 하고
+  (AWS 문서 기준 1.21.0 이상, EC2 Linux 노드만), Calico·Cilium 을 쓰면 그쪽이 집행합니다.
+- **VPC CNI 로 집행하면 Service 포트와 컨테이너 포트가 같아야 합니다.** 그래서 위 Service 를 `8000` 으로 둡니다.
+- **프로브는 막히지 않습니다.** kubelet 프로브는 노드에서 오는데, 파드가 떠 있는 노드와의 트래픽은 정책과
+  관계없이 허용됩니다. `kubectl port-forward`(7절)도 파드 안으로 바로 붙어 영향이 없습니다.
+- 적용 뒤 BFF 가 아닌 파드에서 막히는지 확인합니다. 시간 초과가 나야 정상입니다.
+
+```bash
+kubectl run np-check --rm -it --restart=Never --image=curlimages/curl -- curl -sS -m 3 http://serving:8000/health
 ```
 
 ## 5. 밟기 쉬운 함정
@@ -418,8 +464,8 @@ FORWARDED_ALLOW_IPS: "*"        # 서빙에 닿는 것이 BFF 뿐일 때 (Cluste
 ```
 
 **`"*"` 는 "서빙 앞단이 헤더를 덮어쓴다" 는 전제에서만 안전합니다.** 서빙에 직접 닿는 경로가
-생기면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를 `ClusterIP` 로
-두라는 8절 권고와 같은 이유입니다.
+생기면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를 `ClusterIP` 로 두고
+NetworkPolicy 로 BFF 만 들이라는 권고(4-3, 8절)와 같은 이유입니다.
 
 BFF 가 헤더를 넘기기 전까지는 공개 API 한도가 전원 공용이므로, 발표·시연처럼 한꺼번에 몰리는
 자리에서는 `RATE_LIMIT_PER_MINUTE` 를 넉넉히(예: 600) 올려 두는 것이 안전합니다.
@@ -501,7 +547,7 @@ spec:
 kubectl rollout status deployment/serving
 kubectl get pods -l app=serving
 
-kubectl port-forward svc/serving 8080:80
+kubectl port-forward svc/serving 8080:8000
 curl -s localhost:8080/health      # {"status":"ok","version":"0.1.0","environment":"prod"}
 curl -s localhost:8080/health/db   # ok:true, latency_ms, pool_size, reason_llm(on/off) ...
 ```
@@ -564,7 +610,8 @@ for i in $(seq 1 70); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/
 배포 전에 알고 있어야 할 것들입니다.
 
 - **인증은 `X-User-Id` 헤더 방식으로 확정됐습니다** (2026-09-22 FE 협의, Bearer 전환 보류).
-  **private network 전제**이므로 Service 를 `ClusterIP` 로 두고 BFF 만 접근하게 해야 합니다.
+  **private network 전제**이므로 Service 를 `ClusterIP` 로 두고 NetworkPolicy 로 BFF 만 접근하게 해야
+  합니다(4-3). `ClusterIP` 만으로는 클러스터 안의 다른 파드를 막지 못합니다.
   LoadBalancer/Ingress 로 외부에 노출하면 전제가 깨집니다 - 헤더 한 줄로 임의 사용자가 되고,
   같은 헤더가 rate limit 키라 한도도 함께 우회됩니다.
 - **메트릭 엔드포인트가 없습니다.** 요청 id 와 액세스 로그는 들어왔지만(#25) `/metrics` 는
