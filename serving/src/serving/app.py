@@ -26,13 +26,20 @@ from serving.logging_setup import configure_logging
 from serving.ratelimit import RateLimitMiddleware
 from serving.reason_runtime import ReasonRuntime
 from serving.request_log import RequestLogMiddleware
-from serving.routers import fridge, health, home, products, recipes, recommendations
+from serving.routers import fridge, health, home, products, recipes, recommendations, user_recipes
 
 logger = logging.getLogger("serving")
 
 # `/api/v1` 아래에 붙는 라우터. rate limit 테스트가 LLM 을 부르는 라우트와 낮은 한도 경로 목록을 대조할 때도
 # 이 목록을 씁니다. FastAPI 0.141 부터 포함된 라우터가 `app.routes` 에 펼쳐지지 않기 때문입니다.
-API_ROUTERS = (recommendations.router, home.router, products.router, recipes.router, fridge.router)
+API_ROUTERS = (
+    recommendations.router,
+    home.router,
+    products.router,
+    recipes.router,
+    fridge.router,
+    user_recipes.router,
+)
 
 
 @asynccontextmanager
