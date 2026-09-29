@@ -27,7 +27,7 @@ DB 운영 스크립트(재료 마스터 정렬, 보관 가이드 적재, 카탈�
 raw 데이터 ─▶ data_pipeline ─▶ Neon PostgreSQL
               (적재 + embedding)
                                      ▲
-                                     │ 각자 .env 로 자기 DB 를 봄
+                                     │ 폴더별 .env 가 공용 dev 브랜치를 봄
                  ┌───────────────────┼───────────────────┐
                  │                   │                   │
             recsys_sql            rag_lab             serving
@@ -100,7 +100,16 @@ rag_lab/experiments/<github_id>/            실험 질문 세트와 결과
 단, **서빙은 `QUERY_OWNER` 와 무관하게 카탈로그 전체를 봅니다.** 그래서 쿼리 이름은
 폴더가 달라도 레포 전체에서 유일해야 합니다. `load_catalog` 이 중복을 막습니다.
 
-DB 브랜치는 처음에는 갈라졌다가 현재는 dev, production으로 통일한 상황입니다.
+**DB 는 Neon 의 공용 브랜치 둘로 통일했습니다.** 처음에는 사람마다 브랜치를 따로 썼습니다.
+
+- **dev** (콘솔 이름 `dev/kipil`): 개발, 테스트, SQL 검증, RAG 실험. 폴더별 `.env` 의 `DATABASE_URL` 에는
+  이 브랜치 주소를 넣습니다.
+- **production**: 직접 붙어 실험하지 않습니다. 마이그레이션은 임시 브랜치에서 검증한 뒤 올립니다.
+
+스키마를 바꾸거나 인덱스를 만들고 지우는 실험처럼 다른 사람에게 번지는 작업은 임시 브랜치를 따서 하고
+끝나면 지웁니다. 임시 브랜치에 alembic 을 돌릴 때는 `DATABASE_URL_ENV_KEY` 로 대상을 고릅니다
+([data_pipeline/README.md](data_pipeline/README.md)). DB 테스트는 롤백되고 루트 `conftest.py` 가 남은 행을
+검사하므로 dev 에서 돌려도 됩니다.
 
 ## 이 레포에서 알아두면 좋은 것
 
