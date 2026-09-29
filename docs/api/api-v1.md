@@ -79,6 +79,11 @@ Base URL: `/api/v1`
 | FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 구현됨 |
 | FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
 | FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
+| FAV-01 | 찜한 레시피 목록 | GET | `/users/me/favorite-recipes` | 구현됨 |
+| FAV-02 | 레시피 찜 추가 | POST | `/users/me/favorite-recipes/{recipe_id}` | 구현됨 |
+| FAV-03 | 레시피 찜 취소 | DELETE | `/users/me/favorite-recipes/{recipe_id}` | 구현됨 |
+| RECENT-01 | 최근 본 레시피 목록 | GET | `/users/me/recent-recipes` | 구현됨 |
+| RECENT-02 | 레시피 조회 기록 | POST | `/users/me/recent-recipes/{recipe_id}` | 구현됨 |
 
 - `RECIPE-03` 은 18장(missing-ingredients)과 통일한 단일 API 입니다 (팀 합의).
   부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. `X-User-Id` 없으면(비로그인)
@@ -160,5 +165,50 @@ Base URL: `/api/v1`
   },
   "error": null,
   "timestamp": "2026-09-16T09:00:00Z"
+}
+```
+
+## FAV / RECENT 상세 (구현됨)
+
+My 레시피 화면 하단 "최근 본 레시피" / "찜한 레시피" 두 줄입니다. 모두 `X-User-Id` 필수.
+표는 migration `0017_user_recipe_activity` 의 `user_recipe_favorite`, `user_recipe_view`
+이고, 읽기 SQL 은 카탈로그 `chaeyeon089/user_favorite_recipes`, `user_recent_recipes`,
+쓰기는 `serving/user_recipe_sql.py` 입니다.
+
+- `GET /users/me/favorite-recipes?limit=` (1~100, 기본 50): 최근에 찜한 순.
+- `POST /users/me/favorite-recipes/{recipe_id}`: 없는 레시피 404, 이미 찜한 레시피 409.
+  응답 `data` 는 `{recipe_id, favorited_at}`.
+- `DELETE /users/me/favorite-recipes/{recipe_id}`: 찜하지 않은 레시피 404.
+  HTTP 200 + envelope(`data: null`).
+- `GET /users/me/recent-recipes?limit=` (1~50, 기본 10): 마지막으로 본 순. 같은 레시피는
+  한 번만 나옵니다.
+- `POST /users/me/recent-recipes/{recipe_id}`: FE 가 상세 화면 진입 시 호출합니다. 다시 보면
+  행이 늘지 않고 `viewed_at` 만 갱신되며, 사용자당 최근 100건만 보관합니다. 없는 레시피 404.
+  응답 `data` 는 `{recipe_id, viewed_at}`.
+- 상세 GET(`RECIPE-01`)에 조회 기록을 숨기지 않았습니다. 비로그인·프리페치 요청이 기록을
+  오염시키지 않도록 조회와 기록을 분리합니다.
+
+목록 항목은 두 API 가 같은 카드 모양(`recipe_id, name, image_url, difficulty, cook_time_min,
+servings`)에 각각 `favorited_at` / `viewed_at` 을 더한 것입니다.
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "요청에 성공하였습니다.",
+  "data": {
+    "items": [
+      {
+        "recipe_id": 1001,
+        "name": "닭가슴살 샐러드",
+        "image_url": "https://example.com/r.jpg",
+        "difficulty": "EASY",
+        "cook_time_min": 10,
+        "servings": 1,
+        "favorited_at": "2026-09-29T09:00:00Z"
+      }
+    ]
+  },
+  "error": null,
+  "timestamp": "2026-09-29T09:00:00Z"
 }
 ```
