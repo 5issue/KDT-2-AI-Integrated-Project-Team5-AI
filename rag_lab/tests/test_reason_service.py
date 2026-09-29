@@ -345,6 +345,34 @@ async def test_http_errors_fall_back_to_template() -> None:
     assert all(result.text for result in results)
 
 
+async def test_failure_log_keeps_status_code_and_raises_config_errors(caplog: pytest.LogCaptureFixture) -> None:
+    """실패 로그에 상태 코드가 남아 키 오류(401)와 일시 장애(429, 5xx)를 가를 수 있습니다.
+
+    예전에는 예외 종류(ReasonClientError)만 남아, 키가 틀려 모든 카드가 규칙 문구로 나가도 원인을
+    알려면 직접 호출해 봐야 했습니다. 고치기 전까지 매 요청 반복되는 설정 오류는 WARNING 입니다.
+    """
+    statuses = iter([401, 429, 503])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _chat_response("", status=next(statuses))
+
+    with caplog.at_level("INFO", logger="rag_lab.reason_service.service"):
+        results = await generate_reasons_for_rows(FRIDGE_ROWS, _client(handler))
+
+    assert [result.source for result in results] == ["fallback_error"] * 3
+    failures = {
+        record.getMessage().rsplit(": ", 1)[1]: record.levelname
+        for record in caplog.records
+        if "템플릿으로 대체" in record.getMessage()
+    }
+    assert failures == {
+        "openrouter_http_401": "WARNING",
+        "openrouter_http_429": "INFO",
+        "openrouter_http_503": "INFO",
+    }
+    assert all("test-key" not in record.getMessage() for record in caplog.records)
+
+
 async def test_empty_or_malformed_response_falls_back() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": []})

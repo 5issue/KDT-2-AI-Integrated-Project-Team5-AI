@@ -20,7 +20,20 @@ REASONING_EFFORT = "minimal"
 
 
 class ReasonClientError(RuntimeError):
-    """응답이 없거나 형식이 어긋난 경우. 호출한 쪽은 템플릿으로 대체합니다."""
+    """응답이 없거나 형식이 어긋난 경우. 호출한 쪽은 템플릿으로 대체합니다.
+
+    메시지는 ``openrouter_http_401`` 같은 고정 코드라 응답 본문이나 키가 들어가지 않습니다.
+    로그에 그대로 남겨도 되고, 남겨야 키 오류(401)와 일시 장애(429, 5xx)를 가를 수 있습니다.
+    """
+
+    def __init__(self, code: str, *, status_code: int | None = None) -> None:
+        super().__init__(code)
+        self.status_code = status_code
+
+    @property
+    def is_config_error(self) -> bool:
+        """키·결제·모델명처럼 고치기 전까지 매 요청 반복되는 오류. 408/429 는 일시 장애로 봅니다."""
+        return self.status_code is not None and 400 <= self.status_code < 500 and self.status_code not in (408, 429)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +78,7 @@ class OpenRouterReasonClient:
             json=body,
         )
         if response.status_code >= 400:
-            raise ReasonClientError(f"openrouter_http_{response.status_code}")
+            raise ReasonClientError(f"openrouter_http_{response.status_code}", status_code=response.status_code)
         try:
             payload = response.json()
             content = payload["choices"][0]["message"]["content"]

@@ -42,16 +42,24 @@ FE/BE 통합 인터페이스 명세(노션 v0.2)에서 AI 파트 몫을 옮겨 �
 | 405 | `METHOD_NOT_ALLOWED` | 지원하지 않는 메서드 |
 | 409 | `CONFLICT` | 상태 충돌 |
 | 422 | `INVALID_INPUT_VALUE` | 검증 실패 (새 코드 대신 재사용) |
-| 429 | `TOO_MANY_REQUESTS` | rate limit 초과: 기본 60/분, 추천 경로 10/분, `Retry-After` 헤더 포함 (AI 파트 확장) |
+| 429 | `TOO_MANY_REQUESTS` | rate limit 초과: 기본 60/분, `my-recipes`(LLM 경로) 10/분, `Retry-After` 헤더 포함 (AI 파트 확장) |
 | 500 | `INTERNAL_SERVER_ERROR` | 처리되지 않은 예외. 상세는 응답에 싣지 않음 |
 | 503 | `SERVICE_UNAVAILABLE` | DB 미연결 등 (AI 파트 확장) |
 
 ## 인증
 
-Next.js BFF(서버)가 FastAPI 를 호출하는 구조입니다. 사용자 식별은 `X-User-Id`
-헤더로 하며(`serving/src/serving/auth.py`), 공유 시크릿 검증 방식과 최종 헤더
-이름은 FE 와 협의 중입니다. 확정되면 `auth.py` 만 교체합니다.
+Next.js BFF(서버)가 FastAPI 를 호출하는 구조입니다. 사용자 식별은 **`X-User-Id` 헤더로
+확정**했습니다(2026-09-22 FE 협의, Bearer 전환 보류). BFF 만 FastAPI 에 닿는
+**private network 전제**이며, 구현은 `serving/src/serving/auth.py` 한 곳에 있습니다.
 경로에 user id 를 받는 방식은 IDOR 위험이 있어 쓰지 않습니다.
+
+- 필수: `RECO-02`, `FRIDGE-01~04`. 헤더가 없거나 양의 정수가 아니면 401 `UNAUTHORIZED` 입니다.
+- 선택: `RECIPE-03`. 헤더가 있으면 냉장고를 반영하고, 없으면 익명으로 계산합니다. 헤더가 있는데
+  형식이 틀리면 401 입니다.
+- 나머지(`HOME-01`, `RECO-01`, `PROD-*`, `RECIPE-01`)는 사용자 맥락을 쓰지 않습니다.
+- `X-User-Id` 는 rate limit 의 사용자 키이기도 합니다. 로그인 사용자는 공개 API 에도 실어
+  보내면 사용자별로 셉니다. 비로그인 요청은 BFF 가 `X-Forwarded-For` 로 원 사용자 IP 를
+  넘겨야 사용자별로 셉니다(넘기지 않으면 BFF IP 하나로 합산).
 
 ## 엔드포인트
 
@@ -99,8 +107,14 @@ Base URL: `/api/v1`
   `user_fridge` 의 PK 가 (ingredient_id, user_id, product_id) 복합키라 단일
   품목 id 가 없습니다. 같은 이유로 목록의 `ingredient` 는 단수 객체가 아니라
   `ingredients[]` 배열입니다 (밀키트처럼 PRIMARY 재료가 여럿인 상품 대응).
-- POST 는 이미 담긴 상품과 재료 미연결 상품(현재 295건)을 409 `CONFLICT` 로
-  거절합니다. 기한 지난 품목도 목록에 나오며 `is_expired` 로 구분합니다.
+- POST 는 세 경우를 409 `CONFLICT` 로 거절하고, `message` 로 구분합니다. 여러 경우에 걸치면
+  **아래 순서의 첫 번째 하나만** 냅니다.
+  1. `이미 냉장고에 담긴 상품입니다.` - 버튼을 두 번 눌러 동시에 들어온 경우도 이 메시지입니다.
+     이미 담긴 상품이 나중에 판매 중지되어도 이 메시지입니다(품목은 냉장고에 그대로 보임).
+  2. `판매가 중지된 상품이라 담을 수 없습니다.` - 판매 중지 상품(`is_active=false`).
+     추천·구매 경로에서 빠지는 상품이라 새로 담는 것도 막습니다. 상세 조회는 그대로 됩니다.
+  3. `재료 정보가 연결되지 않은 상품이라 담을 수 없습니다.` - 재료 미연결 상품(현재 295건).
+- 기한 지난 품목도 목록에 나오며 `is_expired` 로 구분합니다.
 
 ## RECO-02 상세 (구현됨)
 
@@ -110,8 +124,14 @@ Base URL: `/api/v1`
 - Query: `limit` (1~50, 기본 10). 매칭률 하한은 서버 고정 0.5 (FE 합의로 파라미터 제거)
 - SQL: 카탈로그 `my_recipe_candidates` (보유 판정: 냉장고 상품의 PRIMARY 재료 +
   상비재료, 만료 재료 제외)
-- `recommendation_reason` 은 현재 규칙 기반 문장입니다
-  (`schemas._build_reason`). LLM 생성으로 바꿀지는 협의 대상입니다.
+- `recommendation_reason` 은 **앞 3장만 LLM 생성**이고 나머지는 규칙 기반 문장입니다
+  (`rag_lab.reason_service`, #38).
+  - LLM 문구: 존댓말 두 문장, 40~120자. 첫 문장은 가진 재료, 둘째 문장은 더 담을 재료입니다.
+    다른 카드 재료 혼입, 지어낸 재료·조리시간, 보유/부족 뒤집힘, 영양·건강 주장, 개수 숫자는 자동 검사로 걸러집니다.
+  - 규칙 문구: 한 문장, 60자 이내. 4장째부터, 그리고 LLM 이 시간 초과(카드당 2초)·오류·검사
+    실패일 때 그 카드만 이 문구로 대체됩니다. 필드는 항상 채워져 있습니다.
+  - 응답 시간: 규칙 문구만이면 약 0.3초, LLM 을 쓰면 약 1.7초입니다(2026-09-28 dev 측정).
+- rate limit 은 사용자당 10/분입니다(다른 API 는 60/분).
 
 ```json
 {
@@ -125,7 +145,7 @@ Base URL: `/api/v1`
         "difficulty": "EASY",
         "cook_time_min": 15,
         "servings": 2,
-        "recommendation_reason": "김치만 있으면 만들 수 있어요",
+        "recommendation_reason": "두부와 돼지고기가 넉넉해 칼칼한 찌개를 끓이기 좋은 조합입니다. 김치만 더 담으면 바로 완성돼요.",
         "match": {
           "required_ingredients": 5,
           "available_ingredients": 4,

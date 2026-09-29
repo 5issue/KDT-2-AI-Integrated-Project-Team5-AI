@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 from httpx import AsyncClient
@@ -94,6 +97,101 @@ async def test_unhandled_exception_log_carries_traceback(
     entry = json.loads(errors[-1].getMessage())
     assert entry["error"] == "RuntimeError"
     assert entry["request_id"]
+
+
+def test_logs_reach_stderr_in_a_real_process() -> None:
+    """위 테스트들은 caplog 가 로거 레벨을 직접 올려서 통과합니다. 실제 프로세스에서도 나가는지 봅니다.
+
+    로깅 설정이 없을 때 컨테이너에서는 액세스 로그가 0줄이었고, 추천 이유 LLM 이 401 로 전부 실패해도
+    로그에 아무것도 남지 않았습니다. uvicorn 이 앱 import 전에 자기 로깅 설정을 올리는 순서를 재현합니다.
+    """
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "import logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "logging.config.dictConfig(LOGGING_CONFIG)\n"
+        "from serving.app import create_app\n"
+        "from serving.config import Settings\n"
+        # 모듈 수준 app 이 이미 한 번 불렀으므로 두 번째 호출입니다. 핸들러가 늘면 줄이 중복됩니다.
+        "create_app(Settings(_env_file=None))\n"
+        "logging.getLogger('serving.access').info('{\"request_id\": \"abc12345\"}')\n"
+        "logging.getLogger('serving').info('graceful shutdown 완료')\n"
+        "logging.getLogger('rag_lab.reason_service.service').info('추천 이유 생성: 카드 3장')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        check=True,
+    )
+    lines = result.stderr.splitlines()
+    # 액세스 로그는 접두사 없이 JSON 한 줄 그대로, 한 번만 나갑니다.
+    assert lines.count('{"request_id": "abc12345"}') == 1, lines
+    assert "INFO serving: graceful shutdown 완료" in lines, lines
+    assert "INFO rag_lab.reason_service.service: 추천 이유 생성: 카드 3장" in lines, lines
+
+
+def _run_python(script: str) -> subprocess.CompletedProcess[str]:
+    """새 프로세스에서 스크립트를 돌립니다. 로깅 설정은 프로세스 전역이라 이 테스트 프로세스와 섞지 않습니다."""
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        check=True,
+    )
+
+
+def test_access_log_stays_one_json_line_when_root_logging_is_configured() -> None:
+    """루트에 핸들러가 있어도(`basicConfig`, 루트만 설정한 `--log-config`) 액세스 로그는 JSON 한 줄뿐입니다.
+
+    PR #42 리뷰: 전파를 켜 둔 채였을 때는 같은 줄이 두 번, 하나는 루트 형식(`INFO:serving.access:{...}`)
+    으로 나가 수집기의 JSON 한 줄 계약이 깨졌습니다.
+    """
+    result = _run_python(
+        "import logging\n"
+        "logging.basicConfig(level=logging.INFO)\n"
+        "from serving.app import create_app\n"
+        "from serving.config import Settings\n"
+        "create_app(Settings(_env_file=None))\n"
+        "logging.getLogger('serving.access').info('{\"request_id\": \"abc12345\"}')\n"
+        "logging.getLogger('serving').info('graceful shutdown 완료')\n"
+    )
+    lines = result.stderr.splitlines()
+    assert [line for line in lines if "abc12345" in line] == ['{"request_id": "abc12345"}'], lines
+    assert [line for line in lines if "graceful shutdown" in line] == ["INFO serving: graceful shutdown 완료"], lines
+
+
+def test_uvicorn_plain_access_log_is_off_regardless_of_command() -> None:
+    """uvicorn 의 평문 액세스 로그는 앱이 끕니다. 매니페스트가 command 를 바꿔 `--no-access-log` 가 빠져도 같습니다.
+
+    uvicorn 이 자기 로깅 설정을 먼저 올리고 앱을 import 하는 순서를 그대로 재현합니다. 평문 액세스 로그는
+    uvicorn 기본 설정에서 stdout 으로 나갑니다.
+    """
+    result = _run_python(
+        "import logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "logging.config.dictConfig(LOGGING_CONFIG)\n"
+        "import serving.app\n"
+        "logging.getLogger('uvicorn.access').info("
+        "'%s - \"%s %s HTTP/%s\" %d', '127.0.0.1:1', 'GET', '/health', '1.1', 200)\n"
+    )
+    assert "GET /health" not in result.stdout + result.stderr
+
+
+def test_dev_server_turns_off_uvicorn_access_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """로컬 개발 서버(`uv run serving run`)도 이미지와 같게 uvicorn 평문 액세스 로그를 끕니다."""
+    from serving import cli
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+
+    assert cli.main(["run", "--no-reload"]) == 0
+    assert calls and calls[0]["access_log"] is False
 
 
 async def test_health_is_not_logged(offline_client: AsyncClient, caplog: pytest.LogCaptureFixture) -> None:

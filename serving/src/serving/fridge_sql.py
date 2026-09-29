@@ -24,6 +24,13 @@ RETURNING ingredient_id
 
 EXISTS_ITEM = "SELECT 1 FROM user_fridge WHERE user_id = $1 AND product_id = $2 LIMIT 1"
 
+# 같은 사용자·상품의 담기를 트랜잭션이 끝날 때까지 한 줄로 세우는 잠금. 한 품목이 재료마다 행이라
+# (user_id, product_id) UNIQUE 로는 막을 수 없어 잠금으로 막습니다. id 가 bigint 라 두 정수 인자 형태에
+# 담기지 않아, 두 id 를 이은 문자열의 64비트 해시를 키로 씁니다. 해시가 겹쳐도 잠시 더 기다릴 뿐입니다.
+LOCK_ITEM = """
+SELECT pg_advisory_xact_lock(hashtextextended(format('user_fridge:%s:%s', $1::bigint, $2::bigint), 0))
+"""
+
 # 읽고-다시-쓰는 방식은 동시 요청이 서로의 변경을 덮어쓸 수 있어 단일 조건부
 # UPDATE 로 처리합니다. quantity/unit 의 NULL 파라미터는 "미변경"($3, $4),
 # expires_at 은 NULL 이 유효값(기한 없음)이라 변경 여부 플래그($6)로 구분합니다.

@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import httpx
 
 from .checks import check_reason, failed_names
+from .client import ReasonClientError
 from .facts import RecipeFacts, facts_from_row, validate_facts
 from .prompt import SYSTEM_PROMPT, build_user_prompt
 from .template import object_particle, template_reason
@@ -58,8 +59,14 @@ async def _generate_one(
         text = await asyncio.wait_for(client.complete(SYSTEM_PROMPT, build_user_prompt(facts)), timeout_seconds)
     except TimeoutError:
         return ReasonResult(fallback, "fallback_timeout")
+    except ReasonClientError as exc:
+        # 메시지는 고정 코드(openrouter_http_401 등)라 그대로 남깁니다. 키·모델 설정 오류는 고치기 전까지
+        # 모든 요청이 규칙 문구로 나가는데 응답은 200 이라, INFO 에 묻히지 않게 WARNING 으로 올립니다.
+        level = logging.WARNING if exc.is_config_error else logging.INFO
+        logger.log(level, "추천 이유 생성 실패, 템플릿으로 대체: %s", exc)
+        return ReasonResult(fallback, "fallback_error")
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-        # ReasonClientError 는 RuntimeError 입니다. 원인 종류만 남기고 본문·키는 남기지 않습니다.
+        # 연결 실패 등. httpx 예외 메시지에는 요청 주소가 들어갈 수 있어 종류만 남깁니다.
         logger.info("추천 이유 생성 실패, 템플릿으로 대체: %s", type(exc).__name__)
         return ReasonResult(fallback, "fallback_error")
     failed = failed_names(check_reason(facts, text, foreign_ingredients=foreign, vocabulary=vocabulary))

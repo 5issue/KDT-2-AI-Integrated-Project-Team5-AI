@@ -30,6 +30,10 @@ router = APIRouter(prefix="/users/me/fridge", tags=["fridge"])
 
 ProductIdPath = Path(description="품목의 상품 id", ge=1)
 
+DUPLICATE_ITEM = "이미 냉장고에 담긴 상품입니다."
+NO_PRIMARY_INGREDIENT = "재료 정보가 연결되지 않은 상품이라 담을 수 없습니다."
+INACTIVE_PRODUCT = "판매가 중지된 상품이라 담을 수 없습니다."
+
 
 @router.get("", response_model=ApiResponse[FridgeListResponse])
 async def read_fridge_items(pool: PoolDep, user_id: CurrentUserId) -> ApiResponse[FridgeListResponse]:
@@ -46,21 +50,34 @@ async def read_fridge_items(pool: PoolDep, user_id: CurrentUserId) -> ApiRespons
 async def create_fridge_item(
     pool: PoolDep, user_id: CurrentUserId, body: FridgeItemCreate
 ) -> ApiResponse[FridgeItemSummary]:
-    """품목을 추가합니다. 이미 담긴 상품(409), 재료 미연결 상품(409)은 거절합니다."""
+    """품목을 추가합니다. 이미 담긴 상품, 판매 중지 상품, 재료 미연결 상품은 409 로 거절합니다.
+
+    409 는 FE 가 ``message`` 로 분기하는 계약이라, 여러 경우에 걸치면 이 순서로 하나만 냅니다.
+    이미 담긴 상품이 나중에 판매 중지되어도 "이미 담긴 상품" 입니다. 품목은 냉장고에 그대로 보이기 때문입니다.
+    """
     async with pool.acquire() as conn:
         detail_sql, detail_args = build_query("product_detail", {"product_id": body.product_id})
-        if await conn.fetchrow(detail_sql, *detail_args) is None:
+        product = await conn.fetchrow(detail_sql, *detail_args)
+        if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="상품을 찾을 수 없습니다.")
-        if await conn.fetchrow(fridge_sql.EXISTS_ITEM, user_id, body.product_id) is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 냉장고에 담긴 상품입니다.")
-        inserted = await conn.fetch(
-            fridge_sql.INSERT_ITEM, user_id, body.product_id, body.quantity, body.unit, body.expires_at
-        )
-        if not inserted:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="재료 정보가 연결되지 않은 상품이라 담을 수 없습니다.",
+        # 중복 확인과 삽입은 사용자·상품 잠금을 잡은 한 트랜잭션에서 합니다. 뒤에 온 같은 담기는 앞 요청의
+        # 커밋을 기다렸다가 중복 확인에 걸립니다. 잠금이 없으면 두 번 누른 요청이 둘 다 중복 확인을 통과합니다.
+        async with conn.transaction():
+            await conn.execute(fridge_sql.LOCK_ITEM, user_id, body.product_id)
+            # 삽입 전에 중복을 먼저 봅니다. 삽입의 ON CONFLICT 로만 가리면, PRIMARY 재료가 나중에 늘어난 상품은
+            # 새 재료 행만 들어가 성공(200)으로 답하고, 한 품목이 수량이 다른 두 줄이 됩니다.
+            if await conn.fetchrow(fridge_sql.EXISTS_ITEM, user_id, body.product_id) is not None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_ITEM)
+            if not product["is_active"]:
+                # 판매 중지 상품은 추천·구매 경로(missing_products, bubble_products)에서 빠집니다. 새로 담는 것도
+                # 같은 규칙으로 막습니다. 상세 조회와 이미 담긴 품목은 그대로 보입니다.
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INACTIVE_PRODUCT)
+            inserted = await conn.fetch(
+                fridge_sql.INSERT_ITEM, user_id, body.product_id, body.quantity, body.unit, body.expires_at
             )
+            if not inserted:
+                # 중복은 잠금 아래에서 위가 걸렀으므로, 0행이면 상품에 PRIMARY 재료가 없는 것입니다.
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=NO_PRIMARY_INGREDIENT)
 
     return ApiResponse.success(
         FridgeItemSummary(
