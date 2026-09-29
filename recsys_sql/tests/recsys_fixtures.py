@@ -289,6 +289,42 @@ async def seed_child_ingredient(
     return ingredient_id
 
 
+async def most_guided_single_primary_product(conn: AsyncConnection) -> int | None:
+    """적재분에서 보관법 조회가 가장 많은 줄을 내는 단일 원물 상품. 없으면 None.
+
+    예전 보관법 테스트는 "같은 (재료, 장소, 상황) 지침이 여러 줄인 상품" 을 골랐습니다. 0012 부터는
+    그런 중복을 DB 가 `uq_storage_guideline_query` 로 막아 그 상품이 없고, 조건을 못 채운 선택이
+    PRIMARY 가 둘인 상품(쿼리가 일부러 비움)으로 떨어져 검사가 무의미해졌습니다.
+
+    그래서 쿼리가 실제로 여러 줄을 내는 상품을 고릅니다. 부위에 지침이 없으면 부모 지침을 쓰는
+    경로와 상품 보관 장소 필터까지 쿼리와 같게 셉니다.
+    """
+    return (
+        await conn.execute(
+            text(
+                """
+                SELECT pi.product_id
+                FROM product_ingredient pi
+                JOIN product p            ON p.product_id = pi.product_id
+                JOIN ingredient i         ON i.ingredient_id = pi.ingredient_id
+                JOIN storage_guideline sg ON sg.ingredient_id IN (i.ingredient_id, i.parent_ingredient_id)
+                WHERE pi.role = 'PRIMARY'
+                  AND (p.storage_type IS NULL OR sg.storage_location = p.storage_type)
+                  AND 1 = (
+                      SELECT COUNT(*)
+                      FROM product_ingredient pick
+                      WHERE pick.product_id = pi.product_id
+                        AND pick.role = 'PRIMARY'
+                  )
+                GROUP BY pi.product_id
+                ORDER BY COUNT(*) DESC, pi.product_id
+                LIMIT 1
+                """
+            )
+        )
+    ).scalar()
+
+
 async def seed_fridge(conn: AsyncConnection, ids: SeedIds) -> None:
     """냉장고 3칸. **두부는 유통기한이 지났습니다**(days=-1).
 

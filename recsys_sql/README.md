@@ -56,7 +56,7 @@ serving      asyncpg 풀 + FastAPI 엔드포인트
 ## 시작하기
 
 ```bash
-cp recsys_sql/.env.example recsys_sql/.env   # 본인 Neon 브랜치 URL 을 넣기
+cp recsys_sql/.env.example recsys_sql/.env   # 공용 dev 브랜치 URL 을 넣기
 uv sync --all-packages --all-groups
 uv run recsys-sql check-db
 uv run recsys-sql list
@@ -92,7 +92,7 @@ src/recsys_sql/queries/
 **서빙은 `QUERY_OWNER` 와 무관하게 카탈로그 전체를 봅니다.** 누가 쓴 쿼리인지와 상관없이
 이름으로 찾아야 하기 때문입니다. 그래서 쿼리 이름은 폴더가 달라도 레포 전체에서 유일합니다.
 
-DB 도 각자 Neon 브랜치를 씁니다. main 브랜치에 직접 붙지 마세요.
+DB 는 공용 dev 브랜치를 씁니다(루트 README). production 브랜치에 직접 붙지 마세요.
 테스트가 롤백되더라도 시퀀스와 통계는 되돌아가지 않습니다.
 
 ## 쿼리 파일 규약

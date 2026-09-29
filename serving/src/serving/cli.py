@@ -49,11 +49,13 @@ def command_check_db(_: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     """uvicorn 으로 서버를 띄웁니다."""
     settings = get_settings()
+    # 액세스 로그는 앱이 JSON 한 줄로 남깁니다. uvicorn 평문 액세스 로그는 이미지와 같게 끕니다.
     uvicorn.run(
         "serving.app:app",
         host=args.host or settings.host,
         port=args.port or settings.port,
         reload=args.reload,
+        access_log=False,
     )
     return 0
 

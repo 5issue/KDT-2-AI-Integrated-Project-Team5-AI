@@ -51,7 +51,7 @@ uv run serving check-db     # 풀을 만들어 왕복 한 번 확인
 uv run serving run          # http://127.0.0.1:8000 (자동 리로드)
 ```
 
-`ENVIRONMENT=local` 일 때만 `/docs` 와 `/openapi.json` 이 열립니다.
+`/docs` 와 `/openapi.json` 은 `ENVIRONMENT` 가 `local`·`dev` 일 때 열리고 `prod` 에서만 닫힙니다.
 
 ## 엔드포인트
 
@@ -91,7 +91,7 @@ liveness 와 readiness 를 나눈 이유는, DB 가 잠깐 흔들릴 때 컨테�
   DB 까지 가기 전에 422 로 걸립니다.
 - 로그와 헬스 응답에 호스트/자격증명을 남기지 않습니다. DSN 은 `mask_dsn` 으로 가리고,
   연결 실패는 메시지 대신 예외 타입만 남깁니다.
-- `ENVIRONMENT` 가 `local` 이 아니면 `/docs` 와 `/openapi.json` 을 닫습니다.
+- `ENVIRONMENT` 가 `prod` 일 때만 `/docs` 와 `/openapi.json` 을 닫습니다. `dev` 는 FE 연동 확인용으로 엽니다.
 
 ## 테스트
 

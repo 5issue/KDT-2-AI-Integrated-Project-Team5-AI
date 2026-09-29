@@ -49,7 +49,7 @@ LangGraph + pgvector 기반 RAG 실험 환경입니다.
 ## 시작하기
 
 ```bash
-cp rag_lab/.env.example rag_lab/.env   # 본인 Neon 브랜치 URL 과 API 키
+cp rag_lab/.env.example rag_lab/.env   # 공용 dev 브랜치 URL 과 API 키
 uv sync --all-packages --all-groups
 uv run rag-lab check-db                # pgvector 설치 여부까지 확인
 uv run rag-lab route "대파 어떻게 보관해"   # DB/API 없이 라우팅만 확인
@@ -187,8 +187,8 @@ experiments/
 결과가 `experiments/<owner>/results/` 에 쌓입니다. 결과 파일이 각자 폴더로 갈려서
 세 명이 같은 파일을 건드릴 일이 없습니다.
 
-DB 도 각자 Neon 브랜치를 씁니다. 인덱스를 만들거나 지우는 실험이 잦은데,
-main 브랜치에 직접 붙으면 다른 사람 실험이 같이 흔들립니다.
+DB 는 공용 dev 브랜치를 씁니다(루트 README). 인덱스를 만들거나 지우는 실험은 다른 사람 실험까지
+흔들므로 임시 브랜치를 따서 하고 끝나면 지웁니다.
 
 ## 실험 돌리기
 

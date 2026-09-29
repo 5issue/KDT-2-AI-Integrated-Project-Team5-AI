@@ -35,5 +35,5 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "db: 실제 Neon DB 연결이 필요한 테스트 (DATABASE_URL 없으면 skip)",
-    "llm: 실제 OpenAI API 호출이 필요한 테스트 (기본 skip)",
+    "llm: 실제 LLM API 호출 테스트(과금). --run-llm 을 줄 때만 돕니다",
 ]

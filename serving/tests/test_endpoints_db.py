@@ -2,6 +2,10 @@
 
 여기서 잡으려는 것은 "promoted SQL 이 실제 스키마에서 도는가" 입니다.
 결과가 0건이어도 통과입니다. 데이터가 아니라 쿼리와 응답 스키마를 검증합니다.
+
+lifespan 이 만든 실제 풀을 쓰므로 **읽기만 합니다.** 쓰기가 필요한 검사(My냉장고 CRUD 등)는
+롤백되는 `test_api_integration.py` 에 있습니다. 예전 `test_fridge_crud_cycle` 은 공용 DB 에 실제로
+커밋했다가 지우는 방식이라, 중간에 실패하면 행이 남아 그쪽으로 옮기고 지웠습니다.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ async def test_my_recipes_query_runs(live_client: AsyncClient) -> None:
     response = await live_client.get(
         "/api/v1/recommendations/my-recipes",
         headers={"X-User-Id": "1"},
-        params={"min_match_rate": 0.5, "limit": 5},
+        params={"limit": 5},
     )
 
     assert response.status_code == 200
@@ -131,63 +135,3 @@ async def test_bubble_products_query_runs(live_client: AsyncClient) -> None:
 
     missing_bubble = await live_client.get("/api/v1/recommendations/products", params={"bubble_id": "NO_SUCH_BUBBLE"})
     assert missing_bubble.status_code == 404
-
-
-async def test_fridge_crud_cycle(live_client: AsyncClient) -> None:
-    """추가 -> 조회 -> 수정 -> 삭제 한 바퀴. 테스트 전용 user id 로 돌고 끝나면 지웁니다."""
-    # app_user 에 실존하는 시드 사용자를 씁니다 (user_fridge 의 FK 때문).
-    user = {"X-User-Id": "9200000020"}
-    # missing-products 가 추천하는 상품은 정의상 PRIMARY 재료가 연결되어 있어
-    # 냉장고에 담을 수 있습니다. 거기서 후보를 얻습니다.
-    candidates: list[int] = []
-    # 적재분의 recipe_id 는 1 부터가 아닙니다 (현재 1092~). 앞쪽 구간을 넉넉히 훑습니다.
-    for recipe_id in list(range(1, 5)) + list(range(1092, 1112)):
-        response = await live_client.get(f"/api/v1/recipes/{recipe_id}/missing-products")
-        if response.status_code != 200:
-            continue
-        for ingredient in response.json()["data"]["missing_ingredients"]:
-            candidates.extend(product["product_id"] for product in ingredient["products"])
-        if candidates:
-            break
-    if not candidates:
-        pytest.skip("담을 수 있는 상품을 찾지 못했습니다")
-
-    product_id = candidates[0]
-    created = await live_client.post(
-        "/api/v1/users/me/fridge",
-        headers=user,
-        json={"product_id": product_id, "quantity": 500, "unit": "g"},
-    )
-    assert created.status_code == 200, created.text
-
-    try:
-        listing = await live_client.get("/api/v1/users/me/fridge", headers=user)
-        assert listing.status_code == 200
-        items = listing.json()["data"]["items"]
-        assert any(item["product"]["product_id"] == product_id for item in items)
-
-        duplicate = await live_client.post(
-            "/api/v1/users/me/fridge",
-            headers=user,
-            json={"product_id": product_id, "quantity": 1, "unit": "개"},
-        )
-        assert duplicate.status_code == 409
-        assert duplicate.json()["error"] == "CONFLICT"
-
-        patched = await live_client.patch(
-            f"/api/v1/users/me/fridge/{product_id}",
-            headers=user,
-            json={"quantity": 300},
-        )
-        assert patched.status_code == 200
-        assert patched.json()["data"]["quantity"] == 300
-    finally:
-        deleted = await live_client.delete(f"/api/v1/users/me/fridge/{product_id}", headers=user)
-        assert deleted.status_code == 200
-        assert deleted.json()["data"] is None
-
-    gone = await live_client.delete(f"/api/v1/users/me/fridge/{product_id}", headers=user)
-    assert gone.status_code == 404
-
-    patch_gone = await live_client.patch(f"/api/v1/users/me/fridge/{product_id}", headers=user, json={"quantity": 1})
-    assert patch_gone.status_code == 404

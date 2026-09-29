@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from recsys_fixtures import SeedIds, seed_child_ingredient
+from recsys_fixtures import SeedIds, most_guided_single_primary_product, seed_child_ingredient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -132,24 +132,14 @@ async def test_one_row_per_location_and_context(db_conn: AsyncConnection) -> Non
     """같은 (장소, 상황)이 여러 번 나오면 화면이 같은 칸을 반복해서 찍습니다.
 
     FoodKeeper 가 한 재료를 여러 갈래로 나눠 둬서(햄 하나에 19줄) 그대로 내보내면
-    `냉장 · 구매후` 만 열아홉 번 나옵니다.
+    `냉장 · 구매후` 만 열아홉 번 나옵니다. 0012 부터 원천 중복은 DB 가 막으므로, 부모 지침으로
+    넘어가는 경로까지 포함해 쿼리가 가장 많은 줄을 내는 상품으로 봅니다.
     """
-    product_id = await scalar(
-        db_conn,
-        """
-        SELECT pi.product_id
-        FROM product_ingredient pi
-        JOIN storage_guideline sg ON sg.ingredient_id = pi.ingredient_id
-        WHERE pi.role = 'PRIMARY'
-        GROUP BY pi.product_id, sg.storage_location, sg.storage_context
-        HAVING COUNT(*) > 1
-        ORDER BY COUNT(*) DESC
-        LIMIT 1
-        """,
-    )
-    assert product_id is not None, "중복이 있는 상품이 적재분에 없습니다"
+    product_id = await most_guided_single_primary_product(db_conn)
+    assert product_id is not None, "보관법이 붙는 단일 원물 상품이 적재분에 없습니다"
 
     rows = await fetch(db_conn, product_id)
+    assert rows, "고른 상품의 보관법이 비어 검사가 무의미합니다"
     slots = [(row["storage_location"], row["storage_context"]) for row in rows]
 
     assert len(slots) == len(set(slots))
@@ -171,6 +161,11 @@ async def test_conflicting_durations_return_the_shortest(db_conn: AsyncConnectio
                 JOIN product p ON p.product_id = pi.product_id
                 WHERE pi.role = 'PRIMARY'
                   AND (p.storage_type IS NULL OR sg.storage_location = p.storage_type)
+                  -- PRIMARY 가 둘인 상품은 쿼리가 일부러 비웁니다. 고르면 빈 결과와 비교하게 됩니다.
+                  AND 1 = (
+                      SELECT COUNT(*) FROM product_ingredient pick
+                      WHERE pick.product_id = pi.product_id AND pick.role = 'PRIMARY'
+                  )
                 GROUP BY pi.product_id, sg.storage_location, sg.storage_context
                 HAVING COUNT(DISTINCT (sg.duration_min, sg.duration_max, sg.duration_unit)) > 1
                 ORDER BY pi.product_id
@@ -180,7 +175,9 @@ async def test_conflicting_durations_return_the_shortest(db_conn: AsyncConnectio
         )
     ).first()
     if row is None:
-        pytest.skip("기간이 어긋나는 중복이 적재분에 없습니다")
+        # 0012 의 uq_storage_guideline_query 가 같은 (재료, 장소, 상황)을 한 줄로 막아, 0012 이후 DB 에서는
+        # 여기로 옵니다. 대표를 짧은 기간으로 고르는 규칙은 적재기 테스트(test_load_storage_guideline)가 봅니다.
+        pytest.skip("기간이 어긋나는 중복이 적재분에 없습니다 (0012 이후에는 DB 제약이 막음)")
 
     days = """
         COALESCE(duration_max, duration_min) * CASE duration_unit
@@ -223,14 +220,23 @@ async def test_child_without_same_location_guideline_falls_back_to_parent(
     await db_conn.execute(
         text("UPDATE product SET storage_type = '냉장' WHERE product_id = :id"), {"id": seeded.pork_a}
     )
-    for ingredient_id, location in ((seeded.pork, "냉장"), (neck, "냉동")):
+    # storage_id 와 source_slot 을 직접 줍니다. 0013 이 만든 표는 storage_id 가 GENERATED ALWAYS identity 라
+    # OVERRIDING SYSTEM VALUE 가 있어야 값을 받고, KIPIL 에서 올라온 표는 기본값이 없고 source_slot 에 원천
+    # 값 CHECK 가 있습니다. 이 형태면 두 표에서 모두 들어갑니다.
+    guidelines = ((seeded.pork, "냉장", "refrigerate"), (neck, "냉동", "freeze"))
+    for offset, (ingredient_id, location, slot) in enumerate(guidelines):
         await db_conn.execute(
             text(
-                "INSERT INTO storage_guideline "
-                "(ingredient_id, source_food_name, source_slot, storage_location, storage_context, duration_text) "
-                "VALUES (:ingredient_id, 'TEST', 'TEST', :location, '일반', '테스트')"
+                "INSERT INTO storage_guideline (storage_id, ingredient_id, source_food_name, source_slot, "
+                "storage_location, storage_context, duration_text) OVERRIDING SYSTEM VALUE "
+                "VALUES (:storage_id, :ingredient_id, 'TEST', :slot, :location, '일반', '테스트')"
             ),
-            {"ingredient_id": ingredient_id, "location": location},
+            {
+                "storage_id": seeded.pork + 5000 + offset,
+                "ingredient_id": ingredient_id,
+                "slot": slot,
+                "location": location,
+            },
         )
 
     rows = await fetch(db_conn, seeded.pork_a)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -37,6 +38,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         if own_tests in Path(str(item.path)).resolve().parents:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _propagate_logs_to_caplog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``caplog`` 은 루트 로거에서 받습니다. 같은 세션에서 serving 이 import 되면 서빙의 로깅 설정이
+    ``rag_lab`` 로거의 전파를 끄므로(중복 출력 방지), 테스트 동안에만 다시 켭니다."""
+    monkeypatch.setattr(logging.getLogger("rag_lab"), "propagate", True)
 
 
 @pytest.fixture

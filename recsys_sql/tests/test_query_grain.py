@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from recsys_fixtures import SeedIds
+from recsys_fixtures import SeedIds, most_guided_single_primary_product
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -43,6 +43,8 @@ GRAIN: dict[str, tuple[str, ...]] = {
     "recipe_detail": ("recipe_id",),
     "recipe_missing_ingredients": ("ingredient_id",),
     "reorder_candidates": ("product_id",),
+    "user_favorite_recipes": ("recipe_id",),
+    "user_recent_recipes": ("recipe_id",),
 }
 
 
@@ -58,30 +60,19 @@ def test_every_query_declares_its_grain() -> None:
 
 async def params_for(conn: AsyncConnection, name: str, seeded: SeedIds) -> dict[str, Any]:
     """시드 사용자와 실제 적재분을 섞어 비어 있지 않은 결과를 만듭니다."""
-    product_id = (
+    product_id = await most_guided_single_primary_product(conn) or seeded.tofu_a
+
+    # 찜·조회 기록은 seed_minimal 에 없어 여기서 넣습니다. 표는 migration 0017 이 만듭니다.
+    if name == "user_favorite_recipes":
         await conn.execute(
-            text(
-                """
-                SELECT pi.product_id
-                FROM product_ingredient pi
-                JOIN storage_guideline sg ON sg.ingredient_id = pi.ingredient_id
-                WHERE pi.role = 'PRIMARY'
-                  -- PRIMARY 가 둘 이상인 상품은 보관법 쿼리가 일부러 제외합니다.
-                  -- 그런 상품을 고르면 결과가 비어 검사가 무의미해집니다.
-                  AND 1 = (
-                      SELECT COUNT(*)
-                      FROM product_ingredient pick
-                      WHERE pick.product_id = pi.product_id
-                        AND pick.role = 'PRIMARY'
-                  )
-                GROUP BY pi.product_id, sg.storage_location, sg.storage_context
-                HAVING COUNT(*) > 1
-                ORDER BY COUNT(*) DESC
-                LIMIT 1
-                """
-            )
+            text("INSERT INTO user_recipe_favorite (user_id, recipe_id) VALUES (:u, :r1), (:u, :r2)"),
+            {"u": seeded.user, "r1": seeded.kimchi_stew, "r2": seeded.tofu_braise},
         )
-    ).scalar() or seeded.tofu_a
+    if name == "user_recent_recipes":
+        await conn.execute(
+            text("INSERT INTO user_recipe_view (user_id, recipe_id) VALUES (:u, :r1), (:u, :r2)"),
+            {"u": seeded.user, "r1": seeded.kimchi_stew, "r2": seeded.tofu_braise},
+        )
 
     return {
         "bubble_candidate_counts": {},
@@ -117,6 +108,8 @@ async def params_for(conn: AsyncConnection, name: str, seeded: SeedIds) -> dict[
             "user_id": seeded.user,
         },
         "reorder_candidates": {"user_id": seeded.user, "days_since": 30, "max_results": 500},
+        "user_favorite_recipes": {"user_id": seeded.user, "max_results": 500},
+        "user_recent_recipes": {"user_id": seeded.user, "max_results": 500},
     }[name]
 
 

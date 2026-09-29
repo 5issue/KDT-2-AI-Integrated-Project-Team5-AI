@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,7 +20,11 @@ class HealthResponse(BaseModel):
 
 
 class DbHealthResponse(BaseModel):
-    """readiness 응답. 호스트나 자격증명은 담지 않습니다."""
+    """readiness 응답. 호스트나 자격증명은 담지 않습니다.
+
+    ``reason_llm`` 은 추천 이유 LLM 이 켜져 있는지입니다. 부가 기능이라 ``ok`` 판정에는 넣지 않습니다.
+    꺼져 있으면(키 없음, 재료 사전 없음) my-recipes 는 200 으로 규칙 문구만 냅니다.
+    """
 
     ok: bool
     latency_ms: float
@@ -30,6 +34,7 @@ class DbHealthResponse(BaseModel):
     pool_idle: int | None = None
     detail: str | None = None
     notes: list[str] = Field(default_factory=list)
+    reason_llm: Literal["on", "off"] = "off"
 
 
 class MissingIngredientRef(BaseModel):
@@ -508,3 +513,60 @@ class FridgeItemSummary(BaseModel):
     quantity: float
     unit: str
     expires_at: datetime | None = None
+
+
+class RecipeCard(BaseModel):
+    """레시피 카드 한 장 (찜한 / 최근 본 목록 공통). 상세 컬럼은 RECIPE-01 이 냅니다."""
+
+    recipe_id: int
+    name: str
+    image_url: str | None = None
+    difficulty: str | None = None
+    cook_time_min: int | None = None
+    servings: int | None = None
+
+
+class FavoriteRecipeItem(RecipeCard):
+    """찜한 레시피 한 건. 목록은 favorited_at 내림차순입니다."""
+
+    favorited_at: datetime
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> FavoriteRecipeItem:
+        return cls.model_validate(row)
+
+
+class FavoriteRecipeListResponse(BaseModel):
+    """찜한 레시피 목록 data."""
+
+    items: list[FavoriteRecipeItem]
+
+
+class FavoriteRecipeSummary(BaseModel):
+    """찜 추가 응답 data."""
+
+    recipe_id: int
+    favorited_at: datetime
+
+
+class RecentRecipeItem(RecipeCard):
+    """최근 본 레시피 한 건. 목록은 viewed_at 내림차순이고 같은 레시피는 한 번만 나옵니다."""
+
+    viewed_at: datetime
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> RecentRecipeItem:
+        return cls.model_validate(row)
+
+
+class RecentRecipeListResponse(BaseModel):
+    """최근 본 레시피 목록 data."""
+
+    items: list[RecentRecipeItem]
+
+
+class RecentRecipeSummary(BaseModel):
+    """조회 기록 응답 data."""
+
+    recipe_id: int
+    viewed_at: datetime

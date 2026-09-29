@@ -19,3 +19,8 @@
 ## docs/ 서브폴더
 
 api, architecture, backlog, decisions 등 필요시 문서들을 주제에 맞게 모아서 정리한다.
+
+- `api/api-v1.md` — AI 파트 API v1 명세 정본
+- `architecture/` — mermaid 구조도 (전체 + 폴더별)
+- `deploy/deployment-eks.md` — serving 이미지 빌드, ECR 푸시, EKS 환경변수 전달
+- `backlog/` — 폴더별 남은 일

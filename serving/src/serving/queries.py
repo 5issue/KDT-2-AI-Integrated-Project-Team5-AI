@@ -36,6 +36,8 @@ ALLOWED_QUERIES = frozenset(
         "product_recipes",
         "product_storage_guideline",
         "recipe_detail",
+        "user_favorite_recipes",
+        "user_recent_recipes",
     }
 )
 
