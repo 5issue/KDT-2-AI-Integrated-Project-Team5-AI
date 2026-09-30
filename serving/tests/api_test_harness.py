@@ -248,8 +248,8 @@ class Api:
     async def patch(self, path: str, body: Any, *, user: int | None = None) -> Reply:
         return await self.request("PATCH", path, user=user, json=body)
 
-    async def delete(self, path: str, *, user: int | None = None) -> Reply:
-        return await self.request("DELETE", path, user=user)
+    async def delete(self, path: str, body: Any = None, *, user: int | None = None) -> Reply:
+        return await self.request("DELETE", path, user=user, json=body)
 
 
 @dataclass(slots=True)
