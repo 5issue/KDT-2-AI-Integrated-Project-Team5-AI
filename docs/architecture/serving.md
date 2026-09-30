@@ -67,7 +67,7 @@ sequenceDiagram
 | 있음 | 없음 |
 | --- | --- |
 | `/health`, `/health/db` (`reason_llm` 켜짐 여부 포함) | `/metrics` (지연·에러율은 JSON 액세스 로그로 집계) |
-| 읽기 8개: HOME-01, RECO-01/02, PROD-01~03, RECIPE-01/03 | 상품 `image_url` 응답 필드 (0015 로 컬럼만 생김) |
+| 읽기 8개: HOME-01, RECO-01/02, PROD-01~03, RECIPE-01/03 | 냉장고 밖 상품 응답의 `image_url` (PROD-01, RECIPE-03 등) |
 | My냉장고 4개: 목록·추가·수정·삭제 (FRIDGE-01~04) | 여러 파드가 공유하는 rate limit (지금은 프로세스 메모리) |
 | 추천 이유 LLM (앞 3장, `rag_lab.reason_service`, 꺼지면 스스로 다시 켬) | |
 | envelope, 풀, 화이트리스트, rate limit, 요청 id·JSON 액세스 로그 | |
