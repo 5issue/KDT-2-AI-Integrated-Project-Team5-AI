@@ -293,7 +293,11 @@ def command_seed_demo(args: argparse.Namespace) -> int:
 
 def command_export_products(args: argparse.Namespace) -> int:
     """BE 동기화용 category/product DML 파일을 씁니다. DB 는 읽기만 합니다."""
-    report = asyncio.run(run_export_products(settings=get_settings(), out_path=args.out))
+    report = asyncio.run(
+        run_export_products(
+            settings=None if args.from_dump else get_settings(), out_path=args.out, dump_path=args.from_dump
+        )
+    )
     print(report.render())
     return 0
 
@@ -421,6 +425,12 @@ def build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export-products", help="BE product-service 동기화용 category/product DML 내보내기")
     export.add_argument(
         "--out", type=Path, default=None, help="출력 경로 (기본 data_pipeline/sql/export/product_dml.sql)"
+    )
+    export.add_argument(
+        "--from-dump",
+        type=Path,
+        default=None,
+        help="DB 대신 plain pg_dump 파일(COPY 블록)에서 읽기. production 백업으로 정본을 만들 때",
     )
     export.set_defaults(func=command_export_products)
 

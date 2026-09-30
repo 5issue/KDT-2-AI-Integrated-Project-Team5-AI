@@ -12,8 +12,13 @@ BE 에 넘기는 것을 한 곳에 둡니다. 코드가 바뀌면 이 문서를 
 
 ## 1. 상품 DML
 
-`uv run data-pipeline export-products` 가 dev DB 의 `category`·`product` 를 읽어
+`uv run data-pipeline export-products` 가 `category`·`product` 를 읽어
 `data_pipeline/sql/export/product_dml.sql` 로 씁니다 (읽기만 하고 DB 는 바꾸지 않습니다).
+
+**정본은 production 백업에서 만듭니다.** 팀장이 BE 에 넘긴 `production_backup.sql`(plain pg_dump)
+을 `--from-dump <경로>` 로 넘기면 그 파일의 COPY 블록에서 읽습니다. 2026-09-30 대조 결과 dev 브랜치와
+백업은 상품 2,554행의 id·가격·재고·이름·카테고리·보관·브랜드가 전부 같고, `image_url` 만 dev 는 0건,
+백업은 2,500건이라 백업으로 만든 파일을 커밋했습니다. 옵션 없이 돌리면 `DATABASE_URL` 의 DB 를 읽습니다.
 
 - 표준 SQL `INSERT ... VALUES (...), (...)` 이며 PostgreSQL 전용 문법이 없어 BE DB 종류와 무관합니다.
 - 컬럼: `category(category_id, category_type, parent_id, name, depth)`,

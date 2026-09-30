@@ -5,8 +5,10 @@ BE 가 그대로 적재하는 파일이라 리터럴 이스케이프가 틀리�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,6 +18,8 @@ from data_pipeline.load.product_export import (
     PRODUCT_COLUMNS,
     ROWS_PER_STATEMENT,
     UnsafeValueError,
+    parse_dump,
+    read_copy_block,
     render_dml,
     render_inserts,
     sql_literal,
@@ -104,3 +108,105 @@ def test_render_dml_orders_category_before_product() -> None:
     # PostgreSQL 전용 문법이 섞이지 않았는지
     assert "::" not in text.replace("https://", "").replace("http://", "")
     assert "ON CONFLICT" not in text
+
+
+def _copy(table: str, columns: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    """COPY 블록 하나. 값은 탭으로 잇고 NULL 은 \\N 입니다."""
+    body = "\n".join("\t".join(row) for row in rows)
+    return f"COPY public.{table} ({', '.join(columns)}) FROM stdin;\n{body}\n\\.\n"
+
+
+PRODUCT_DUMP_COLUMNS = [
+    *"product_id sku name category_id product_type storage_type origin_country weight_g unit_count price".split(),
+    *"stock_quantity is_active metadata embedding created_at updated_at source_type source_product_id".split(),
+    "brand_name",
+    "image_url",
+]
+DUMP = (
+    "--\n-- PostgreSQL database dump\n--\n\n"
+    + _copy(
+        "category",
+        "category_id category_type parent_id name depth metadata created_at".split(),
+        [
+            ["221", "FOOD", "\\N", "양념육", "0", "{}", "2026-09-10 07:18:20+00"],
+            ["364", "FOOD", "221", "돼지고기", "1", "{}", "2026-09-10 07:18:20+00"],
+        ],
+    )
+    + "\n"
+    + _copy(
+        "product",
+        PRODUCT_DUMP_COLUMNS,
+        [
+            [
+                "749",
+                "M00000053948",
+                "[롯데] 몽쉘 생크림케이크 408g",
+                "364",
+                "PROCESSED_FOOD",
+                "\\N",
+                "상품설명/상세정보 참조",
+                "408.00",
+                "\\N",
+                "5040.00",
+                "359",
+                "t",
+                '{"source_url": "https://www.kurly.com/goods/1000175876"}',
+                "[0.1,0.2]",
+                "2026-09-10 07:18:20+00",
+                "2026-09-21 06:58:53+00",
+                "KURLY_CRAWL",
+                "1000175876",
+                "롯데웰푸드",
+                "https://img.example/749.jpg",
+            ],
+            [
+                "750",
+                "\\N",
+                "D'Amico 소스",
+                "\\N",
+                "RAW_MATERIAL",
+                "냉장",
+                "\\N",
+                "\\N",
+                "1",
+                "3000.00",
+                "\\N",
+                "f",
+                "{}",
+                "\\N",
+                "2026-09-10 07:18:20+00",
+                "2026-09-21 06:58:53+00",
+                "KURLY_CRAWL",
+                "2",
+                "\\N",
+                "\\N",
+            ],
+        ],
+    )
+)
+
+
+def test_read_copy_block(tmp_path: Path) -> None:
+    dump = tmp_path / "backup.sql"
+    dump.write_text(DUMP, encoding="utf-8")
+    columns, rows = read_copy_block(dump, "category")
+    assert columns[:3] == ["category_id", "category_type", "parent_id"]
+    assert rows[0]["parent_id"] is None
+    assert rows[1]["name"] == "돼지고기"
+    with pytest.raises(ValueError, match="COPY 블록이 없습니다"):
+        read_copy_block(dump, "recipe")
+
+
+def test_parse_dump_matches_db_row_shape(tmp_path: Path) -> None:
+    dump = tmp_path / "backup.sql"
+    dump.write_text(DUMP, encoding="utf-8")
+    categories, products, label = parse_dump(dump)
+    assert label == "backup.sql (KURLY_CRAWL)"
+    assert categories[0] == category()
+    assert products[0] == product(image_url="https://img.example/749.jpg")
+    assert products[1]["is_active"] is False
+    assert products[1]["source_url"] is None
+    assert products[1]["price"] == Decimal("3000.00")
+    text = render_dml(categories, products, generated_at=NOW, source_label=label)
+    assert "'D''Amico 소스'" in text
+    assert "'https://img.example/749.jpg'" in text

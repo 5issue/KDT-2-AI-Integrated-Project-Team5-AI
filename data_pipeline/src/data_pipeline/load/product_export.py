@@ -15,6 +15,14 @@ PostgreSQL 전용 문법(`::jsonb`, `E''`, `ON CONFLICT`)을 쓰지 않습니다
 컬럼을 옮겨 적재합니다. 그래서 `metadata`, `embedding`, 시각 컬럼은 빼고, 크롤 원천 URL 만
 `source_url` 로 꺼냅니다.
 
+## 원천 두 가지
+
+- **DB**(기본): 설정의 `DATABASE_URL` 에서 읽습니다.
+- **pg_dump 파일**(`--from-dump`): 팀장이 BE 에 넘긴 `production_backup.sql` 같은 plain 덤프의
+  `COPY public.category` / `COPY public.product` 블록을 읽습니다. 2026-09-30 확인 결과 dev 브랜치는
+  `image_url` 이 0건이고 production 백업은 2,500건이라, BE 에 주는 정본은 백업에서 만듭니다.
+  나머지 컬럼은 두 원천이 행 단위로 같았습니다.
+
 `product` 는 `category_id` 로 `category` 를 참조하므로 category 문장이 먼저 나옵니다.
 문자열은 작은따옴표를 두 번 써서 이스케이프하고, 그 밖의 제어 문자는 원천에 없는 것을 검증합니다
 (있으면 실패시켜 조용히 깨진 파일을 넘기지 않습니다).
@@ -22,6 +30,7 @@ PostgreSQL 전용 문법(`::jsonb`, `E''`, `ON CONFLICT`)을 쓰지 않습니다
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -85,6 +94,91 @@ REFERENCE_DDL = """\
 -- product_id 와 price 는 AI 응답(RECO-01, RECIPE-03 등)의 값과 같습니다. 그대로 쓰면 매핑이 필요 없습니다.
 -- stock_quantity 는 초기값입니다. 주문이 일어나면 AI DB 와 갈라지며 화면 표시는 BE 값을 씁니다.
 """
+
+
+COPY_PREFIX = "COPY public."
+COPY_END = "\\."
+# COPY text 형식의 이스케이프. 덤프에 없는 것은 그대로 두어 값이 바뀌지 않게 합니다.
+_COPY_ESCAPES = {"\\\\": "\\", "\\t": "\t", "\\n": "\n", "\\r": "\r", "\\b": "\b", "\\f": "\f", "\\v": "\v"}
+
+
+def _copy_field(raw: str) -> str | None:
+    if raw == "\\N":
+        return None
+    for escaped, plain in _COPY_ESCAPES.items():
+        raw = raw.replace(escaped, plain)
+    return raw
+
+
+def read_copy_block(path: Path, table: str) -> tuple[list[str], list[dict[str, str | None]]]:
+    """plain pg_dump 에서 `COPY public.<table> (...) FROM stdin;` 블록 하나를 읽습니다. 값은 전부 문자열입니다."""
+    prefix = f"{COPY_PREFIX}{table} ("
+    columns: list[str] = []
+    rows: list[dict[str, str | None]] = []
+    inside = False
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not inside:
+                if line.startswith(prefix):
+                    columns = line[len(prefix) : line.index(")")].split(", ")
+                    inside = True
+                continue
+            if line.startswith(COPY_END):
+                break
+            rows.append(dict(zip(columns, (_copy_field(v) for v in line.rstrip("\n").split("\t")), strict=True)))
+    if not columns:
+        raise ValueError(f"덤프에 {table} 의 COPY 블록이 없습니다: {path}")
+    return columns, rows
+
+
+def _int(value: str | None) -> int | None:
+    return None if value is None else int(value)
+
+
+def _decimal(value: str | None) -> Decimal | None:
+    return None if value is None else Decimal(value)
+
+
+def parse_dump(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """덤프에서 (categories, products, source_label) 을 DB 조회 결과와 같은 모양으로 만듭니다."""
+    _, raw_categories = read_copy_block(path, "category")
+    _, raw_products = read_copy_block(path, "product")
+    categories: list[dict[str, Any]] = [
+        {
+            "category_id": _int(r["category_id"]),
+            "category_type": r["category_type"],
+            "parent_id": _int(r["parent_id"]),
+            "name": r["name"],
+            "depth": _int(r["depth"]),
+        }
+        for r in raw_categories
+    ]
+    products: list[dict[str, Any]] = []
+    for r in raw_products:
+        metadata = json.loads(r["metadata"] or "{}")
+        products.append(
+            {
+                "product_id": _int(r["product_id"]),
+                "sku": r["sku"],
+                "name": r["name"],
+                "category_id": _int(r["category_id"]),
+                "product_type": r["product_type"],
+                "storage_type": r["storage_type"],
+                "origin_country": r["origin_country"],
+                "weight_g": _decimal(r["weight_g"]),
+                "unit_count": _int(r["unit_count"]),
+                "price": _decimal(r["price"]),
+                "stock_quantity": _int(r["stock_quantity"]),
+                "is_active": r["is_active"] == "t",
+                "brand_name": r["brand_name"],
+                "image_url": r["image_url"],
+                "source_url": metadata.get("source_url"),
+            }
+        )
+    categories.sort(key=lambda c: c["category_id"])
+    products.sort(key=lambda p: p["product_id"])
+    sources = sorted({r["source_type"] for r in raw_products if r["source_type"]})
+    return categories, products, f"{path.name} ({','.join(sources) or 'unknown'})"
 
 
 class UnsafeValueError(ValueError):
@@ -188,16 +282,25 @@ async def read_connection(settings: Settings) -> AsyncIterator[asyncpg.Connectio
             yield conn
 
 
-async def run_export_products(*, settings: Settings | None = None, out_path: Path | None = None) -> ExportReport:
-    """DB 에서 category/product 를 읽어 DML 파일을 씁니다. 읽기만 하고 DB 는 바꾸지 않습니다."""
-    settings = settings or get_settings()
-    out_path = out_path or DEFAULT_OUT_PATH
-    async with read_connection(settings) as conn:
-        categories = await fetch_rows(conn, CATEGORY_SQL)
-        products = await fetch_rows(conn, PRODUCT_SQL)
-        source = await conn.fetchval("SELECT string_agg(DISTINCT source_type, ',') FROM product")
+async def run_export_products(
+    *, settings: Settings | None = None, out_path: Path | None = None, dump_path: Path | None = None
+) -> ExportReport:
+    """category/product 를 읽어 DML 파일을 씁니다. `dump_path` 가 있으면 DB 대신 pg_dump 파일을 읽습니다.
 
-    text = render_dml(categories, products, generated_at=datetime.now(UTC), source_label=str(source or "unknown"))
+    DB 는 읽기만 하고 바꾸지 않습니다.
+    """
+    out_path = out_path or DEFAULT_OUT_PATH
+    if dump_path is not None:
+        categories, products, source_label = parse_dump(dump_path)
+    else:
+        settings = settings or get_settings()
+        async with read_connection(settings) as conn:
+            categories = await fetch_rows(conn, CATEGORY_SQL)
+            products = await fetch_rows(conn, PRODUCT_SQL)
+            source = await conn.fetchval("SELECT string_agg(DISTINCT source_type, ',') FROM product")
+        source_label = f"DB ({source or 'unknown'})"
+
+    text = render_dml(categories, products, generated_at=datetime.now(UTC), source_label=source_label)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(text, encoding="utf-8")
     return ExportReport(
