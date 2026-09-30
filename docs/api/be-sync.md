@@ -3,12 +3,12 @@
 2026-09-29 BE 답변(product-service, order-service, auth)에 맞춰 AI 서버 쪽에서 정한 것과
 BE 에 넘기는 것을 한 곳에 둡니다. 코드가 바뀌면 이 문서를 같이 고칩니다.
 
-| 논점 | 결정 | AI 쪽 산출물 |
-| --- | --- | --- |
-| 1. 상품 id 매핑 | BE 가 AI 상품 DML 을 그대로 적재해 **product_id 를 같은 값**으로 맞춘다. 매핑 컬럼 없음 | `data_pipeline/sql/export/product_dml.sql` |
-| 2. 유저 id | JWT `sub`(user_db `users.id`)를 그대로 사용자 id 로 쓴다. 서명은 auth 서버 JWKS 로 검증 | `serving/src/serving/auth.py` |
-| 3. My냉장고 원천 | 결제 완료 후 BE 가 `POST /users/me/fridge` 를 건당 호출한다 (RabbitMQ 소비는 안 함) | 기존 API, 아래 계약 |
-| 4. 가격·재고 | price 는 DML 로 같아진다. stock_quantity 는 초기값만 같고 이후 갈라짐. 화면 표시는 BE 값 | 없음 (포기) |
+| 논점             | 결정                                                                                     | AI 쪽 산출물                               |
+| ---------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 1. 상품 id 매핑  | BE 가 AI 상품 DML 을 그대로 적재해 **product_id 를 같은 값**으로 맞춘다. 매핑 컬럼 없음  | `data_pipeline/sql/export/product_dml.sql` |
+| 2. 유저 id       | JWT `sub`(user_db `users.id`)를 그대로 사용자 id 로 쓴다. 서명은 auth 서버 JWKS 로 검증  | `serving/src/serving/auth.py`              |
+| 3. My냉장고 원천 | 결제 완료 후 BE 가 `POST /users/me/fridge` 를 건당 호출한다 (RabbitMQ 소비는 안 함)      | 기존 API, 아래 계약                        |
+| 4. 가격·재고     | price 는 DML 로 같아진다. stock_quantity 는 초기값만 같고 이후 갈라짐. 화면 표시는 BE 값 | 없음 (포기)                                |
 
 ## 1. 상품 DML
 
@@ -23,7 +23,7 @@ BE 에 넘기는 것을 한 곳에 둡니다. 코드가 바뀌면 이 문서를 
 - 표준 SQL `INSERT ... VALUES (...), (...)` 이며 PostgreSQL 전용 문법이 없어 BE DB 종류와 무관합니다.
 - 컬럼: `category(category_id, category_type, parent_id, name, depth)`,
   `product(product_id, sku, name, category_id, product_type, storage_type, origin_country, weight_g,
-  unit_count, price, stock_quantity, is_active, brand_name, image_url, source_url)`.
+unit_count, price, stock_quantity, is_active, brand_name, image_url, source_url)`.
   파일 머리 주석에 타입과 enum 값이 있습니다. `metadata`·`embedding`·시각 컬럼은 내지 않습니다.
 - `product_id` 와 `price` 는 AI 응답(`RECO-01`, `RECIPE-03`, `PROD-*`)의 값과 같습니다.
   BE 가 이 id 를 PK 로 그대로 쓰면 "부족 재료 담기 -> 장바구니" 가 매핑 없이 이어집니다.
@@ -52,17 +52,17 @@ BE 정책: 동기 호출은 JWT 원문을 전파하고 각 서비스가 auth 서
 
 서빙 환경변수 (`serving/.env.example`):
 
-| 키 | 값 | 비고 |
-| --- | --- | --- |
-| `JWT_JWKS_URL` | `http://<auth-service>/.well-known/jwks.json` | 비우면 X-User-Id 방식(로컬 전용) |
-| `JWT_ISSUER` | auth 서버의 `iss` 값 | 비우면 검사하지 않음. **BE 값 확인 필요** |
-| `JWT_AUDIENCE` | AI 서버용 `aud` 값 | 비우면 검사하지 않음. BE 가 aud 를 넣지 않으면 비워 둠 |
-| `JWT_ALGORITHMS` | `RS256` (기본) | 쉼표 구분. BE 가 ES256 등을 쓰면 바꿈. **BE 값 확인 필요** |
-| `JWT_LEEWAY_SECONDS` | `30` | 시계 오차 허용 |
-| `JWT_JWKS_CACHE_SECONDS` | `300` | JWKS 캐시 수명 |
+| 키                       | 값                                            | 비고                                                       |
+| ------------------------ | --------------------------------------------- | ---------------------------------------------------------- |
+| `JWT_JWKS_URL`           | `http://<auth-service>/.well-known/jwks.json` | 비우면 X-User-Id 방식(로컬 전용)                           |
+| `JWT_ISSUER`             | auth 서버의 `iss` 값                          | 비우면 검사하지 않음. **BE 값 확인 필요**                  |
+| `JWT_AUDIENCE`           | AI 서버용 `aud` 값                            | 비우면 검사하지 않음. BE 가 aud 를 넣지 않으면 비워 둠     |
+| `JWT_ALGORITHMS`         | `RS256` (기본)                                | 쉼표 구분. BE 가 ES256 등을 쓰면 바꿈. **BE 값 확인 필요** |
+| `JWT_LEEWAY_SECONDS`     | `30`                                          | 시계 오차 허용                                             |
+| `JWT_JWKS_CACHE_SECONDS` | `300`                                         | JWKS 캐시 수명                                             |
 
 BE 에 받아야 하는 값 세 가지: **JWKS URL(클러스터 내부 주소), `iss`, 서명 알고리즘**. `aud` 는
-쓰고 있다면 함께.
+쓰고 있다면 함께. -> 디스코드에 토론게시판에 클라우드팀이 공유하였으므로 참고합니다.
 
 ## 3. My냉장고 채우기 (BE -> AI)
 
