@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from serving.auth import peek_user_key
+from serving.auth import resolve_user_key
 
 REQUEST_ID_HEADER = "X-Request-Id"
 _VALID_REQUEST_ID = re.compile(r"^[0-9A-Za-z._-]{8,64}$")
@@ -65,7 +65,7 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
             "client_ip": _client_ip(request),
             "method": request.method,
             "path": request.url.path,
-            "user_id": peek_user_key(request),
+            "user_id": await resolve_user_key(request),
         }
         try:
             response = await call_next(request)

@@ -1,7 +1,7 @@
 """요청 rate limit (슬라이딩 윈도, in-memory).
 
-명세 에러표의 429 계약을 실제로 동작하게 합니다. 식별 키는 사용자(Bearer 토큰의 sub 또는
-X-User-Id, `auth.peek_user_key`)가 있으면 사용자, 없으면 클라이언트 IP 입니다.
+명세 에러표의 429 계약을 실제로 동작하게 합니다. 식별 키는 검증을 통과한 사용자(JWT 서명 검증
+또는 X-User-Id, `auth.resolve_user_key`)가 있으면 사용자, 없으면 클라이언트 IP 입니다.
 LLM 을 부르는 `my-recipes` 만 더 낮은 한도를 씁니다 (비용이 큰 경로 보호).
 
 낮은 한도를 `/recommendations` 전체가 아니라 `my-recipes` 하나에만 거는 이유: 서빙 앞에는
@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from serving.auth import peek_user_key
+from serving.auth import resolve_user_key
 from serving.constants import API_PREFIX
 from serving.envelope import ApiResponse, ErrorCode
 
@@ -90,7 +90,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if limiter is None:
             return await call_next(request)
 
-        key = peek_user_key(request) or (request.client.host if request.client else "unknown")
+        # 검증을 통과한 사용자만 사용자 버킷입니다. 위조 토큰으로 남의 버킷을 소진시킬 수 없게 합니다.
+        key = await resolve_user_key(request) or (request.client.host if request.client else "unknown")
         retry_after = limiter.try_acquire(key)
         if retry_after is not None:
             payload: ApiResponse[None] = ApiResponse.failure(ErrorCode.TOO_MANY_REQUESTS)

@@ -98,24 +98,40 @@ REFERENCE_DDL = """\
 
 COPY_PREFIX = "COPY public."
 COPY_END = "\\."
-# COPY text 형식의 이스케이프. 덤프에 없는 것은 그대로 두어 값이 바뀌지 않게 합니다.
-_COPY_ESCAPES = {"\\\\": "\\", "\\t": "\t", "\\n": "\n", "\\r": "\r", "\\b": "\b", "\\f": "\f", "\\v": "\v"}
+# COPY text 형식의 이스케이프(백슬래시 다음 글자). 한 번만 훑어 해석합니다. 두 번 치환하면
+# JSON 안의 `\\n` 이 복원된 뒤 다시 개행으로 해석되어 metadata 파싱이 깨집니다(CodeRabbit PR #45).
+_COPY_ESCAPES = {"\\": "\\", "t": "\t", "n": "\n", "r": "\r", "b": "\b", "f": "\f", "v": "\v"}
 
 
 def _copy_field(raw: str) -> str | None:
     if raw == "\\N":
         return None
-    for escaped, plain in _COPY_ESCAPES.items():
-        raw = raw.replace(escaped, plain)
-    return raw
+    if "\\" not in raw:
+        return raw
+    decoded: list[str] = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\" and index + 1 < len(raw) and raw[index + 1] in _COPY_ESCAPES:
+            decoded.append(_COPY_ESCAPES[raw[index + 1]])
+            index += 2
+        else:
+            decoded.append(char)
+            index += 1
+    return "".join(decoded)
 
 
 def read_copy_block(path: Path, table: str) -> tuple[list[str], list[dict[str, str | None]]]:
-    """plain pg_dump 에서 `COPY public.<table> (...) FROM stdin;` 블록 하나를 읽습니다. 값은 전부 문자열입니다."""
+    """plain pg_dump 에서 `COPY public.<table> (...) FROM stdin;` 블록 하나를 읽습니다. 값은 전부 문자열입니다.
+
+    블록은 `\\.` 행으로 끝나야 합니다. 그 표시 없이 파일이 끝나면 잘린 덤프이므로 일부 행만
+    정본으로 넘기지 않도록 실패시킵니다.
+    """
     prefix = f"{COPY_PREFIX}{table} ("
     columns: list[str] = []
     rows: list[dict[str, str | None]] = []
     inside = False
+    terminated = False
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             if not inside:
@@ -124,10 +140,13 @@ def read_copy_block(path: Path, table: str) -> tuple[list[str], list[dict[str, s
                     inside = True
                 continue
             if line.startswith(COPY_END):
+                terminated = True
                 break
             rows.append(dict(zip(columns, (_copy_field(v) for v in line.rstrip("\n").split("\t")), strict=True)))
     if not columns:
         raise ValueError(f"덤프에 {table} 의 COPY 블록이 없습니다: {path}")
+    if not terminated:
+        raise ValueError(f"덤프의 {table} COPY 블록이 종료 표시 없이 끝났습니다(잘린 파일): {path}")
     return columns, rows
 
 
@@ -274,12 +293,17 @@ async def fetch_rows(conn: asyncpg.Connection, sql: str) -> list[dict[str, Any]]
 
 @asynccontextmanager
 async def read_connection(settings: Settings) -> AsyncIterator[asyncpg.Connection]:
-    """읽기 전용 raw asyncpg 커넥션. 적재와 달리 direct 엔드포인트가 필요 없어 DATABASE_URL 을 씁니다."""
+    """읽기 전용 raw asyncpg 커넥션. 적재와 달리 direct 엔드포인트가 필요 없어 DATABASE_URL 을 씁니다.
+
+    category 와 product 를 같은 스냅샷에서 읽도록 REPEATABLE READ 읽기 전용 트랜잭션으로 묶습니다.
+    READ COMMITTED 로 두 번 읽으면 그 사이 커밋된 상품이 없는 카테고리를 가리킬 수 있습니다.
+    """
     async with engine_scope(direct=False, settings=settings) as engine:
         async with engine.connect() as sa_conn:
             raw = await sa_conn.get_raw_connection()
             conn: asyncpg.Connection = raw.driver_connection  # type: ignore[assignment]
-            yield conn
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
+                yield conn
 
 
 async def run_export_products(

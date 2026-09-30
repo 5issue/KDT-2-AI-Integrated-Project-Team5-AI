@@ -210,3 +210,36 @@ def test_parse_dump_matches_db_row_shape(tmp_path: Path) -> None:
     text = render_dml(categories, products, generated_at=NOW, source_label=label)
     assert "'D''Amico 소스'" in text
     assert "'https://img.example/749.jpg'" in text
+
+
+def test_copy_field_decodes_escapes_once() -> None:
+    """JSON 안의 `\\n`(백슬래시+n) 은 백슬래시와 n 으로 남아야 json.loads 가 살아남습니다."""
+    from data_pipeline.load.product_export import _copy_field
+
+    assert _copy_field("\\\\N") == "\\N"
+    assert _copy_field("a\\tb") == "a\tb"
+    assert _copy_field("a\\\\nb") == "a\\nb"
+    assert _copy_field("plain") == "plain"
+    assert _copy_field("\\N") is None
+    assert _copy_field("trailing\\") == "trailing\\"
+
+
+def test_parse_dump_preserves_json_backslash_escapes(tmp_path: Path) -> None:
+    dump = tmp_path / "escaped.sql"
+    metadata = '{"source_url": "https://example.test/item", "note": "a\\\\nb"}'
+    dump.write_text(
+        DUMP.replace('{"source_url": "https://www.kurly.com/goods/1000175876"}', metadata), encoding="utf-8"
+    )
+    _, products, _ = parse_dump(dump)
+    assert products[0]["source_url"] == "https://example.test/item"
+
+
+def test_read_copy_block_rejects_truncated_dump(tmp_path: Path) -> None:
+    """종료 표시(`\\.`) 없이 끝난 덤프는 일부 행만 정본으로 넘기지 않도록 실패합니다."""
+    dump = tmp_path / "truncated.sql"
+    truncated = DUMP[: DUMP.rindex("\\.")]
+    dump.write_text(truncated, encoding="utf-8")
+    with pytest.raises(ValueError, match="종료 표시 없이"):
+        read_copy_block(dump, "product")
+    # 앞선 category 블록은 온전하므로 그대로 읽힙니다
+    assert len(read_copy_block(dump, "category")[1]) == 2

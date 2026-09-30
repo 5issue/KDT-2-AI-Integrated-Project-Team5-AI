@@ -11,9 +11,18 @@
   2026-09-22 FE 협의 방식이며, JWT 가 켜지면 **무시합니다**. 둘을 같이 받으면 헤더 한 줄로
   서명 검증을 우회할 수 있기 때문입니다.
 
-JWKS 는 PyJWT 의 `PyJWKClient` 가 `kid` 기준으로 캐시합니다. 모르는 `kid` 가 오면 한 번
-다시 받으므로 auth 서버의 키 교체를 재기동 없이 따라갑니다. 받기는 동기 urllib 이라
-의존성을 sync `def` 로 두어 FastAPI 가 스레드풀에서 돌리게 합니다(이벤트 루프를 막지 않음).
+## 검증은 요청당 한 번, 미들웨어에서
+
+rate limit 과 액세스 로그는 의존성보다 먼저 도는 미들웨어라 사용자 키가 그 시점에 필요합니다.
+서명 없이 `sub` 만 읽어 키로 쓰면 위조 토큰으로 남의 버킷을 소진시킬 수 있어(CodeRabbit PR #45),
+미들웨어에서도 **서명까지 검증**하고 결과를 `request.state` 에 남깁니다. 의존성은 그 결과를
+재사용해 같은 토큰을 두 번 검증하지 않습니다. 검증 실패 요청은 IP 버킷으로 셉니다.
+
+## JWKS 캐시
+
+`PyJWKClient` 의 JWK Set 캐시(`lifespan`)만 씁니다. 키별 LRU 캐시(`cache_keys`)는 TTL 이 없어
+JWKS 에서 뺀 키가 영원히 살아남으므로 끕니다. 모르는 `kid` 가 오면 한 번 다시 받아 키 교체를
+재기동 없이 따라갑니다. 받기는 동기 urllib 이라 스레드풀에서 돌려 이벤트 루프를 막지 않습니다.
 """
 
 from __future__ import annotations
@@ -24,12 +33,16 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, Header, HTTPException, Request, status
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
+from starlette.concurrency import run_in_threadpool
 
 from serving.config import Settings
 
 USER_ID_HEADER = "X-User-Id"
 AUTHORIZATION_HEADER = "Authorization"
 BEARER_PREFIX = "bearer "
+# request.state 에 남기는 검증 결과. 의존성과 미들웨어가 공유합니다.
+STATE_USER_ID = "auth_user_id"
+STATE_ERROR = "auth_error"
 
 logger = logging.getLogger("serving.auth")
 
@@ -39,13 +52,21 @@ def _unauthorized() -> HTTPException:
 
 
 def _parse_user_id(raw: object) -> int | None:
-    """양의 정수 문자열(또는 정수)만 사용자 id 로 받습니다. 아니면 None."""
+    """ASCII 숫자만으로 된 양의 정수(또는 정수)만 사용자 id 로 받습니다. 아니면 None.
+
+    `str.isdigit()` 는 "²" 같은 유니코드 숫자도 참이라 `int()` 가 터집니다. ASCII 를 먼저 보고,
+    자릿수 제한 등으로 변환이 실패해도 예외 대신 None 입니다.
+    """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
         return raw if raw >= 1 else None
-    if isinstance(raw, str) and raw.isdigit() and int(raw) >= 1:
-        return int(raw)
+    if isinstance(raw, str) and raw.isascii() and raw.isdigit():
+        try:
+            user_id = int(raw)
+        except ValueError:
+            return None
+        return user_id if user_id >= 1 else None
     return None
 
 
@@ -63,7 +84,7 @@ class JwtVerifier:
     def __init__(self, settings: Settings) -> None:
         self._client = jwt.PyJWKClient(
             settings.jwt_jwks_url.strip(),
-            cache_keys=True,
+            cache_keys=False,
             lifespan=settings.jwt_jwks_cache_seconds,
             timeout=settings.jwt_jwks_timeout_seconds,
         )
@@ -117,6 +138,46 @@ def _header_user_id(x_user_id: str | None) -> int:
     return user_id
 
 
+def _cached(request: Request) -> int | None:
+    """미들웨어가 남긴 검증 결과. 실패였다면 그 예외를 다시 던집니다. 없으면 None."""
+    error = getattr(request.state, STATE_ERROR, None)
+    if error is not None:
+        raise error
+    return getattr(request.state, STATE_USER_ID, None)
+
+
+def _verify_and_remember(request: Request, verifier: JwtVerifier, token: str) -> int:
+    """토큰을 검증하고 결과(성공·실패 모두)를 request.state 에 남깁니다."""
+    try:
+        user_id = verifier.user_id(token)
+    except HTTPException as exc:
+        setattr(request.state, STATE_ERROR, exc)
+        raise
+    setattr(request.state, STATE_USER_ID, user_id)
+    return user_id
+
+
+async def resolve_user_key(request: Request) -> str | None:
+    """미들웨어(rate limit·액세스 로그)용 사용자 키. 검증을 통과한 사용자만 돌려줍니다.
+
+    JWT 모드에서는 서명까지 검증하고 결과를 request.state 에 남겨 의존성이 재사용합니다.
+    토큰이 없거나 검증에 실패하면 None 이라 IP 버킷으로 셉니다. 헤더 모드에서는 형식이 맞는
+    X-User-Id 만 키로 씁니다.
+    """
+    verifier = _verifier(request)
+    if verifier is None:
+        header_id = _parse_user_id(request.headers.get(USER_ID_HEADER))
+        return None if header_id is None else str(header_id)
+    token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
+    if token is None:
+        return None
+    try:
+        user_id = await run_in_threadpool(_verify_and_remember, request, verifier, token)
+    except HTTPException:
+        return None
+    return str(user_id)
+
+
 def get_current_user_id(
     request: Request,
     authorization: Annotated[str | None, Header(alias=AUTHORIZATION_HEADER)] = None,
@@ -126,10 +187,13 @@ def get_current_user_id(
     verifier = _verifier(request)
     if verifier is None:
         return _header_user_id(x_user_id)
+    cached = _cached(request)
+    if cached is not None:
+        return cached
     token = bearer_token(authorization)
     if token is None:
         raise _unauthorized()
-    return verifier.user_id(token)
+    return _verify_and_remember(request, verifier, token)
 
 
 CurrentUserId = Annotated[int, Depends(get_current_user_id)]
@@ -150,29 +214,13 @@ def get_optional_user_id(
         return 0 if x_user_id is None else _header_user_id(x_user_id)
     if authorization is None:
         return 0
+    cached = _cached(request)
+    if cached is not None:
+        return cached
     token = bearer_token(authorization)
     if token is None:
         raise _unauthorized()
-    return verifier.user_id(token)
+    return _verify_and_remember(request, verifier, token)
 
 
 OptionalUserId = Annotated[int, Depends(get_optional_user_id)]
-
-
-def peek_user_key(request: Request) -> str | None:
-    """미들웨어(rate limit·액세스 로그)용 사용자 키. **검증하지 않습니다.**
-
-    Bearer 토큰이 있으면 서명 확인 없이 `sub` 만 읽고, 없으면 X-User-Id 를 씁니다.
-    인가에는 쓰지 않고 요청을 사용자별로 묶는 키로만 씁니다. 위조 토큰은 어차피
-    의존성 단계에서 401 이라, 여기서 얻는 것은 자기 요청의 묶음뿐입니다.
-    """
-    token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
-    if token is not None:
-        try:
-            claims = jwt.decode(token, options={"verify_signature": False})
-        except jwt.PyJWTError:
-            return None
-        user_id = _parse_user_id(claims.get("sub"))
-        return None if user_id is None else str(user_id)
-    header = request.headers.get(USER_ID_HEADER)
-    return header if _parse_user_id(header) is not None else None

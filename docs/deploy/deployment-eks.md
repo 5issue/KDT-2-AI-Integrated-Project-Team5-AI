@@ -441,10 +441,10 @@ kubectl rollout restart deployment/serving
 
 ### 5-5. BFF 뒤에서는 비로그인 요청이 한도 하나를 나눠 씁니다
 
-`ratelimit.py` 의 식별 키는 **사용자(JWT `sub`, 없으면 `X-User-Id`)가 있으면 사용자, 없으면 클라이언트 IP** 입니다.
+`ratelimit.py` 의 식별 키는 **검증을 통과한 사용자(JWT 서명 검증, 헤더 모드면 `X-User-Id`)가 있으면 사용자, 없으면 클라이언트 IP** 입니다. 위조 토큰은 IP 버킷으로 셉니다.
 
 ```python
-key = peek_user_key(request) or (request.client.host if request.client else "unknown")
+key = await resolve_user_key(request) or (request.client.host if request.client else "unknown")
 ```
 
 서빙은 `ClusterIP` 뒤에 있고 바로 앞 홉은 **Next.js BFF 파드**입니다. 그래서
