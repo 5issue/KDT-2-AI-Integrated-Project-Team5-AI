@@ -42,3 +42,12 @@ WHERE user_id = $1
       LIMIT $2
   )
 """
+
+# 최근 본 레시피 선택 삭제. 화면의 "전체선택 -> 선택삭제" 가 체크된 id 배열을 한 번에 보냅니다.
+# 기록에 없는 id 는 조용히 건너뛰고, 실제로 지운 id 만 돌려줍니다.
+DELETE_VIEWS = """
+DELETE FROM user_recipe_view
+WHERE user_id = $1
+  AND recipe_id = ANY($2::bigint[])
+RETURNING recipe_id
+"""

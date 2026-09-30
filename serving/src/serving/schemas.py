@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -570,3 +570,15 @@ class RecentRecipeSummary(BaseModel):
 
     recipe_id: int
     viewed_at: datetime
+
+
+class RecentRecipeDeleteRequest(BaseModel):
+    """최근 본 레시피 선택 삭제 body. 화면이 한 번에 보여 주는 최대 건수(50)보다 넉넉히 100 까지 받습니다."""
+
+    recipe_ids: list[Annotated[int, Field(ge=1)]] = Field(min_length=1, max_length=100)
+
+
+class RecentRecipeDeleteResponse(BaseModel):
+    """선택 삭제 응답 data. 기록에 없던 id 는 세지 않습니다."""
+
+    deleted_count: int

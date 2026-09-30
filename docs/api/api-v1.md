@@ -84,6 +84,7 @@ Base URL: `/api/v1`
 | FAV-03 | 레시피 찜 취소 | DELETE | `/users/me/favorite-recipes/{recipe_id}` | 구현됨 |
 | RECENT-01 | 최근 본 레시피 목록 | GET | `/users/me/recent-recipes` | 구현됨 |
 | RECENT-02 | 레시피 조회 기록 | POST | `/users/me/recent-recipes/{recipe_id}` | 구현됨 |
+| RECENT-03 | 최근 본 레시피 선택 삭제 | DELETE | `/users/me/recent-recipes` | 구현됨 |
 
 - `RECIPE-03` 은 18장(missing-ingredients)과 통일한 단일 API 입니다 (팀 합의).
   부족 재료 목록과 재료별 추천 상품을 한 번에 냅니다. `X-User-Id` 없으면(비로그인)
@@ -185,6 +186,10 @@ My 레시피 화면 하단 "최근 본 레시피" / "찜한 레시피" 두 줄�
 - `POST /users/me/recent-recipes/{recipe_id}`: FE 가 상세 화면 진입 시 호출합니다. 다시 보면
   행이 늘지 않고 `viewed_at` 만 갱신되며, 사용자당 최근 100건만 보관합니다. 없는 레시피 404.
   응답 `data` 는 `{recipe_id, viewed_at}`.
+- `DELETE /users/me/recent-recipes` body `{"recipe_ids": [...]}` (1~100건, 각 1 이상): 화면의
+  "전체선택 -> 선택삭제" 가 체크된 id 를 한 번에 보냅니다. 기록에 없는 id 는 404 가 아니라
+  건너뛰고, 응답 `data` 는 `{deleted_count}` (실제로 지운 건수, 중복 id 는 한 번만) 입니다.
+  다른 사용자의 기록은 건드리지 않습니다.
 - 상세 GET(`RECIPE-01`)에 조회 기록을 숨기지 않았습니다. 비로그인·프리페치 요청이 기록을
   오염시키지 않도록 조회와 기록을 분리합니다.
 

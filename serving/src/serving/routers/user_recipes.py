@@ -21,6 +21,8 @@ from serving.schemas import (
     FavoriteRecipeItem,
     FavoriteRecipeListResponse,
     FavoriteRecipeSummary,
+    RecentRecipeDeleteRequest,
+    RecentRecipeDeleteResponse,
     RecentRecipeItem,
     RecentRecipeListResponse,
     RecentRecipeSummary,
@@ -121,3 +123,18 @@ async def record_recent_recipe(
 
     assert row is not None  # UPSERT 는 항상 한 행을 돌려줍니다.
     return ApiResponse.success(RecentRecipeSummary(recipe_id=recipe_id, viewed_at=row["viewed_at"]))
+
+
+@router.delete("/recent-recipes", response_model=ApiResponse[RecentRecipeDeleteResponse])
+async def delete_recent_recipes(
+    pool: PoolDep, user_id: CurrentUserId, body: RecentRecipeDeleteRequest
+) -> ApiResponse[RecentRecipeDeleteResponse]:
+    """최근 본 레시피를 골라 지웁니다. 화면의 "전체선택 -> 선택삭제" 가 체크된 id 를 한 번에 보냅니다.
+
+    기록에 없는 id 는 404 가 아니라 건너뜁니다. 목록을 본 뒤 삭제하기까지 다른 기기에서 지워졌을
+    수 있고, 화면은 "몇 건이 지워졌는지" 만 알면 되기 때문입니다. 중복 id 는 한 번만 셉니다.
+    """
+    async with pool.acquire() as conn:
+        deleted = await conn.fetch(user_recipe_sql.DELETE_VIEWS, user_id, body.recipe_ids)
+
+    return ApiResponse.success(RecentRecipeDeleteResponse(deleted_count=len(deleted)))

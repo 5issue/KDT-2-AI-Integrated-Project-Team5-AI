@@ -421,6 +421,29 @@ async def test_fridge_delete_then_gone(world: World) -> None:
     assert (await world.api.get("/users/me/fridge", user=ids.me)).expect(200).data == {"items": []}
 
 
+# --- RECENT-03 최근 본 레시피 선택 삭제 -----------------------------------------
+
+
+async def test_recent_recipes_bulk_delete(world: World) -> None:
+    """체크한 id 만 지우고, 없는 id 는 건너뛰며, 다른 사용자의 기록은 건드리지 않습니다."""
+    ids = world.ids
+    for recipe in (ids.stew, ids.grill, ids.tofu_dish):
+        (await world.api.post(f"/users/me/recent-recipes/{recipe}", None, user=ids.me)).expect(200)
+    (await world.api.post(f"/users/me/recent-recipes/{ids.stew}", None, user=ids.other)).expect(200)
+
+    body = {"recipe_ids": [ids.stew, ids.grill, ids.absent, ids.stew]}
+    deleted = (await world.api.delete("/users/me/recent-recipes", body, user=ids.me)).expect(200)
+    assert deleted.data == {"deleted_count": 2}
+
+    mine = (await world.api.get("/users/me/recent-recipes", user=ids.me)).expect(200).data["items"]
+    assert [item["recipe_id"] for item in mine] == [ids.tofu_dish]
+    others = (await world.api.get("/users/me/recent-recipes", user=ids.other)).expect(200).data["items"]
+    assert [item["recipe_id"] for item in others] == [ids.stew]
+
+    again = (await world.api.delete("/users/me/recent-recipes", body, user=ids.me)).expect(200)
+    assert again.data == {"deleted_count": 0}
+
+
 # --- HOME-01 / RECO-01 버블 --------------------------------------------------
 
 
