@@ -79,19 +79,21 @@ def mentioned(name: str, text: str, *, others: Iterable[str] = ()) -> bool:
     return False
 
 
-def without_title(reason: str, facts: RecipeFacts) -> str:
+def without_title(reason: str, facts: RecipeFacts, *, also_keep: Iterable[str] = ()) -> str:
     """레시피 이름 인용을 지웁니다. 그 이름을 품은 더 긴 재료명은 남깁니다.
 
     2026-09-29 안전성 검증 H15: 레시피 `라자냐` 를 그냥 지우니 부족 재료 `라자냐면` 이 잘려 `문장_역할` 이
     "부족 재료 안내가 없음" 으로 실패했습니다(오탐).
+
+    ``also_keep`` 은 이 상황 밖의 재료명(옆 카드 재료, 재료 사전)입니다. `라자냐면` 이 사전에만 있을 때 잘리면
+    지어낸 재료 검사가 놓치므로 함께 남깁니다(PR #44 리뷰). dev 카탈로그에 이런 이름 쌍이 5개 있습니다.
     """
     if not facts.recipe:
         return reason
     # 긴 이름을 먼저 두어야 정규식이 `라자냐면` 을 통째로 잡고 남깁니다.
     longer = sorted(
-        (name for name in facts.known_ingredients if facts.recipe in name and name != facts.recipe),
-        key=len,
-        reverse=True,
+        {name for name in (*facts.known_ingredients, *also_keep) if facts.recipe in name and name != facts.recipe},
+        key=lambda name: (-len(name), name),
     )
     pattern = "|".join(re.escape(name) for name in [*longer, facts.recipe])
     return re.sub(pattern, lambda match: " " if match.group() == facts.recipe else match.group(), reason)

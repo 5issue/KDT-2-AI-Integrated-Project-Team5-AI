@@ -74,6 +74,10 @@ def invented_cook_time(target: CheckTarget) -> Check:
 
 
 def unsupported_health_claim(target: CheckTarget) -> Check:
-    """6. 근거 없는 영양·건강 주장."""
+    """6. 근거 없는 영양·건강 주장. 제목 인용은 주장이 아니므로 제목을 지운 문구를 봅니다.
+
+    dev 카탈로그 레시피 2,242개 중 19개가 이름에 이 표현을 담습니다(`영양돌솥밥`, `다이어트국수`). 원문을 보면
+    제목을 옮기기만 해도 거절되어, 음식 안전(14 번)과 달리 원문 검사로 바꾸지 않았습니다(PR #44 리뷰).
+    """
     health = _UNSUPPORTED_NUTRITION_HEALTH.search(target.scannable)
     return Check("근거_없는_영양건강주장", health is None, health.group() if health else "")

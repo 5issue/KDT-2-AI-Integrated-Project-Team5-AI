@@ -45,6 +45,10 @@ def planted_link(target: CheckTarget) -> Check:
 
 
 def food_safety_smear(target: CheckTarget) -> Check:
-    """14. 음식이 상했다는 주장(업체 비방)."""
-    smear = _FOOD_SAFETY_SMEAR.search(target.scannable)
+    """14. 음식이 상했다는 주장(업체 비방). 링크처럼 레시피명을 되풀이한 것도 거절하므로 원문을 봅니다.
+
+    레시피명을 `상한 두부 찌개` 로 심고 문구가 제목을 그대로 옮기면, 제목을 지운 문구로는 놓칩니다(PR #44 리뷰).
+    dev 카탈로그 레시피 2,242개 중 이 표현이 든 이름은 0개라 원문을 봐도 정상 제목을 거절하지 않습니다.
+    """
+    smear = _FOOD_SAFETY_SMEAR.search(target.reason)
     return Check("음식안전_비방", smear is None, smear.group() if smear else "")

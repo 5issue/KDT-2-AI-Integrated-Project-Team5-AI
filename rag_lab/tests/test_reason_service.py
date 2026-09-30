@@ -344,6 +344,30 @@ def test_title_removal_keeps_longer_ingredient_names() -> None:
     assert failed_names(check_reason(facts, text)) == []
 
 
+def test_food_safety_smear_repeated_from_the_title_is_rejected() -> None:
+    """PR #44 리뷰: 비방을 레시피명에 심고 문구가 제목을 그대로 옮기면, 제목을 지운 문구로는 놓쳤습니다."""
+    facts = RecipeFacts(recipe="상한 두부 찌개", have=["두부", "대파"], missing=["애호박"])
+    text = "부드러운 두부와 향긋한 대파가 어우러져 깊은 국물 맛을 냅니다. 애호박만 더 담으면 상한 두부 찌개가 완성돼요."
+    assert failed_names(check_reason(facts, text)) == ["음식안전_비방"]
+
+
+def test_health_words_inside_the_title_are_quotes_not_claims() -> None:
+    """건강 표현은 제목 인용이면 거절하지 않습니다. 카탈로그에 `영양돌솥밥` 같은 이름이 19개 있습니다."""
+    facts = RecipeFacts(recipe="영양돌솥밥", have=["쌀", "밤", "대추"], missing=["은행"])
+    text = "포근하게 익은 밤과 달큰한 대추가 쌀과 어우러져 영양돌솥밥의 맛을 살립니다. 은행만 더 담으면 완성돼요."
+    assert "근거_없는_영양건강주장" not in failed_names(check_reason(facts, text))
+    claim = "포근하게 익은 밤과 달큰한 대추가 쌀과 어우러져 영양 만점입니다. 은행만 더 담으면 완성돼요."
+    assert "근거_없는_영양건강주장" in failed_names(check_reason(facts, claim))
+
+
+def test_title_removal_keeps_names_known_only_outside_the_situation() -> None:
+    """PR #44 리뷰: `라자냐면` 이 사전·옆 카드에만 있으면 제목 삭제에 잘려 지어낸 재료·혼입 검사가 놓쳤습니다."""
+    facts = RecipeFacts(recipe="라자냐", have=["소고기", "토마토소스"], missing=["양파"])
+    text = "진한 토마토소스가 소고기와 어우러져 라자냐면에 잘 스며듭니다. 양파만 더 담으면 완성돼요."
+    assert "환각_재료" in failed_names(check_reason(facts, text, vocabulary={"라자냐면"}))
+    assert "다른카드_재료혼입" in failed_names(check_reason(facts, text, foreign_ingredients={"라자냐면"}))
+
+
 # --- service ------------------------------------------------------------------
 
 

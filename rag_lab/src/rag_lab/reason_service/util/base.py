@@ -38,10 +38,11 @@ class CheckTarget:
         foreign_ingredients: Iterable[str] = (),
         vocabulary: Iterable[str] = (),
     ) -> CheckTarget:
+        foreign, lexicon = frozenset(foreign_ingredients), frozenset(vocabulary)
         return cls(
             facts=facts,
             reason=reason,
-            scannable=without_title(reason, facts),
-            foreign_ingredients=frozenset(foreign_ingredients),
-            vocabulary=frozenset(vocabulary),
+            scannable=without_title(reason, facts, also_keep=foreign | lexicon),
+            foreign_ingredients=foreign,
+            vocabulary=lexicon,
         )
