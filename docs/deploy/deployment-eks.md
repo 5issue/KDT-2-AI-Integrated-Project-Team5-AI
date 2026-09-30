@@ -85,6 +85,11 @@ FORWARDED_ALLOW_IPS=*
 NEON_BRANCH=
 # 비우면 코드 기본값(google/gemini-3.5-flash-lite)을 씁니다 (3-3)
 REASON_MODEL=google/gemini-3.5-flash-lite
+# JWT 서명 검증 (docs/api/be-sync.md 2절). 비우면 X-User-Id 헤더 방식이라 배포에서는 반드시 채웁니다.
+JWT_JWKS_URL=http://<auth-service>.<namespace>.svc.cluster.local/.well-known/jwks.json
+JWT_ISSUER=
+JWT_AUDIENCE=
+JWT_ALGORITHMS=RS256
 ```
 
 **환경별로 다른 값은 셋뿐입니다.**
@@ -99,7 +104,7 @@ REASON_MODEL=google/gemini-3.5-flash-lite
 
 | 항목 | 값 | 왜 |
 | --- | --- | --- |
-| `Service.type` | `ClusterIP` | 인증이 `X-User-Id` 헤더 방식(private network 전제)입니다 |
+| `Service.type` | `ClusterIP` | 밖에서 부를 일이 없습니다. BFF 와 BE 서비스만 클러스터 안에서 부릅니다 |
 | `NetworkPolicy` | BFF 파드만 ingress 허용 | `ClusterIP` 는 클러스터 밖만 막습니다. 안의 다른 파드도 막아야 전제가 섭니다 (4-3) |
 | `terminationGracePeriodSeconds` | `30` | `SHUTDOWN_DELAY_SECONDS` + 처리 중 요청보다 커야 합니다 (5-6) |
 | `readinessProbe` | `/health/db`, `timeoutSeconds: 3` | `/health` 로 두면 DB 미연결을 못 잡습니다 (5-1). 기본 응답 제한 1초는 DB 왕복에 빠듯합니다 (4-2) |
@@ -361,9 +366,10 @@ spec:
 
 ### 4-3. BFF 만 서빙에 닿게 하기 (NetworkPolicy)
 
-인증이 `X-User-Id` 헤더 방식이라 서빙은 **BFF 만 부른다는 전제**에 기댑니다(8절). `ClusterIP` 는
-클러스터 밖에서 오는 요청만 막고, 같은 클러스터의 다른 파드는 Service 로 그대로 닿습니다. 그 파드가
-헤더 한 줄로 다른 사용자의 냉장고를 읽고 고칠 수 있으므로, BFF 파드만 들어오게 막습니다.
+JWT 검증이 켜지면 헤더 한 줄로 다른 사용자가 될 수는 없지만, 서빙을 부를 곳은 BFF 와 BE
+order-service(냉장고 채우기, `docs/api/be-sync.md` 3절)뿐입니다. 공격면을 줄이려고 그 파드만
+들어오게 막습니다. `JWT_JWKS_URL` 을 비워 X-User-Id 방식으로 띄운다면 이 정책이 유일한 방어라
+필수입니다.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -435,26 +441,26 @@ kubectl rollout restart deployment/serving
 
 ### 5-5. BFF 뒤에서는 비로그인 요청이 한도 하나를 나눠 씁니다
 
-`ratelimit.py` 의 식별 키는 **`X-User-Id` 가 있으면 사용자, 없으면 클라이언트 IP** 입니다.
+`ratelimit.py` 의 식별 키는 **검증을 통과한 사용자(JWT 서명 검증, 헤더 모드면 `X-User-Id`)가 있으면 사용자, 없으면 클라이언트 IP** 입니다. 위조 토큰은 IP 버킷으로 셉니다.
 
 ```python
-key = request.headers.get("X-User-Id") or (request.client.host if request.client else "unknown")
+key = await resolve_user_key(request) or (request.client.host if request.client else "unknown")
 ```
 
 서빙은 `ClusterIP` 뒤에 있고 바로 앞 홉은 **Next.js BFF 파드**입니다. 그래서
-`request.client.host` 는 원 사용자가 아니라 **BFF 파드의 IP** 입니다. BFF 가 `X-User-Id` 를
-싣지 않는 비로그인 요청은 전부 키 하나를 공유하고, `RATE_LIMIT_PER_MINUTE=60` 이면
+`request.client.host` 는 원 사용자가 아니라 **BFF 파드의 IP** 입니다. 토큰이 없는
+비로그인 요청은 전부 키 하나를 공유하고, `RATE_LIMIT_PER_MINUTE=60` 이면
 **BFF 파드 하나 뒤의 비로그인 사용자 전체가 합쳐 분당 60건** 입니다.
 
 서빙 쪽에서 먼저 막은 것: 낮은 한도(`RATE_LIMIT_RECO_PER_MINUTE`, 10/분)는 LLM 을 부르는
-`my-recipes` 에만 겁니다. 이 경로는 `X-User-Id` 가 필수라 사용자별로 셉니다. 예전에는
+`my-recipes` 에만 겁니다. 이 경로는 인증이 필수라 사용자별로 셉니다. 예전에는
 `/recommendations` 전체에 걸려 있어, 비로그인 버블 상품 조회가 **전원 합쳐 분당 10건**에서
 막혔습니다(2026-09-28 수정).
 
 나머지를 풀려면 **BFF 가 원 사용자 IP 를 넘겨야** 합니다(FE 협의 필요).
 
 1. BFF 가 서빙을 부를 때 `X-Forwarded-For: <원 사용자 IP>` 를 싣습니다.
-   로그인 사용자는 공개 API 에도 `X-User-Id` 를 함께 실으면 사용자별로 셉니다.
+   로그인 사용자는 공개 API 에도 토큰을 함께 실으면 사용자별로 셉니다.
 2. 서빙에 `FORWARDED_ALLOW_IPS` 를 설정합니다. 그래야 uvicorn 이 그 헤더를 믿고
    `request.client.host` 를 원 사용자로 바꿉니다. 기본값 `127.0.0.1` 이면 헤더를 버립니다.
 
@@ -609,11 +615,10 @@ for i in $(seq 1 70); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/
 
 배포 전에 알고 있어야 할 것들입니다.
 
-- **인증은 `X-User-Id` 헤더 방식으로 확정됐습니다** (2026-09-22 FE 협의, Bearer 전환 보류).
-  **private network 전제**이므로 Service 를 `ClusterIP` 로 두고 NetworkPolicy 로 BFF 만 접근하게 해야
-  합니다(4-3). `ClusterIP` 만으로는 클러스터 안의 다른 파드를 막지 못합니다.
-  LoadBalancer/Ingress 로 외부에 노출하면 전제가 깨집니다 - 헤더 한 줄로 임의 사용자가 되고,
-  같은 헤더가 rate limit 키라 한도도 함께 우회됩니다.
+- **인증은 Bearer JWT + JWKS 검증입니다** (2026-09-29 BE 정책에 맞춤, `docs/api/be-sync.md` 2절).
+  `JWT_JWKS_URL`·`JWT_ISSUER`·서명 알고리즘은 BE auth 서버 값을 받아 채워야 하고, 아직 받지
+  못했습니다. `JWT_JWKS_URL` 을 비우면 `X-User-Id` 헤더 방식으로 떠서 헤더 한 줄로 임의 사용자가
+  되므로, 배포에서는 반드시 채우고 NetworkPolicy(4-3)도 함께 둡니다.
 - **메트릭 엔드포인트가 없습니다.** 요청 id 와 액세스 로그는 들어왔지만(#25) `/metrics` 는
   아직입니다. 지연·에러율 집계는 로그를 긁어야 합니다.
 - **rate limit 이 프로세스 메모리입니다.** 단일 컨테이너 전제라 레플리카를 늘리면 실효 한도가
