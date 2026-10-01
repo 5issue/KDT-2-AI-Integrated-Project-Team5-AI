@@ -99,6 +99,25 @@ async def test_unhandled_exception_log_carries_traceback(
     assert entry["request_id"]
 
 
+def test_uvicorn_logs_share_the_app_format() -> None:
+    """uvicorn 자신의 로그도 앱과 같은 형식(`수준 로거: 메시지`)으로 나갑니다.
+
+    한 컨테이너 로그에 형식이 섞이지 않게 합니다. uvicorn 이 기본 로깅 설정을 먼저 올리고 앱을 import 하는
+    순서를 재현합니다.
+    """
+    result = _run_python(
+        "import logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "logging.config.dictConfig(LOGGING_CONFIG)\n"
+        "import serving.app\n"
+        "logging.getLogger('uvicorn.error').info('Started server process')\n"
+        "logging.getLogger('serving').info('graceful shutdown 완료')\n"
+    )
+    lines = result.stderr.splitlines()
+    assert "INFO uvicorn.error: Started server process" in lines, lines
+    assert "INFO serving: graceful shutdown 완료" in lines, lines
+
+
 def test_logs_reach_stderr_in_a_real_process() -> None:
     """위 테스트들은 caplog 가 로거 레벨을 직접 올려서 통과합니다. 실제 프로세스에서도 나가는지 봅니다.
 
