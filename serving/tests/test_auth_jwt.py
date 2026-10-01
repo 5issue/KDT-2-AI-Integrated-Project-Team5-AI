@@ -236,6 +236,44 @@ def test_removed_key_is_rejected_after_jwks_cache_expires(
     assert excinfo.value.status_code == 401
 
 
+async def test_one_request_verifies_the_token_once(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """액세스 로그·rate limit 미들웨어와 의존성이 한 요청에서 서명을 한 번만 검증합니다."""
+    calls = 0
+    verify = JwtVerifier.user_id
+
+    def counting(self: JwtVerifier, token: str) -> int:
+        nonlocal calls
+        calls += 1
+        return verify(self, token)
+
+    monkeypatch.setattr(JwtVerifier, "user_id", counting)
+    async with jwt_client(jwt_settings(rate_limit_per_minute=100), pool=_EmptyPool()) as client:
+        assert (await client.get(FRIDGE, headers=bearer(make_token(signing_key)))).status_code == 200
+    assert calls == 1
+
+
+async def test_unreachable_jwks_is_tried_once_per_request(
+    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """auth 서버가 죽으면 요청 하나가 JWKS 를 한 번만 받으려 합니다.
+
+    두 미들웨어가 따로 검증하면 요청마다 JWKS 제한 시간(기본 5초)을 두 번 기다리게 됩니다.
+    """
+    attempts = 0
+
+    def fail(self: jwt.PyJWKClient) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        raise PyJWKClientConnectionError("down")
+
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", fail)
+    async with jwt_client(jwt_settings(rate_limit_per_minute=100), pool=object()) as client:
+        assert (await client.get(FRIDGE, headers=bearer(make_token(signing_key)))).status_code == 503
+    assert attempts == 1
+
+
 async def test_rate_limit_keys_by_verified_user(signing_key: rsa.RSAPrivateKey) -> None:
     """rate limit 키는 검증을 통과한 사용자입니다. 다른 사용자는 서로 한도를 나누지 않습니다."""
     async with jwt_client(jwt_settings(rate_limit_per_minute=1), pool=_EmptyPool()) as client:

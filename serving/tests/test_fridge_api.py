@@ -14,7 +14,7 @@ from typing import Any
 
 from httpx import ASGITransport, AsyncClient
 
-from serving import fridge_sql
+from serving import app_user_sql, fridge_sql
 from serving.app import create_app
 from serving.config import Settings
 from serving.routers.fridge import DUPLICATE_ITEM, INACTIVE_PRODUCT, NO_PRIMARY_INGREDIENT
@@ -93,7 +93,9 @@ async def test_patch_requires_at_least_one_field(validating_client: AsyncClient)
 
 
 class _PostConnection:
-    """POST 가 부르는 문장(상품 확인, 잠금, 중복 확인, 삽입)에 정해진 결과를 냅니다. SQL 은 실행하지 않습니다.
+    """POST 가 부르는 문장(상품 확인, 잠금, 중복 확인, 사용자 등록, 삽입)에 정해진 결과를 냅니다.
+
+    SQL 은 실행하지 않습니다.
 
     부른 순서를 ``calls`` 에 남깁니다. 중복 확인과 삽입이 잠금을 잡은 트랜잭션 안에서 도는지 봅니다.
     잠금이 실제로 같은 사용자·상품의 담기를 줄 세우는지는 통합 테스트가 실제 DB 로 봅니다.
@@ -120,6 +122,10 @@ class _PostConnection:
         self.calls.append("commit")
 
     async def execute(self, sql: str, *args: Any) -> str:
+        if sql == app_user_sql.ENSURE_USER:
+            assert args == (1,)
+            self.calls.append("user")
+            return "INSERT 0 0"
         assert sql == fridge_sql.LOCK_ITEM
         assert args == (1, 101), "잠금 키가 사용자·상품이 아닙니다"
         self.calls.append("lock")
@@ -171,8 +177,24 @@ async def test_post_checks_and_inserts_under_the_item_lock() -> None:
         async with _client_for(connection) as client:
             assert (await client.post(PATH, headers=USER, json=BODY)).status_code == expected
 
-    assert added.calls == ["begin", "lock", "exists", "insert", "commit"]
+    assert added.calls == ["begin", "lock", "exists", "user", "insert", "commit"]
     assert duplicate.calls == ["begin", "lock", "exists", "rollback"]
+
+
+async def test_post_registers_the_user_before_inserting() -> None:
+    """BE 사용자는 처음 담을 때 app_user 에 없습니다. 삽입 직전에 같은 트랜잭션에서 등록합니다.
+
+    등록하지 않으면 user_fridge 의 FK(app_user) 위반이 그대로 500 이 됩니다. 거절(409)되는 요청은
+    등록까지 가지 않습니다.
+    """
+    added = _PostConnection(product=_product(), exists=False, inserted=[{"ingredient_id": 12}])
+    inactive = _PostConnection(product=_product(is_active=False), exists=False, inserted=[])
+    for connection in (added, inactive):
+        async with _client_for(connection) as client:
+            await client.post(PATH, headers=USER, json=BODY)
+
+    assert added.calls.index("user") == added.calls.index("insert") - 1
+    assert "user" not in inactive.calls
 
 
 async def test_post_rejects_inactive_product() -> None:

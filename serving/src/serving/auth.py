@@ -168,6 +168,12 @@ async def resolve_user_key(request: Request) -> str | None:
     if verifier is None:
         header_id = _parse_user_id(request.headers.get(USER_ID_HEADER))
         return None if header_id is None else str(header_id)
+    # 액세스 로그와 rate limit 미들웨어가 둘 다 부릅니다. 앞에서 검증했으면 그 결과를 씁니다.
+    # 다시 검증하면 인증 서버가 죽었을 때 요청마다 JWKS 제한 시간을 두 번 기다립니다.
+    if getattr(request.state, STATE_ERROR, None) is not None:
+        return None
+    if (verified := getattr(request.state, STATE_USER_ID, None)) is not None:
+        return str(verified)
     token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
     if token is None:
         return None

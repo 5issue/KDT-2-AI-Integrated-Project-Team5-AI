@@ -421,6 +421,31 @@ async def test_fridge_delete_then_gone(world: World) -> None:
     assert (await world.api.get("/users/me/fridge", user=ids.me)).expect(200).data == {"items": []}
 
 
+async def test_new_user_is_registered_on_first_write(world: World) -> None:
+    """app_user 에 없는 사용자(JWT 의 BE users.id)도 냉장고 담기·찜·최근 본 기록이 됩니다.
+
+    등록하지 않으면 냉장고 담기는 user_fridge 의 FK 위반으로 500, 찜·최근 본 기록은 "사용자를 찾을 수
+    없습니다" 404 가 되어, BE 가 결제 뒤 사용자 JWT 로 냉장고를 채우는 계약(be-sync.md 3절)이 깨집니다.
+    """
+    ids = world.ids
+    newcomer = ids.me + 777
+    registered = "SELECT count(*) FROM app_user WHERE user_id = $1"
+    assert await world.conn.fetchval(registered, newcomer) == 0
+
+    body = {"product_id": ids.kimchi_a, "quantity": 1, "unit": "개"}
+    (await world.api.post("/users/me/fridge", body, user=newcomer)).expect(200)
+    (await world.api.post(f"/users/me/favorite-recipes/{ids.grill}", None, user=newcomer)).expect(200)
+    (await world.api.post(f"/users/me/recent-recipes/{ids.stew}", None, user=newcomer)).expect(200)
+
+    fridge = (await world.api.get("/users/me/fridge", user=newcomer)).expect(200).data["items"]
+    assert [item["product"]["product_id"] for item in fridge] == [ids.kimchi_a]
+    favorites = (await world.api.get("/users/me/favorite-recipes", user=newcomer)).expect(200).data["items"]
+    assert [item["recipe_id"] for item in favorites] == [ids.grill]
+    recents = (await world.api.get("/users/me/recent-recipes", user=newcomer)).expect(200).data["items"]
+    assert [item["recipe_id"] for item in recents] == [ids.stew]
+    assert await world.conn.fetchval(registered, newcomer) == 1
+
+
 # --- RECENT-03 최근 본 레시피 선택 삭제 -----------------------------------------
 
 

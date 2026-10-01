@@ -4,7 +4,8 @@
 읽기 전용 원칙이라 `user_recipe_sql` 의 asyncpg 상수로 둡니다.
 
 레시피 존재 확인은 별도 SELECT 대신 FK 위반으로 받습니다. 어느 FK 가 깨졌는지는
-제약 이름으로 가르고, 없는 레시피와 없는 사용자 둘 다 404 로 냅니다.
+제약 이름으로 가르고 404 로 냅니다. 사용자는 쓰기 직전에 app_user 에 등록하므로(`app_user_sql`)
+정상 흐름에서 사용자 FK 는 깨지지 않습니다.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import asyncpg
 from fastapi import APIRouter, HTTPException, Path, Query, status
 
-from serving import user_recipe_sql
+from serving import app_user_sql, user_recipe_sql
 from serving.auth import CurrentUserId
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
@@ -66,6 +67,8 @@ async def create_favorite_recipe(
 ) -> ApiResponse[FavoriteRecipeSummary]:
     """레시피를 찜합니다. 없는 레시피는 404, 이미 찜한 레시피는 409 입니다."""
     async with pool.acquire() as conn:
+        # BE 사용자는 처음 찜할 때 app_user 에 없습니다. 등록하지 않으면 사용자 FK 위반으로 404 가 됩니다.
+        await conn.execute(app_user_sql.ENSURE_USER, user_id)
         try:
             row = await conn.fetchrow(user_recipe_sql.INSERT_FAVORITE, user_id, recipe_id)
         except asyncpg.ForeignKeyViolationError as exc:
@@ -115,6 +118,7 @@ async def record_recent_recipe(
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await conn.execute(app_user_sql.ENSURE_USER, user_id)
             try:
                 row = await conn.fetchrow(user_recipe_sql.UPSERT_VIEW, user_id, recipe_id)
             except asyncpg.ForeignKeyViolationError as exc:

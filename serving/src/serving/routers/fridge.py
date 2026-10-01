@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Path, status
 
-from serving import fridge_sql
+from serving import app_user_sql, fridge_sql
 from serving.auth import CurrentUserId
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
@@ -72,6 +72,8 @@ async def create_fridge_item(
                 # 판매 중지 상품은 추천·구매 경로(missing_products, bubble_products)에서 빠집니다. 새로 담는 것도
                 # 같은 규칙으로 막습니다. 상세 조회와 이미 담긴 품목은 그대로 보입니다.
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INACTIVE_PRODUCT)
+            # BE 사용자는 처음 담을 때 app_user 에 없습니다. 등록하지 않으면 FK 위반으로 500 입니다(app_user_sql).
+            await conn.execute(app_user_sql.ENSURE_USER, user_id)
             inserted = await conn.fetch(
                 fridge_sql.INSERT_ITEM, user_id, body.product_id, body.quantity, body.unit, body.expires_at
             )
