@@ -58,3 +58,34 @@ jobs:
             ${{ steps.ecr-login.outputs.registry }}/kurly-ai-assistant:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ── 자동 배포: total-k8s 의 AI 이미지 태그를 이번 커밋 번호로 바꿔 커밋 ──
+      # → ArgoCD가 변경을 감지해 새 이미지로 자동 배포 (재시작 불필요)
+      - name: total-k8s 이미지 태그 갱신
+        env:
+          GH_TOKEN: ${{ secrets.K8S_REPO_TOKEN }}                  # total-k8s 쓰기용 토큰
+          VALUES_FILE: charts/ai-service/values.yaml               # AI 차트 배포 설정 파일
+          TAG: ${{ env.COMMIT_SHA }}                               # 위에서 이미지에 붙인 커밋 번호와 동일
+        run: |
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/5issue/total-k8s.git" k8s
+          cd k8s
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # image: 블록 안의 tag 줄만 고침 (파일의 다른 tag·주석은 건드리지 않음)
+          set_tag() {
+            sed -i -E "/^image:/,/^[^ #]/ s|^  tag:.*|  tag: \"${TAG}\"|" "$VALUES_FILE"
+          }
+          # 백엔드 CD와 동시에 push해 "충돌"할 때만 재시도 (권한 오류는 바로 실패)
+          for i in 1 2 3 4 5; do
+            set_tag
+            git add "$VALUES_FILE"
+            if git diff --cached --quiet; then echo "변경 없음"; exit 0; fi
+            git commit -q -m "chore(ai): 이미지 태그 ${TAG:0:7} 로 갱신"
+            if out=$(git push origin main 2>&1); then echo "갱신 완료"; exit 0; fi
+            echo "$out"
+            if echo "$out" | grep -qE "403|denied|Authentication"; then echo "권한 오류 → 토큰 확인"; exit 1; fi
+            echo "push 충돌 → 최신 main 받아서 재시도 ($i)"
+            git fetch -q origin main && git reset -q --hard origin/main
+            sleep $((i * 3))
+          done
+          echo "5번 모두 실패"; exit 1

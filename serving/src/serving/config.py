@@ -51,10 +51,13 @@ class Settings(BaseSettings):
     jwt_jwks_url: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = ""
-    jwt_algorithms: Annotated[tuple[str, ...], NoDecode] = ("RS256",)
+    jwt_algorithms: Annotated[tuple[str, ...], NoDecode] = ("ES256",)
     jwt_leeway_seconds: float = Field(default=30.0, ge=0)
     jwt_jwks_cache_seconds: int = Field(default=300, ge=1)
     jwt_jwks_timeout_seconds: float = Field(default=5.0, gt=0)
+    # BE 내부 호출(`/internal/*`)을 허용하는 관리자 role. 클레임 이름과 값(BE 제안: role == "ADMIN").
+    jwt_admin_role_claim: str = "role"
+    jwt_admin_role: str = "ADMIN"
 
     # 추천 이유 LLM 생성(rag_lab.reason_service). 키가 비어 있으면 규칙 기반 문구만 나갑니다.
     # 제한 시간과 LLM 카드 수는 환경변수가 아니라 reason_service 의 상수입니다.
