@@ -436,6 +436,7 @@ class FridgeProductRef(BaseModel):
     name: str
     storage_type: str | None = None
     weight_g: int | None = None
+    image_url: str | None = None
 
 
 class FridgeIngredientRef(BaseModel):
@@ -469,6 +470,7 @@ class FridgeItem(BaseModel):
                 name=row["product_name"],
                 storage_type=row["storage_type"],
                 weight_g=row["weight_g"],
+                image_url=row.get("image_url"),
             ),
             ingredients=[FridgeIngredientRef.model_validate(i) for i in parsed],
             quantity=float(row["quantity"]),

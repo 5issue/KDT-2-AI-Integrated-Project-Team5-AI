@@ -13,6 +13,9 @@
 -- (user_id, product_id) 복합키라 단일 식별자가 없습니다. 화면이 수정·삭제에 쓸 키로
 -- product_id 를 그대로 내보냅니다. 대리키가 필요하면 스키마에 먼저 추가해야 합니다.
 --
+-- 상품 대표 이미지(`product.image_url`, 0015)를 함께 냅니다. 원천에 이미지가 없는 상품은 NULL 이라
+-- 화면이 placeholder 를 둬야 합니다.
+--
 -- 기한이 지난 것도 냅니다. 사용자가 치우려면 보여야 합니다. `is_expired` 로 구분합니다.
 
 SELECT uf.user_id,
@@ -20,6 +23,7 @@ SELECT uf.user_id,
        p.name AS product_name,
        p.storage_type,
        p.weight_g,
+       p.image_url,
        uf.quantity,
        uf.unit,
        uf.expires_at,
@@ -37,6 +41,6 @@ LEFT JOIN product_ingredient pi ON pi.product_id = uf.product_id
                                AND pi.role = 'PRIMARY'
 LEFT JOIN ingredient i          ON i.ingredient_id = pi.ingredient_id
 WHERE uf.user_id = :user_id
-GROUP BY uf.user_id, uf.product_id, p.name, p.storage_type, p.weight_g,
+GROUP BY uf.user_id, uf.product_id, p.name, p.storage_type, p.weight_g, p.image_url,
          uf.quantity, uf.unit, uf.expires_at
 ORDER BY uf.expires_at NULLS LAST, p.name;

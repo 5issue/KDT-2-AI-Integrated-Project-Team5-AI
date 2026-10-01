@@ -33,6 +33,7 @@ def _fridge_row() -> dict[str, Any]:
         "product_name": "한돈 앞다리살 500g",
         "storage_type": "냉장",
         "weight_g": 500,
+        "image_url": "https://example.com/p.jpg",
         "quantity": 500,
         "unit": "g",
         "expires_at": None,
@@ -236,7 +237,15 @@ def test_fridge_item_maps_row_to_spec_shape() -> None:
 
     assert item.product.product_id == 101
     assert item.product.name == "한돈 앞다리살 500g"
+    assert item.product.image_url == "https://example.com/p.jpg"
     assert [i.name for i in item.ingredients] == ["돼지고기"]
     assert item.quantity == 500.0
     assert item.is_expired is False
     assert "user_id" not in item.model_dump()
+
+
+def test_fridge_item_without_product_image_is_null() -> None:
+    """원천에 이미지가 없는 상품은 image_url 이 null 입니다. 화면이 placeholder 를 둡니다."""
+    item = FridgeItem.from_row({**_fridge_row(), "image_url": None})
+
+    assert item.product.image_url is None

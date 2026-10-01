@@ -345,6 +345,8 @@ async def test_fridge_add_is_serialized_per_user_and_product(world: World) -> No
 async def test_fridge_mealkit_is_one_item(world: World) -> None:
     """PRIMARY 가 둘인 상품은 DB 에 두 행이지만 목록에서는 한 칸, 재료는 배열입니다. 삭제는 두 행을 다 지웁니다."""
     ids = world.ids
+    image_url = "https://example.com/mealkit.jpg"
+    await world.conn.execute("UPDATE product SET image_url = $1 WHERE product_id = $2", image_url, ids.mealkit)
     (
         await world.api.post("/users/me/fridge", {"product_id": ids.mealkit, "quantity": 1, "unit": "팩"}, user=ids.me)
     ).expect(200)
@@ -356,6 +358,7 @@ async def test_fridge_mealkit_is_one_item(world: World) -> None:
         "name": "찌개 밀키트",
         "storage_type": "냉장",
         "weight_g": None,
+        "image_url": image_url,
     }
     assert {i["name"] for i in items[0]["ingredients"]} == {"배추김치", "돼지고기"}
 
