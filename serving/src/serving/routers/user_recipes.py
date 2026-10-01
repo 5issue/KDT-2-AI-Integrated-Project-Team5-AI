@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, status
 
 from serving import app_user_sql, user_recipe_sql
 from serving.auth import CurrentUserId
+from serving.constants import PG_BIGINT_MAX
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
@@ -31,7 +32,7 @@ from serving.schemas import (
 
 router = APIRouter(prefix="/users/me", tags=["user-recipes"])
 
-RecipeIdPath = Path(description="레시피 id", ge=1)
+RecipeIdPath = Path(description="레시피 id", ge=1, le=PG_BIGINT_MAX)
 
 # 사용자당 보관하는 조회 기록 상한. 화면은 최대 50건만 요청할 수 있으므로 그보다 넉넉히 둡니다.
 RECENT_KEEP = 100

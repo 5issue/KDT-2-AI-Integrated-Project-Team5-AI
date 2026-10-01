@@ -36,6 +36,7 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from starlette.concurrency import run_in_threadpool
 
 from serving.config import Settings
+from serving.constants import PG_BIGINT_MAX
 
 USER_ID_HEADER = "X-User-Id"
 AUTHORIZATION_HEADER = "Authorization"
@@ -55,19 +56,21 @@ def _parse_user_id(raw: object) -> int | None:
     """ASCII 숫자만으로 된 양의 정수(또는 정수)만 사용자 id 로 받습니다. 아니면 None.
 
     `str.isdigit()` 는 "²" 같은 유니코드 숫자도 참이라 `int()` 가 터집니다. ASCII 를 먼저 보고,
-    자릿수 제한 등으로 변환이 실패해도 예외 대신 None 입니다.
+    자릿수 제한 등으로 변환이 실패해도 예외 대신 None 입니다. bigint 를 넘는 값도 None 입니다.
+    DB 에 넘기면 인자 변환에서 DataError(500)가 나기 때문입니다.
     """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return raw if raw >= 1 else None
-    if isinstance(raw, str) and raw.isascii() and raw.isdigit():
+        user_id = raw
+    elif isinstance(raw, str) and raw.isascii() and raw.isdigit():
         try:
             user_id = int(raw)
         except ValueError:
             return None
-        return user_id if user_id >= 1 else None
-    return None
+    else:
+        return None
+    return user_id if 1 <= user_id <= PG_BIGINT_MAX else None
 
 
 def bearer_token(authorization: str | None) -> str | None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Path, Query, status
 
+from serving.constants import PG_BIGINT_MAX
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
@@ -21,7 +22,7 @@ from serving.schemas import (
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-ProductIdPath = Path(description="상품 id", ge=1)
+ProductIdPath = Path(description="상품 id", ge=1, le=PG_BIGINT_MAX)
 
 
 @router.get("/{product_id}", response_model=ApiResponse[ProductDetailResponse])

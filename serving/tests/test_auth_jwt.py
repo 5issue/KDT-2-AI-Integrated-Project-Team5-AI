@@ -321,8 +321,20 @@ def test_bearer_token_parsing(header: str | None, expected: str | None) -> None:
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [("42", 42), (42, 42), ("0", None), ("-1", None), ("²", None), ("４２", None), ("9" * 5000, None), (True, None)],
+    [
+        ("42", 42),
+        (42, 42),
+        ("0", None),
+        ("-1", None),
+        ("²", None),
+        ("４２", None),
+        ("9" * 5000, None),
+        (True, None),
+        (str(2**63 - 1), 2**63 - 1),
+        (str(2**63), None),
+        (2**63, None),
+    ],
 )
 def test_parse_user_id_accepts_ascii_digits_only(raw: object, expected: int | None) -> None:
-    """유니코드 숫자나 너무 긴 숫자열은 예외 없이 None 입니다."""
+    """유니코드 숫자나 너무 긴 숫자열은 예외 없이 None 입니다. bigint 를 넘으면 DB 에서 500 이라 None 입니다."""
     assert _parse_user_id(raw) == expected

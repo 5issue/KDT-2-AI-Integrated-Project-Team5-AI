@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from rag_lab.reason_service import facts_from_row, template_reason
+from serving.constants import PG_BIGINT_MAX
 
 
 class HealthResponse(BaseModel):
@@ -486,7 +487,7 @@ class FridgeListResponse(BaseModel):
 class FridgeItemCreate(BaseModel):
     """품목 추가 요청 (명세 23장 POST body)."""
 
-    product_id: int = Field(ge=1)
+    product_id: int = Field(ge=1, le=PG_BIGINT_MAX)
     quantity: float = Field(gt=0)
     unit: str = Field(min_length=1, max_length=20)
     expires_at: datetime | None = None
@@ -575,7 +576,7 @@ class RecentRecipeSummary(BaseModel):
 class RecentRecipeDeleteRequest(BaseModel):
     """최근 본 레시피 선택 삭제 body. 화면이 한 번에 보여 주는 최대 건수(50)보다 넉넉히 100 까지 받습니다."""
 
-    recipe_ids: list[Annotated[int, Field(ge=1)]] = Field(min_length=1, max_length=100)
+    recipe_ids: list[Annotated[int, Field(ge=1, le=PG_BIGINT_MAX)]] = Field(min_length=1, max_length=100)
 
 
 class RecentRecipeDeleteResponse(BaseModel):

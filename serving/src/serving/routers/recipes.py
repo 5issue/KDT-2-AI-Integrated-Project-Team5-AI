@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Path, Query, status
 
 from serving.auth import OptionalUserId
+from serving.constants import PG_BIGINT_MAX
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
@@ -16,7 +17,7 @@ from serving.schemas import MissingProductsResponse, RecipeDetailResponse
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
 
-RecipeIdPath = Path(description="레시피 id", ge=1)
+RecipeIdPath = Path(description="레시피 id", ge=1, le=PG_BIGINT_MAX)
 
 
 @router.get("/{recipe_id}", response_model=ApiResponse[RecipeDetailResponse])
@@ -42,7 +43,7 @@ async def read_missing_products(
     pool: PoolDep,
     user_id: OptionalUserId,
     recipe_id: int = RecipeIdPath,
-    base_product_id: int = Query(default=0, ge=0, description="기준 상품 id. 0 이면 미사용"),
+    base_product_id: int = Query(default=0, ge=0, le=PG_BIGINT_MAX, description="기준 상품 id. 0 이면 미사용"),
     max_per_ingredient: int = Query(default=3, ge=1, le=10, description="재료당 추천 상품 수"),
 ) -> ApiResponse[MissingProductsResponse]:
     """부족 재료와 재료별 추천 상품을 냅니다 (18장 + 30장 통일).

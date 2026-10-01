@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from serving import app_user_sql, fridge_sql
 from serving.auth import CurrentUserId
+from serving.constants import PG_BIGINT_MAX
 from serving.dependencies import PoolDep
 from serving.envelope import ApiResponse
 from serving.queries import build_query
@@ -28,7 +29,7 @@ from serving.schemas import (
 
 router = APIRouter(prefix="/users/me/fridge", tags=["fridge"])
 
-ProductIdPath = Path(description="품목의 상품 id", ge=1)
+ProductIdPath = Path(description="품목의 상품 id", ge=1, le=PG_BIGINT_MAX)
 
 DUPLICATE_ITEM = "이미 냉장고에 담긴 상품입니다."
 NO_PRIMARY_INGREDIENT = "재료 정보가 연결되지 않은 상품이라 담을 수 없습니다."
