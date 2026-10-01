@@ -2,11 +2,10 @@
 
 SQL 은 `recsys_sql` 카탈로그에서 가져옵니다. **serving 은 .sql 파일을 갖지 않습니다.**
 
-예전에는 검증이 끝난 쿼리를 `serving/sql/` 로 복사해 왔는데(promote), 복사본은 반드시
-갈라집니다. 실제로 `user_fridge.ingredient_id` 를 걷어낼 때 recsys_sql 쪽만 고쳐지고
-serving 쪽 복사본은 옛 컬럼을 그대로 참조한 채 남았습니다.
+검증이 끝난 쿼리를 serving 쪽으로 복사해 두면 복사본은 반드시 갈라집니다. 스키마가 바뀔 때
+한쪽만 고쳐지고 다른 쪽은 옛 컬럼을 참조한 채 남기 때문입니다.
 
-이제 두 폴더가 다른 것은 `.env` 뿐입니다. recsys_sql 은 SQL 과 파라미터 계약을 갖고,
+그래서 두 폴더가 다른 것은 `.env` 뿐입니다. recsys_sql 은 SQL 과 파라미터 계약을 갖고,
 serving 은 asyncpg 풀과 엔드포인트를 갖습니다.
 
 바인딩 변환(`:name` -> `$1`)도 recsys_sql 이 합니다. 파라미터가 빠지거나 타입이

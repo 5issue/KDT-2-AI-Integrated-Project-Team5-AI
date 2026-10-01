@@ -26,10 +26,10 @@ KIPIL의 935행에는 서비스 자연키 `(ingredient_id, storage_location, sto
 
 기본 동작은 대상 DB를 바꾸지 않는 dry-run이며, Production 적용에는 확인 문자열이 필요합니다.
 
-**원천 표 위치 (2026-09-28 부터).** KIPIL(dev/kipil)에 alembic 0012~0015 를 올리면서 원본 935행을
-`kipil_raw.storage_guideline` 에 그대로 옮겨 두었습니다. `public.storage_guideline` 에는 서비스 키당
-한 행(598행)만 남아, 그대로 읽으면 부위 child 로 옮길 원천 후보가 빠진 채 선별됩니다. 원천 접속
-문자열에 `options=-csearch_path%3Dkipil_raw` 를 붙이면 이 스크립트를 고치지 않고 원본을 읽습니다.
+**원천 표 위치.** 서비스 표(`public.storage_guideline`)는 서비스 키(재료·장소·상황)당 한 행만 남기므로,
+원천으로 읽으면 부위 child 로 옮길 후보가 빠진 채 선별됩니다. 원본은 `kipil_raw.storage_guideline` 에
+보존돼 있고, 원천 접속 문자열에 `options=-csearch_path%3Dkipil_raw` 를 붙이면 이 스크립트를 고치지 않고
+원본을 읽습니다.
 Neon pooler 는 이 옵션을 거부하므로 **직접(unpooled) 엔드포인트**를 쓰세요.
 """
 

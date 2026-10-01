@@ -103,10 +103,7 @@ def test_parquet_none_strings_become_null(tmp_path: Path) -> None:
 
 
 def test_brand_name_is_read_from_metadata(tmp_path: Path) -> None:
-    """지금 raw 는 브랜드를 `metadata` 안에만 싣고 옵니다(2,553행 전부).
-
-    `brand_id` 를 들고 있던 동안 이 값이 jsonb 안에 갇혀 있었습니다.
-    """
+    """raw 가 브랜드를 `metadata` 안에 싣고 와도 `brand_name` 으로 꺼냅니다. jsonb 안에 가두지 않습니다."""
     write_parquet(
         tmp_path / "product_raw.parquet",
         [product_row("1", "새우살", metadata=json.dumps({"brand": "피쉬쉘"}, ensure_ascii=False))],

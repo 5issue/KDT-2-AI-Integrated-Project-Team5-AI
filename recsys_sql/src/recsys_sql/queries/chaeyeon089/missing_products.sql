@@ -15,7 +15,8 @@
 -- 여기에는 없는" 불일치가 생깁니다.
 --
 -- user_id 0 은 냉장고 갈래 미사용(비로그인), base_product_id 0 은 기준 상품 미사용입니다.
--- 상품 랭킹: 레시피 지정 상품(recipe_product) > 최근 인기도 > 낮은 가격.
+-- 상품 랭킹: 레시피 지정 상품(recipe_product) 우선순위 > 낮은 가격 > product_id.
+-- 인기도는 정렬에 쓰지 않습니다(아래 ranked CTE 의 TODO).
 -- 비활성/품절 제외. stock_quantity NULL 은 품절이 아니라 "수량 미상"이라 후보에 남깁니다.
 
 WITH base AS (
@@ -64,7 +65,9 @@ ranked AS (
            ROW_NUMBER() OVER (
                PARTITION BY m.ingredient_id
                ORDER BY COALESCE(rp.recommendation_priority, 0) DESC,
-                        COALESCE(pop.popularity_score, 0) DESC,
+                        -- TODO(인기도): product_popularity 는 주문 로그 집계라, 실제 주문이 이 DB 에 쌓이면 아래 줄을
+                        -- 되살립니다. 데모 시드 값으로는 순위를 정하지 않습니다(ai_context 구매이력·인기도 TODO).
+                        -- COALESCE(pop.popularity_score, 0) DESC,
                         p.price ASC,
                         p.product_id ASC
            ) AS rank_in_ingredient

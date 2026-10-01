@@ -43,7 +43,7 @@ CATALOG_TABLES = (
 )
 
 # 카탈로그를 참조하므로 함께 비워야 하지만 복제하지는 않는 표입니다.
-# 예전에는 `TRUNCATE ... CASCADE` 가 이 표들을 조용히 비웠고 백업에도 없었습니다.
+# `TRUNCATE ... CASCADE` 에 맡기면 이 표들이 백업 없이 조용히 비워집니다.
 # 명시적으로 올려 두어야 백업이 되고, 새 표가 생기면 바로 드러납니다.
 DEPENDENT_TABLES = (
     "storage_guideline",
@@ -142,7 +142,7 @@ def verify_reference_closure(url: str) -> None:
     """카탈로그를 참조하는 표가 전부 `WIPED_TABLES` 안에 있는지 확인합니다.
 
     밖에 있는 표가 하나라도 생기면 TRUNCATE 가 FK 오류로 죽습니다. 그 오류를 읽는 대신
-    여기서 이름을 알려 줍니다. 예전처럼 CASCADE 로 덮어 버리면 백업 없이 사라집니다.
+    여기서 이름을 알려 줍니다. CASCADE 로 덮어 버리면 백업 없이 사라집니다.
     """
     with psycopg.connect(url) as connection, connection.cursor() as cursor:
         cursor.execute(

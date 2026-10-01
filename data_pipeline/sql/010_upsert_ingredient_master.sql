@@ -9,9 +9,8 @@
 -- 이름은 덮어쓰지 않습니다. 팀이 손으로 다듬은 표기를 공공데이터 표기로 되돌리면
 -- 곤란하기 때문입니다. 새로 만드는 행에만 쓰고, 기존 행은 aliases 만 합칩니다.
 
--- ingredient_id 는 시퀀스에 맡깁니다. 예전에 MAX+ROW_NUMBER 로 직접 지정했더니
--- 시퀀스가 736 에 멈춘 채 행이 1018 까지 늘어, 다음 삽입이 기존 id 와 충돌할 뻔했습니다.
--- (storage_guideline 은 시퀀스가 없어 그쪽만 MAX+ROW_NUMBER 를 씁니다.)
+-- ingredient_id 는 시퀀스에 맡깁니다. MAX+ROW_NUMBER 로 직접 지정하면 시퀀스가 뒤처진 채
+-- 행만 늘어, 다음 삽입이 기존 id 와 충돌합니다.
 INSERT INTO ingredient (
     name, normalized_name, is_raw_material, aliases, is_pantry, source_identity_key
 )

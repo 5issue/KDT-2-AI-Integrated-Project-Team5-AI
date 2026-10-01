@@ -1,9 +1,9 @@
 """데모용 사용자·냉장고·구매이력·인기도 시드.
 
-`app_user` / `user_fridge` / `user_product_affinity` / `product_popularity` 가 전부 0행이라
-마이냉장고 쿼리 4종과 `reorder_candidates` 가 실제 데이터로 한 번도 안 돌았습니다.
-`rag_lab` 의 추천 문구 실험도 입력이 `my_recipe_candidates` 결과인데, 냉장고가 비어 있어
-그 쿼리가 빈손입니다. 그걸 푸는 것이 이 모듈입니다.
+`app_user` / `user_fridge` / `user_product_affinity` / `product_popularity` 는 사용자 행동과 주문에서
+나오는 표라 카탈로그 적재로는 채워지지 않습니다. 비어 있으면 마이냉장고 쿼리와 `reorder_candidates`,
+그리고 `my_recipe_candidates` 결과를 입력으로 쓰는 `rag_lab` 의 추천 문구 실험이 빈손으로 돕니다.
+이 모듈이 그 표들을 데모용 값으로 채웁니다. 여기서 만든 구매이력·인기도는 실제 주문이 아닙니다.
 
 ## Faker 를 쓰지 않습니다
 
@@ -130,7 +130,6 @@ async def fetch_fridge_candidates(conn: asyncpg.Connection) -> list[tuple[int, i
     """(상품 id, 재료 id) 목록. **재료가 연결된 상품만** 돌려줍니다.
 
     `user_fridge` 의 PK 가 (ingredient_id, user_id, product_id) 라 재료 id 가 필요합니다.
-    PR #10 이 그 컬럼을 지우면 이 함수도 단순해집니다.
     """
     rows = await conn.fetch(
         """

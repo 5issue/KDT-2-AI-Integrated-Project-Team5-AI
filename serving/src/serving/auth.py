@@ -3,20 +3,20 @@
 두 방식을 지원하고 설정(`JWT_JWKS_URL`)으로 고릅니다. 방식이 바뀌면 이 모듈만 바꾸면
 되도록 한 곳에 모아 둡니다.
 
-- **Bearer JWT** (BE 보안 정책, 2026-09-29 BE 답변): `Authorization: Bearer <JWT>`.
+- **Bearer JWT** (BE 보안 정책, `docs/api/be-sync.md` 2절): `Authorization: Bearer <JWT>`.
   auth 서버의 `GET /.well-known/jwks.json` 으로 받은 공개키로 서명을 검증하고 `sub`
   (user_db `users.id`)를 사용자 id 로 씁니다. 동기 호출은 JWT 원문을 그대로 전파하므로
   BFF 든 BE 서비스든 같은 토큰으로 부릅니다.
 - **X-User-Id 헤더** (로컬·JWKS 미설정): BFF 만 FastAPI 에 닿는 private network 전제입니다.
-  2026-09-22 FE 협의 방식이며, JWT 가 켜지면 **무시합니다**. 둘을 같이 받으면 헤더 한 줄로
-  서명 검증을 우회할 수 있기 때문입니다.
+  JWT 가 켜지면 **무시합니다**. 둘을 같이 받으면 헤더 한 줄로 서명 검증을 우회할 수 있기 때문입니다.
 
 ## 검증은 요청당 한 번, 미들웨어에서
 
 rate limit 과 액세스 로그는 의존성보다 먼저 도는 미들웨어라 사용자 키가 그 시점에 필요합니다.
-서명 없이 `sub` 만 읽어 키로 쓰면 위조 토큰으로 남의 버킷을 소진시킬 수 있어(CodeRabbit PR #45),
+서명 없이 `sub` 만 읽어 키로 쓰면 위조 토큰으로 남의 버킷을 소진시킬 수 있어
 미들웨어에서도 **서명까지 검증**하고 결과를 `request.state` 에 남깁니다. 의존성은 그 결과를
-재사용해 같은 토큰을 두 번 검증하지 않습니다. 검증 실패 요청은 IP 버킷으로 셉니다.
+재사용해 같은 토큰을 두 번 검증하지 않습니다. 미들웨어끼리도 앞의 결과를 재사용합니다.
+검증 실패 요청은 IP 버킷으로 셉니다.
 
 ## JWKS 캐시
 
@@ -36,6 +36,7 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from starlette.concurrency import run_in_threadpool
 
 from serving.config import Settings
+from serving.constants import PG_BIGINT_MAX
 
 USER_ID_HEADER = "X-User-Id"
 AUTHORIZATION_HEADER = "Authorization"
@@ -55,19 +56,21 @@ def _parse_user_id(raw: object) -> int | None:
     """ASCII 숫자만으로 된 양의 정수(또는 정수)만 사용자 id 로 받습니다. 아니면 None.
 
     `str.isdigit()` 는 "²" 같은 유니코드 숫자도 참이라 `int()` 가 터집니다. ASCII 를 먼저 보고,
-    자릿수 제한 등으로 변환이 실패해도 예외 대신 None 입니다.
+    자릿수 제한 등으로 변환이 실패해도 예외 대신 None 입니다. bigint 를 넘는 값도 None 입니다.
+    DB 에 넘기면 인자 변환에서 DataError(500)가 나기 때문입니다.
     """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return raw if raw >= 1 else None
-    if isinstance(raw, str) and raw.isascii() and raw.isdigit():
+        user_id = raw
+    elif isinstance(raw, str) and raw.isascii() and raw.isdigit():
         try:
             user_id = int(raw)
         except ValueError:
             return None
-        return user_id if user_id >= 1 else None
-    return None
+    else:
+        return None
+    return user_id if 1 <= user_id <= PG_BIGINT_MAX else None
 
 
 def bearer_token(authorization: str | None) -> str | None:
@@ -168,6 +171,12 @@ async def resolve_user_key(request: Request) -> str | None:
     if verifier is None:
         header_id = _parse_user_id(request.headers.get(USER_ID_HEADER))
         return None if header_id is None else str(header_id)
+    # 액세스 로그와 rate limit 미들웨어가 둘 다 부릅니다. 앞에서 검증했으면 그 결과를 씁니다.
+    # 다시 검증하면 인증 서버가 죽었을 때 요청마다 JWKS 제한 시간을 두 번 기다립니다.
+    if getattr(request.state, STATE_ERROR, None) is not None:
+        return None
+    if (verified := getattr(request.state, STATE_USER_ID, None)) is not None:
+        return str(verified)
     token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
     if token is None:
         return None
