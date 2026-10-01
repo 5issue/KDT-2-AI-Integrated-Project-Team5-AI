@@ -7,9 +7,9 @@
 -- 규칙을 `WITH RECURSIVE` 로 조상 끝까지 따라가는 원래 초안입니다. 결과 모양과 랭킹은
 -- `missing_products` 와 같고, 다른 곳은 base·fridge 두 CTE 뿐입니다.
 --
--- `missing_products` 를 1단계로 둔 이유: 현재 데이터의 계층 깊이는 최대 1단계(손자 재료 0)라 두 쿼리의
--- 결과가 같습니다. 손자 재료가 생기면 결과가 갈리고, 그때 이 후보로 바꿀지 판단합니다.
--- 성능 비교는 PR #28 의 EXPLAIN ANALYZE 결과를 봅니다.
+-- `missing_products` 를 1단계로 둔 이유: 재료 계층이 1단계(손자 재료 없음)인 동안 두 쿼리의 결과가
+-- 같고, 1단계 쪽이 더 단순하고 빠릅니다. 손자 재료가 생기면 결과가 갈리므로 그때 이 후보로
+-- 바꿀지 판단합니다. 성능 비교는 PR #28 의 EXPLAIN ANALYZE 결과를 봅니다.
 --
 -- 안전장치:
 --   - `CYCLE ingredient_id SET is_cycle USING path` 로 A -> B -> A 같은 순환을 만나면

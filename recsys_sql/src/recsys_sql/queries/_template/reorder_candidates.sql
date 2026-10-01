@@ -3,7 +3,7 @@
 -- description: 마지막 구매 후 일정 기간이 지난 단골 상품을 재구매 후보로 추천
 -- params: user_id:int, days_since:int, max_results:int
 --
--- user_product_affinity 는 배치로 갱신되는 집계 테이블입니다.
+-- user_product_affinity 는 구매 이력을 모은 집계 테이블이고, 이 쿼리는 그 값을 읽기만 합니다.
 -- 지금 냉장고에 있는 상품은 후보에서 뺍니다.
 
 SELECT p.product_id,
@@ -20,7 +20,7 @@ WHERE upa.user_id = :user_id
   AND p.is_active
   -- stock_quantity 는 NULL 허용이고, **NULL 은 품절이 아니라 "수량을 모른다" 입니다**
   -- (정규화 가이드 4.3: 품절이 명시된 경우만 0 으로 저장). 모르는 것을 품절로 치면
-  -- 지금 적재분(2,553개 전부 NULL)에서는 결과가 항상 빈손이 됩니다.
+  -- 수량을 모르는 상품이 대부분인 적재분에서는 결과가 늘 빈손이 됩니다.
   AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
   AND upa.last_purchased_at IS NOT NULL
   AND upa.last_purchased_at < NOW() - MAKE_INTERVAL(days => :days_since)

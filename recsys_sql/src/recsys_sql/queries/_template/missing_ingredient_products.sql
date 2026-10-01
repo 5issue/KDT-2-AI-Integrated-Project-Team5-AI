@@ -57,7 +57,7 @@ ranked AS (
 -- stock_quantity 는 NULL 허용입니다. **NULL 은 품절이 아니라 "수량을 모른다" 입니다**
                               -- (정규화 가이드 4.3: 품절이 명시된 경우만 0 으로 저장).
                               -- COALESCE(..., 0) > 0 으로 거르면 모르는 상품이 전부 품절 취급되는데,
-                              -- 지금 적재분은 2,553개가 전부 NULL 이라 결과가 항상 빈손이 됩니다.
+                              -- 수량을 모르는 상품이 대부분인 적재분에서는 결과가 늘 빈손이 됩니다.
                               AND (p.stock_quantity IS NULL OR p.stock_quantity > 0)
     -- recipe_product 의 PK 는 (recipe_id, ingredient_id, product_id) 입니다.
     -- 우선순위가 '어느 재료 자리의 상품인가'까지 포함하므로 ingredient_id 도 조인합니다.
