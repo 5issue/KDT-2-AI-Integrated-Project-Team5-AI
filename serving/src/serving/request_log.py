@@ -26,7 +26,8 @@ from serving.auth import resolve_user_key
 
 REQUEST_ID_HEADER = "X-Request-Id"
 _VALID_REQUEST_ID = re.compile(r"^[0-9A-Za-z._-]{8,64}$")
-_SKIP_PATHS = frozenset({"/health", "/health/db"})
+# 프로브와 Prometheus 스크레이프는 남기지 않습니다(주기적으로 와서 로그를 덮습니다).
+_SKIP_PATHS = frozenset({"/health", "/health/db", "/metrics"})
 
 access_logger = logging.getLogger("serving.access")
 

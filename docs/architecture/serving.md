@@ -66,7 +66,8 @@ sequenceDiagram
 
 | 있음 | 없음 |
 | --- | --- |
-| `/health`, `/health/db` (`reason_llm` 켜짐 여부 포함) | `/metrics` (지연·에러율은 JSON 액세스 로그로 집계) |
+| `/health`, `/health/db` (`reason_llm` 켜짐 여부 포함) | 5xx 비율 알림(PrometheusRule), 에러 추적 도구 |
+| `/metrics` (Prometheus, 경로 템플릿별 요청 수·지연) | |
 | 읽기 8개: HOME-01, RECO-01/02, PROD-01~03, RECIPE-01/03 | 냉장고 밖 상품 응답의 `image_url` (PROD-01, RECIPE-03 등) |
 | My냉장고 4개: 목록·추가·수정·삭제 (FRIDGE-01~04) | 여러 파드가 공유하는 rate limit (지금은 프로세스 메모리) |
 | 추천 이유 LLM (앞 3장, `rag_lab.reason_service`, 꺼지면 스스로 다시 켬) | |
