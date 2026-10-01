@@ -13,7 +13,7 @@
 ``client`` 가 ``None`` 이면 LLM 을 부르지 않고 전부 규칙 기반 문구를 돌려줍니다.
 ``vocabulary`` 는 ``SELECT name FROM ingredient`` 결과로, 앱 시작 때 한 번 읽어 넘깁니다.
 
-결정 사항(2026-09-22 캐러셀 생성 방식 실험):
+결정 사항(캐러셀 생성 방식 실험):
 - 카드마다 LLM 1회 호출, 한 요청의 카드는 동시에 생성
 - 카드별 제한 시간(기본 2초) + 자동 사실성 검사 + 실패한 카드만 규칙 기반 문구로 대체
 - 모델 ``google/gemini-3.5-flash-lite``, OpenRouter 경유, 추론 최소(``minimal``)

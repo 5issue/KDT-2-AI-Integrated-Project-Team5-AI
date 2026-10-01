@@ -6,7 +6,7 @@
 - 사실성 1~6 (``util/factuality.py``): 재료·시간·상비재료·건강에 대해 상황에 없는 말을 하는가
 - 구조 7~11 (``util/structure.py``): 두 문장, 길이, 첫 문장은 가진 재료·둘째 문장은 더 담을 것
 - 간접 주입 12~14 (``util/injection.py``): 레시피명·재료명에 숨은 지시를 따른 흔적.
-  2026-09-29 안전성 검증(`notebooks/ai_safety_eval.ipynb`)에서 사용자에게 5건 노출된 뒤 더했습니다.
+  사례는 `notebooks/ai_safety_eval.ipynb` 의 Prompt Injection 절에 있습니다.
 
 ``rag_lab.recommendation.checks`` 에서 서빙에 필요한 항목만 옮겼습니다.
 """
