@@ -7,7 +7,8 @@ BE 에 넘기는 것을 한 곳에 둡니다. 코드가 바뀌면 이 문서를 
 | ---------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------ |
 | 1. 상품 id 매핑  | BE 가 AI 상품 DML 을 그대로 적재해 **product_id 를 같은 값**으로 맞춘다. 매핑 컬럼 없음  | `data_pipeline/sql/export/product_dml.sql` |
 | 2. 유저 id       | JWT `sub`(user_db `users.id`)를 그대로 사용자 id 로 쓴다. 서명은 auth 서버 JWKS 로 검증  | `serving/src/serving/auth.py`              |
-| 3. My냉장고 원천 | 결제 완료 후 BE 가 `POST /users/me/fridge` 를 건당 호출한다 (RabbitMQ 소비는 안 함)      | 기존 API, 아래 계약                        |
+| 3. My냉장고 원천 | 배송완료 Admin API 가 `POST /internal/fridge/items` 를 관리자 JWT 로 호출한다 (RabbitMQ 소비는 안 함) | `serving/src/serving/routers/internal.py`  |
+| 5. 상품 조회     | AI 응답의 `product_id` 로 BE `GET /products/by-ai` 를 불러 장바구니에 담는다 (FE 경로)    | 없음 (BE API, 5절에 기록)                  |
 | 4. 가격·재고     | price 는 DML 로 같아진다. stock_quantity 는 초기값만 같고 이후 갈라짐. 화면 표시는 BE 값 | 없음 (포기)                                |
 
 ## 1. 상품 DML
@@ -71,31 +72,118 @@ BE 에 받아야 하는 값 세 가지: **JWKS URL(클러스터 내부 주소), 
 
 ## 3. My냉장고 채우기 (BE -> AI)
 
-결제 완료 후 BE(order-service)가 주문 품목마다 아래를 부릅니다. 사용자의 JWT 를 그대로
-전파하므로(동기 호출 정책) 서비스 계정 토큰이 따로 필요 없습니다.
+배송완료 Admin API(BE)가 주문 품목을 모아 아래 내부 엔드포인트를 한 번 부릅니다 (2026-09-30 BE 협의).
+사용자 JWT 를 전파하는 방식(`POST /users/me/fridge` 건당 호출)은 배송완료 시점에 사용자 토큰이
+없어 쓰지 않고, **관리자 role 의 JWT** 로 부릅니다. 공유 시크릿 헤더는 만들지 않았습니다.
 
 ```
-POST /api/v1/users/me/fridge
-Authorization: Bearer <사용자 JWT>
+POST /api/v1/internal/fridge/items
+Authorization: Bearer <관리자 JWT (role == "ADMIN")>
 Content-Type: application/json
 
-{"product_id": 749, "quantity": 1, "unit": "개", "expires_at": null}
+{
+  "user_id": 42,
+  "items": [
+    {"product_id": 749, "quantity": 1, "unit": "개", "expires_at": null},
+    {"product_id": 810, "quantity": 2, "unit": "팩"}
+  ]
+}
 ```
 
-- `product_id` 는 1절의 공통 id 입니다. `quantity` 는 0 보다 큰 수, `unit` 은 1~20자 문자열
-  (`개`, `g`, `팩` 등 BE 가 가진 단위 그대로), `expires_at` 은 ISO-8601 또는 `null`.
-- 응답 200 `{product_id, ...}`. 없는 상품은 404. 같은 상품이 이미 담겨 있으면 409 `CONFLICT`
-  (`message: "이미 냉장고에 담긴 상품입니다."`) 이며 **재시도해도 안전**합니다. BE 는 409 를
-  성공으로 간주하면 됩니다. 판매 중지 상품·재료 미연결 상품도 409 이고 message 로 구분합니다.
-- 냉장고는 상품 단위 한 칸이라 같은 상품을 두 번 사도 한 칸입니다. 수량을 더하려면
-  `PATCH /users/me/fridge/{product_id}` 로 `quantity` 를 올립니다 (BE 가 원하면 그렇게).
-- 시연에서는 BE 호출 없이 `seed-demo` 로 직접 채워도 됩니다.
+- 인증: 2절과 같은 JWKS 서명 검증을 거친 뒤 `role` 클레임이 `ADMIN` 인지 봅니다(클레임이 문자열이면
+  같은 값, 배열이면 포함). 토큰이 없거나 틀리면 401, 관리자가 아니면 403 `FORBIDDEN`. 클레임 이름과
+  값은 `JWT_ADMIN_ROLE_CLAIM`(기본 `role`)·`JWT_ADMIN_ROLE`(기본 `ADMIN`)로 바꿀 수 있습니다.
+  **BE 확인 필요**: 관리자 토큰의 role 클레임 이름과 값이 정확히 `role` / `"ADMIN"` 인지.
+- `user_id` 는 대상 사용자(users.id). 토큰의 `sub` 는 관리자 자신이라 쓰지 않습니다.
+  처음 보는 사용자는 `app_user` 에 자동 등록합니다(2절).
+- `items` 는 1~100 개, `product_id` 는 1절의 공통 id 이고 **한 요청 안에서 중복 불가**(422). BE 는
+  같은 상품의 주문 라인을 합쳐 보냅니다. `quantity` 는 0 보다 큰 수, `unit` 은 1~20자,
+  `expires_at` 은 ISO-8601 또는 `null`(기한 없음). 키를 생략하면 기존 기한을 유지합니다.
+- upsert 규칙: 냉장고에 없는 상품은 새로 담고(`inserted`), 이미 있는 상품은 **수량을 더합니다**
+  (`updated`). `unit` 은 새 값으로 바꾸고 `expires_at` 은 보낸 경우만 바꿉니다. 사용자가 실제로
+  산 상품이라 판매 중지(`is_active=false`)는 보지 않습니다.
+- 응답 200: 성공 품목은 `items[]`, 담지 못한 품목은 `skipped[]` 에 사유를 적어 냅니다. 둘을 합치면
+  요청 품목 전체이고 응답은 `product_id` 오름차순입니다. 없는 상품("상품을 찾을 수 없습니다.")과
+  재료 미연결 상품("재료 정보가 연결되지 않은 상품이라 담을 수 없습니다.")은 거절(4xx)하지 않고
+  `skipped` 로 갑니다. BE 는 기록만 하면 됩니다.
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "요청에 성공하였습니다.",
+  "data": {
+    "user_id": 42,
+    "items": [
+      {"product_id": 749, "action": "inserted", "quantity": 1.0, "unit": "개", "expires_at": null},
+      {"product_id": 810, "action": "updated", "quantity": 3.0, "unit": "팩", "expires_at": "2026-10-10T00:00:00Z"}
+    ],
+    "skipped": [{"product_id": 999, "reason": "상품을 찾을 수 없습니다."}]
+  },
+  "error": null,
+  "timestamp": "2026-10-01T03:00:00Z"
+}
+```
+
+- 품목 전체가 한 트랜잭션입니다. 중간에 DB 오류가 나면 전부 되돌리고 500 이라 통째로 재시도하면 됩니다.
+  **200 을 받은 뒤 재시도하면 수량이 두 번 더해지므로** 5xx·네트워크 오류에만 재시도합니다.
+  주문 단위 멱등 키가 필요해지면 그때 `Idempotency-Key` 헤더를 더합니다.
+- rate limit 은 관리자 `sub` 기준 분당 60 회(기본값)입니다. 주문당 1회 호출이면 충분하고, 모자라면
+  `RATE_LIMIT_PER_MINUTE` 을 올립니다.
+- 사용자 본인용 CRUD(`/users/me/fridge`, FRIDGE-01~04)는 그대로 FE 가 씁니다. 시연에서는 BE 호출 없이
+  `seed-demo` 로 직접 채워도 됩니다.
+- 로컬(`JWT_JWKS_URL` 비움)에서는 role 검사 없이 `X-User-Id`(호출자 id)만 봅니다.
 
 RabbitMQ 소비 방식은 AI 서버에 컨슈머 프로세스를 하나 더 두는 일이라 이번 범위에서 뺐습니다.
-BE 가 건당 호출을 못 하게 되면 그때 다시 봅니다.
 
 ## 4. 가격·재고
 
 - `price`: DML 로 같아지고 이후 바뀔 일이 거의 없습니다. 바뀌면 1절 명령으로 다시 넘깁니다.
 - `stock_quantity`: 초기값만 같습니다. AI 서버는 이 값을 "살 수 있는 상품만 추천" 필터로만 쓰고,
   화면의 재고 표시·품절 처리는 BE 값을 씁니다. 정합성 맞추기는 프로젝트 기간 안에 하지 않습니다.
+
+## 5. AI 추천 상품 -> 장바구니 (BE 상품 조회 API, 참고)
+
+AI 응답(`RECO-01`, `RECIPE-03`, `PROD-*`)의 `product_id` 는 1절 DML 로 BE 에 적재된 값이라,
+FE 가 그 id 로 BE 상품을 조회해 장바구니에 담습니다. BE(product-service)가 2026-09-30 공유한 명세를
+그대로 옮겨 둡니다. AI 서버 코드 변경은 없습니다.
+
+```
+GET /api/v1/products/by-ai?ai_product_ids=755,810
+GET /api/v1/products/by-ai?ai_product_ids=755&ai_product_ids=810
+Auth: 없음
+```
+
+- `ai_product_ids` 는 AI 응답의 `product_id` 입니다. 쉼표 구분과 반복 파라미터 둘 다 받습니다.
+- 응답 `data.items[]` 는 `aiProductId`(= AI `product_id`), BE 쪽 `id`·`skuCode`·`type`·`parentId`·
+  `name`·`brand`·`price`·`salePrice`·`discountRate`·`status`·`thumbnailUrl` 입니다. 장바구니 담기는
+  BE `id` 로 합니다. BE 에 없는 id 는 `data.notFoundAiProductIds[]` 로 옵니다.
+- 화면의 가격·할인·재고 상태·썸네일은 이 응답(BE 값)을 쓰고, AI 응답의 `price`·`stock_quantity`·
+  `image_url` 은 참고값입니다(4절).
+
+```json
+{
+  "status": "SUCCESS",
+  "message": "요청에 성공하였습니다.",
+  "data": {
+    "items": [
+      {
+        "aiProductId": 755,
+        "id": 156062,
+        "skuCode": "M00000760247",
+        "type": "UNIT",
+        "parentId": 155058,
+        "name": "프링글스 사워크림앤어니언 53g",
+        "brand": "프링글스",
+        "price": 2000,
+        "salePrice": 1840,
+        "discountRate": 8,
+        "status": "SALE",
+        "thumbnailUrl": "https://product-image.kurly.com/.../image.jpg"
+      }
+    ],
+    "notFoundAiProductIds": [810]
+  },
+  "error": null,
+  "timestamp": "2026-09-30T08:38:21Z"
+}
+```

@@ -44,3 +44,17 @@ RETURNING quantity, unit, expires_at
 """
 
 DELETE_ITEM = "DELETE FROM user_fridge WHERE user_id = $1 AND product_id = $2 RETURNING product_id"
+
+# BE 내부 upsert(배송완료)용. 상품 존재만 봅니다. 사용자가 실제로 산 상품이라 is_active 는 보지 않습니다.
+PRODUCT_EXISTS = "SELECT 1 FROM product WHERE product_id = $1"
+
+# 이미 담긴 상품에 새로 산 양을 더합니다. 한 품목의 재료 행 전부에 같은 값을 더해 행끼리 어긋나지 않게
+# 합니다. unit 은 새 값으로 바꾸고, expires_at 은 보낸 경우($6)에만 바꿉니다(UPDATE_ITEM 과 같은 규칙).
+ADD_QUANTITY = """
+UPDATE user_fridge
+SET quantity = quantity + $3,
+    unit = $4,
+    expires_at = CASE WHEN $6 THEN $5 ELSE expires_at END
+WHERE user_id = $1 AND product_id = $2
+RETURNING quantity, unit, expires_at
+"""

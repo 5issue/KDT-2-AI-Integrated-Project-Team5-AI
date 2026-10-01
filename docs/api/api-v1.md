@@ -60,6 +60,9 @@ BE 보안 정책(2026-09-29 BE 답변)에 맞춰 **Bearer JWT** 로 사용자를
 - 선택: `RECIPE-03`. 토큰이 있으면 냉장고를 반영하고, 없으면 익명으로 계산합니다. 있는데
   틀리면 401 입니다.
 - 나머지(`HOME-01`, `RECO-01`, `PROD-*`, `RECIPE-01`)는 사용자 맥락을 쓰지 않습니다.
+- **관리자 전용**: `FRIDGE-05`(`/internal/*`)는 BE 서비스가 부르는 내부 API 라 `role` 클레임이
+  `ADMIN` 인 JWT 만 받습니다. 서명이 맞아도 관리자가 아니면 403 `FORBIDDEN` 입니다. 대상 사용자는
+  본문 `user_id` 로 받습니다. 계약은 `docs/api/be-sync.md` 3절.
 - 토큰의 `sub` 는 rate limit 의 사용자 키이기도 합니다. 로그인 사용자는 공개 API 에도 실어
   보내면 사용자별로 셉니다. 비로그인 요청은 BFF 가 `X-Forwarded-For` 로 원 사용자 IP 를
   넘겨야 사용자별로 셉니다(넘기지 않으면 BFF IP 하나로 합산).
@@ -84,6 +87,7 @@ Base URL: `/api/v1`
 | FRIDGE-02 | My냉장고 품목 추가 | POST | `/users/me/fridge` | 구현됨 |
 | FRIDGE-03 | My냉장고 품목 수정 | PATCH | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
 | FRIDGE-04 | My냉장고 품목 삭제 | DELETE | `/users/me/fridge/{product_id}` | 구현됨 (키 변경) |
+| FRIDGE-05 | 배송완료 품목 일괄 upsert (BE 내부) | POST | `/internal/fridge/items` | 구현됨 (관리자 JWT) |
 | FAV-01 | 찜한 레시피 목록 | GET | `/users/me/favorite-recipes` | 구현됨 |
 | FAV-02 | 레시피 찜 추가 | POST | `/users/me/favorite-recipes/{recipe_id}` | 구현됨 |
 | FAV-03 | 레시피 찜 취소 | DELETE | `/users/me/favorite-recipes/{recipe_id}` | 구현됨 |
@@ -126,6 +130,9 @@ Base URL: `/api/v1`
      추천·구매 경로에서 빠지는 상품이라 새로 담는 것도 막습니다. 상세 조회는 그대로 됩니다.
   3. `재료 정보가 연결되지 않은 상품이라 담을 수 없습니다.` - 재료 미연결 상품(현재 295건).
 - 기한 지난 품목도 목록에 나오며 `is_expired` 로 구분합니다.
+- `FRIDGE-05` 는 FE 가 쓰지 않습니다. 배송완료 시 BE 가 주문 품목을 모아 한 번 부르고, 이미 담긴
+  상품은 수량을 더합니다(`action: "updated"`). 없는 상품·재료 미연결 상품은 거절하지 않고
+  `skipped[]` 로 냅니다. 상세는 `be-sync.md` 3절.
 - 목록의 `product.image_url` 은 상품 대표 이미지 URL 입니다(`product.image_url`, 0015).
   원천에 이미지가 없는 상품은 `null` 이라 FE 는 placeholder 를 둡니다.
 
