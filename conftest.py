@@ -39,8 +39,8 @@ RESIDUE_CHECKS: dict[str, LiteralString] = {
 DB_TESTS_RAN = pytest.StashKey[bool]()
 
 # 단위 테스트(db 마커 없음)에서 지우는 환경변수. CI 는 DB 테스트를 위해 이 값들을 프로세스 환경변수로
-# 내려 주는데, `Settings(_env_file=None)` 은 `.env` 파일만 막고 환경변수는 그대로 읽습니다. 그래서 "DB 없이"
-# 를 전제로 한 단위 테스트가 CI 에서만 실제 DB 에 붙었습니다(로컬은 값이 .env 에만 있어 드러나지 않음).
+# 내려 주는데, `Settings(_env_file=None)` 은 `.env` 파일만 막고 환경변수는 그대로 읽습니다. 지우지 않으면
+# "DB 없이" 를 전제로 한 단위 테스트가 CI 에서만 실제 DB 에 붙습니다(로컬은 값이 .env 에만 있어 드러나지 않음).
 _ISOLATED_ENV = ("DATABASE_URL", "DATABASE_URL_DIRECT", "OPENROUTER_API_KEY", "REASON_MODEL")
 
 

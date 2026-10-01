@@ -292,9 +292,9 @@ async def seed_child_ingredient(
 async def most_guided_single_primary_product(conn: AsyncConnection) -> int | None:
     """적재분에서 보관법 조회가 가장 많은 줄을 내는 단일 원물 상품. 없으면 None.
 
-    예전 보관법 테스트는 "같은 (재료, 장소, 상황) 지침이 여러 줄인 상품" 을 골랐습니다. 0012 부터는
-    그런 중복을 DB 가 `uq_storage_guideline_query` 로 막아 그 상품이 없고, 조건을 못 채운 선택이
-    PRIMARY 가 둘인 상품(쿼리가 일부러 비움)으로 떨어져 검사가 무의미해졌습니다.
+    "같은 (재료, 장소, 상황) 지침이 여러 줄인 상품" 은 `uq_storage_guideline_query`(alembic 0012) 때문에
+    있을 수 없습니다. 그런 상품을 고르려 하면 조건을 못 채운 선택이 PRIMARY 가 둘인 상품(쿼리가 일부러
+    비움)으로 떨어져 검사가 무의미해집니다.
 
     그래서 쿼리가 실제로 여러 줄을 내는 상품을 고릅니다. 부위에 지침이 없으면 부모 지침을 쓰는
     경로와 상품 보관 장소 필터까지 쿼리와 같게 셉니다.

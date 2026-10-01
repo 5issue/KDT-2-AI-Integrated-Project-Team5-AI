@@ -94,8 +94,8 @@ class TestBubbleRuleIsDefinedOnce:
     async def test_counts_and_candidates_agree(self, db_conn: AsyncConnection) -> None:
         """세는 쿼리와 목록 쿼리가 같은 수를 내야 합니다.
 
-        예전에는 두 파일이 규칙을 따로 들고 있어, 세기로는 통과하는데 눌렀을 때
-        다른 목록이 나올 수 있었습니다. 지금은 같은 뷰를 봅니다.
+        두 파일이 규칙을 따로 들고 있으면 세기로는 통과하는데 눌렀을 때 다른 목록이
+        나옵니다. 그래서 둘 다 같은 뷰를 봅니다.
         """
         for row in await fetch(db_conn, "bubble_candidate_counts", {}):
             listed = await fetch(
