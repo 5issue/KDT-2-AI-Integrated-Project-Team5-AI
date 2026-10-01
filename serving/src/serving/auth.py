@@ -10,6 +10,14 @@
 - **X-User-Id 헤더** (로컬·JWKS 미설정): BFF 만 FastAPI 에 닿는 private network 전제입니다.
   JWT 가 켜지면 **무시합니다**. 둘을 같이 받으면 헤더 한 줄로 서명 검증을 우회할 수 있기 때문입니다.
 
+## 관리자 (BE 내부 호출)
+
+BE 서비스가 다른 사용자의 데이터를 쓰는 내부 엔드포인트(`/internal/*`)는 관리자 role 의 JWT 로
+부릅니다(BE 제안, `docs/api/be-sync.md` 3절). 같은 JWKS 검증을 거친 뒤 role 클레임
+(`JWT_ADMIN_ROLE_CLAIM`, 기본 `role`)이 `JWT_ADMIN_ROLE`(기본 `ADMIN`)인지 봅니다. 클레임이
+문자열이면 같은 값, 배열이면 그 값을 담고 있어야 합니다. 아니면 403 입니다. 이때 `sub` 는 관리자
+자신의 id 이고 대상 사용자는 요청 본문에서 받습니다. X-User-Id 모드(로컬)에서는 role 검사가 없습니다.
+
 ## 검증은 요청당 한 번, 미들웨어에서
 
 rate limit 과 액세스 로그는 의존성보다 먼저 도는 미들웨어라 사용자 키가 그 시점에 필요합니다.
@@ -28,7 +36,7 @@ JWKS 에서 뺀 키가 영원히 살아남으므로 끕니다. 모르는 `kid` �
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -43,6 +51,7 @@ AUTHORIZATION_HEADER = "Authorization"
 BEARER_PREFIX = "bearer "
 # request.state 에 남기는 검증 결과. 의존성과 미들웨어가 공유합니다.
 STATE_USER_ID = "auth_user_id"
+STATE_CLAIMS = "auth_claims"
 STATE_ERROR = "auth_error"
 
 logger = logging.getLogger("serving.auth")
@@ -50,6 +59,10 @@ logger = logging.getLogger("serving.auth")
 
 def _unauthorized() -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
+
+
+def _forbidden() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="관리자 권한이 필요합니다.")
 
 
 def _parse_user_id(raw: object) -> int | None:
@@ -95,9 +108,11 @@ class JwtVerifier:
         self._issuer = settings.jwt_issuer.strip() or None
         self._audience = settings.jwt_audience.strip() or None
         self._leeway = settings.jwt_leeway_seconds
+        self._admin_claim = settings.jwt_admin_role_claim.strip()
+        self._admin_role = settings.jwt_admin_role.strip()
 
-    def user_id(self, token: str) -> int:
-        """서명·만료·발급자(설정 시)·대상(설정 시)을 검증하고 `sub` 를 돌려줍니다.
+    def claims(self, token: str) -> dict[str, Any]:
+        """서명·만료·발급자(설정 시)·대상(설정 시)을 검증하고 클레임 전체를 돌려줍니다.
 
         실패 사유는 로그에 예외 이름만 남기고 응답은 401 하나로 통일합니다. 사유를 구분해
         내면 토큰 위조를 시도하는 쪽에 힌트가 됩니다. auth 서버에 닿지 못한 경우만 503 입니다.
@@ -121,12 +136,29 @@ class JwtVerifier:
         except (PyJWKClientError, jwt.PyJWTError) as exc:
             logger.info("JWT 검증 실패: %s", type(exc).__name__)
             raise _unauthorized() from exc
+        return claims
 
+    @staticmethod
+    def subject(claims: dict[str, Any]) -> int:
+        """`sub` 를 사용자 id 로 읽습니다. 정수 형식이 아니면 401 입니다."""
         user_id = _parse_user_id(claims.get("sub"))
         if user_id is None:
             logger.info("JWT sub 가 사용자 id 형식이 아닙니다")
             raise _unauthorized()
         return user_id
+
+    def user_id(self, token: str) -> int:
+        """토큰을 검증하고 `sub` 를 사용자 id 로 돌려줍니다."""
+        return self.subject(self.claims(token))
+
+    def is_admin(self, claims: dict[str, Any]) -> bool:
+        """role 클레임이 관리자 값인지 봅니다. 문자열은 같은 값, 배열은 그 값을 담고 있으면 참입니다."""
+        role = claims.get(self._admin_claim)
+        if isinstance(role, str):
+            return role == self._admin_role
+        if isinstance(role, list):
+            return any(isinstance(item, str) and item == self._admin_role for item in role)
+        return False
 
 
 def _verifier(request: Request) -> JwtVerifier | None:
@@ -150,13 +182,18 @@ def _cached(request: Request) -> int | None:
 
 
 def _verify_and_remember(request: Request, verifier: JwtVerifier, token: str) -> int:
-    """토큰을 검증하고 결과(성공·실패 모두)를 request.state 에 남깁니다."""
+    """토큰을 검증하고 결과(성공·실패 모두)를 request.state 에 남깁니다.
+
+    클레임도 함께 남겨 관리자 검사(`get_admin_user_id`)가 토큰을 다시 검증하지 않게 합니다.
+    """
     try:
-        user_id = verifier.user_id(token)
+        claims = verifier.claims(token)
+        user_id = verifier.subject(claims)
     except HTTPException as exc:
         setattr(request.state, STATE_ERROR, exc)
         raise
     setattr(request.state, STATE_USER_ID, user_id)
+    setattr(request.state, STATE_CLAIMS, claims)
     return user_id
 
 
@@ -233,3 +270,28 @@ def get_optional_user_id(
 
 
 OptionalUserId = Annotated[int, Depends(get_optional_user_id)]
+
+
+def get_admin_user_id(
+    request: Request,
+    authorization: Annotated[str | None, Header(alias=AUTHORIZATION_HEADER)] = None,
+    x_user_id: Annotated[str | None, Header(alias=USER_ID_HEADER)] = None,
+) -> int:
+    """BE 내부 호출용. 관리자 role 의 JWT 만 통과시키고 호출자(관리자) id 를 돌려줍니다.
+
+    토큰이 없거나 틀리면 401, 서명은 맞는데 관리자가 아니면 403 입니다. 대상 사용자 id 는
+    여기서 주지 않습니다. 요청 본문에서 받아 쓰는 것은 엔드포인트 몫입니다.
+    X-User-Id 모드(로컬)에서는 다른 엔드포인트와 같이 헤더만 봅니다.
+    """
+    verifier = _verifier(request)
+    if verifier is None:
+        return _header_user_id(x_user_id)
+    user_id = get_current_user_id(request, authorization, x_user_id)
+    claims = getattr(request.state, STATE_CLAIMS, None)
+    if not isinstance(claims, dict) or not verifier.is_admin(claims):
+        logger.info("관리자 role 이 아닌 토큰으로 내부 엔드포인트를 불렀습니다: sub=%s", user_id)
+        raise _forbidden()
+    return user_id
+
+
+AdminUserId = Annotated[int, Depends(get_admin_user_id)]

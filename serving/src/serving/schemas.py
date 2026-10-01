@@ -518,6 +518,44 @@ class FridgeItemSummary(BaseModel):
     expires_at: datetime | None = None
 
 
+class FridgeBulkUpsertRequest(BaseModel):
+    """BE 내부 호출(배송완료) 요청 (`POST /internal/fridge/items`). 대상 사용자는 본문의 user_id 입니다.
+
+    같은 상품이 두 번 오면 누적 규칙이 모호해져 422 입니다. BE 는 주문 품목을 상품별로 합쳐 보냅니다.
+    """
+
+    user_id: int = Field(ge=1, le=PG_BIGINT_MAX)
+    items: list[FridgeItemCreate] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def _unique_product_ids(self) -> FridgeBulkUpsertRequest:
+        ids = [item.product_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("items 에 같은 product_id 가 두 번 있습니다")
+        return self
+
+
+class FridgeUpsertedItem(FridgeItemSummary):
+    """upsert 결과 한 건. inserted 는 새로 담은 것, updated 는 이미 있어 수량을 더한 것입니다."""
+
+    action: Literal["inserted", "updated"]
+
+
+class FridgeSkippedItem(BaseModel):
+    """담지 못한 품목. reason 은 사람이 읽는 문구이고 BE 는 기록만 하면 됩니다."""
+
+    product_id: int
+    reason: str
+
+
+class FridgeBulkUpsertResponse(BaseModel):
+    """BE 내부 upsert 응답. items 와 skipped 를 합치면 요청 품목 전체입니다."""
+
+    user_id: int
+    items: list[FridgeUpsertedItem]
+    skipped: list[FridgeSkippedItem]
+
+
 class RecipeCard(BaseModel):
     """레시피 카드 한 장 (찜한 / 최근 본 목록 공통). 상세 컬럼은 RECIPE-01 이 냅니다."""
 

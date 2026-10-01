@@ -27,7 +27,7 @@ from serving.logging_setup import configure_logging
 from serving.ratelimit import RateLimitMiddleware
 from serving.reason_runtime import ReasonRuntime
 from serving.request_log import RequestLogMiddleware
-from serving.routers import fridge, health, home, products, recipes, recommendations, user_recipes
+from serving.routers import fridge, health, home, internal, products, recipes, recommendations, user_recipes
 
 logger = logging.getLogger("serving")
 
@@ -40,6 +40,7 @@ API_ROUTERS = (
     recipes.router,
     fridge.router,
     user_recipes.router,
+    internal.router,
 )
 
 

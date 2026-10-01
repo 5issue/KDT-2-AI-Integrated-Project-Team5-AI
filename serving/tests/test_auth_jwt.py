@@ -241,14 +241,14 @@ async def test_one_request_verifies_the_token_once(
 ) -> None:
     """액세스 로그·rate limit 미들웨어와 의존성이 한 요청에서 서명을 한 번만 검증합니다."""
     calls = 0
-    verify = JwtVerifier.user_id
+    verify = JwtVerifier.claims
 
-    def counting(self: JwtVerifier, token: str) -> int:
+    def counting(self: JwtVerifier, token: str) -> dict[str, Any]:
         nonlocal calls
         calls += 1
         return verify(self, token)
 
-    monkeypatch.setattr(JwtVerifier, "user_id", counting)
+    monkeypatch.setattr(JwtVerifier, "claims", counting)
     async with jwt_client(jwt_settings(rate_limit_per_minute=100), pool=_EmptyPool()) as client:
         assert (await client.get(FRIDGE, headers=bearer(make_token(signing_key)))).status_code == 200
     assert calls == 1
