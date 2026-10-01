@@ -1,6 +1,6 @@
 """Bearer JWT 인증 테스트. DB 도 네트워크도 쓰지 않습니다.
 
-JWKS 는 테스트가 만든 RSA 키 쌍으로 꾸미고, `PyJWKClient.fetch_data` 를 monkeypatch 해서
+JWKS 는 테스트가 만든 EC P-256 키 쌍(BE 와 같은 ES256)으로 꾸미고, `PyJWKClient.fetch_data` 를 monkeypatch 해서
 auth 서버 대신 그 JWKS 를 돌려줍니다.
 
 FastAPI 는 의존성을 선언 순서로 풀어 풀(`PoolDep`)이 인증보다 먼저입니다. 그래서
@@ -19,10 +19,10 @@ from typing import Any
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from jwt.algorithms import RSAAlgorithm
+from jwt.algorithms import ECAlgorithm
 from jwt.exceptions import PyJWKClientConnectionError
 
 from serving.app import create_app
@@ -32,28 +32,29 @@ from serving.config import Settings
 JWKS_URL = "https://auth.internal/.well-known/jwks.json"
 ISSUER = "https://auth.internal"
 KID = "key-2026-09"
+PrivateKey = ec.EllipticCurvePrivateKey
 FRIDGE = "/api/v1/users/me/fridge"
 MISSING = "/api/v1/recipes/1/missing-products"
 
 
 @pytest.fixture(scope="module")
-def signing_key() -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def signing_key() -> PrivateKey:
+    return ec.generate_private_key(ec.SECP256R1())
 
 
 @pytest.fixture(scope="module")
-def other_key() -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def other_key() -> PrivateKey:
+    return ec.generate_private_key(ec.SECP256R1())
 
 
-def jwks_for(key: rsa.RSAPrivateKey, kid: str = KID) -> dict[str, Any]:
+def jwks_for(key: PrivateKey, kid: str = KID) -> dict[str, Any]:
     """auth 서버가 내는 JWKS 모양. 공개키 하나에 kid 를 붙입니다."""
-    public = RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
-    return {"keys": [{**public, "kid": kid, "use": "sig", "alg": "RS256"}]}
+    public = ECAlgorithm.to_jwk(key.public_key(), as_dict=True)
+    return {"keys": [{**public, "kid": kid, "use": "sig", "alg": "ES256"}]}
 
 
 @pytest.fixture(scope="module")
-def jwks(signing_key: rsa.RSAPrivateKey) -> dict[str, Any]:
+def jwks(signing_key: PrivateKey) -> dict[str, Any]:
     return jwks_for(signing_key)
 
 
@@ -63,7 +64,7 @@ def _serve_jwks(monkeypatch: pytest.MonkeyPatch, jwks: dict[str, Any]) -> None:
 
 
 def make_token(
-    key: rsa.RSAPrivateKey,
+    key: PrivateKey,
     *,
     sub: object = "42",
     issuer: str | None = ISSUER,
@@ -77,7 +78,7 @@ def make_token(
         claims["iss"] = issuer
     claims.update(extra or {})
     headers = {"kid": kid} if kid else {}
-    return jwt.encode(claims, key, algorithm="RS256", headers=headers)
+    return jwt.encode(claims, key, algorithm="ES256", headers=headers)
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -129,14 +130,14 @@ async def rejecting() -> AsyncIterator[AsyncClient]:
         yield client
 
 
-async def test_valid_token_passes_auth(passing: AsyncClient, signing_key: rsa.RSAPrivateKey) -> None:
+async def test_valid_token_passes_auth(passing: AsyncClient, signing_key: PrivateKey) -> None:
     """서명이 맞으면 인증을 지나 엔드포인트 본문이 실행됩니다."""
     response = await passing.get(FRIDGE, headers=bearer(make_token(signing_key)))
     assert response.status_code == 200
     assert response.json()["data"] == {"items": []}
 
 
-def test_verifier_returns_sub(signing_key: rsa.RSAPrivateKey) -> None:
+def test_verifier_returns_sub(signing_key: PrivateKey) -> None:
     assert JwtVerifier(jwt_settings()).user_id(make_token(signing_key, sub="42")) == 42
 
 
@@ -157,7 +158,7 @@ async def test_x_user_id_is_ignored_when_jwt_enabled(rejecting: AsyncClient) -> 
     ["wrong_key", "expired", "wrong_issuer", "no_issuer", "unknown_kid", "non_numeric_sub", "zero_sub", "garbage"],
 )
 async def test_invalid_tokens_are_401(
-    rejecting: AsyncClient, signing_key: rsa.RSAPrivateKey, other_key: rsa.RSAPrivateKey, case: str
+    rejecting: AsyncClient, signing_key: PrivateKey, other_key: PrivateKey, case: str
 ) -> None:
     """실패 사유가 무엇이든 응답은 401 하나입니다 (사유 구분은 로그에만)."""
     tokens = {
@@ -175,13 +176,13 @@ async def test_invalid_tokens_are_401(
     assert response.json()["error"] == "UNAUTHORIZED"
 
 
-async def test_non_bearer_scheme_is_401(rejecting: AsyncClient, signing_key: rsa.RSAPrivateKey) -> None:
+async def test_non_bearer_scheme_is_401(rejecting: AsyncClient, signing_key: PrivateKey) -> None:
     response = await rejecting.get(FRIDGE, headers={"Authorization": f"Basic {make_token(signing_key)}"})
     assert response.status_code == 401
 
 
 async def test_optional_route_allows_anonymous_but_rejects_bad_token(
-    passing: AsyncClient, rejecting: AsyncClient, signing_key: rsa.RSAPrivateKey, other_key: rsa.RSAPrivateKey
+    passing: AsyncClient, rejecting: AsyncClient, signing_key: PrivateKey, other_key: PrivateKey
 ) -> None:
     """비로그인 허용 경로: 토큰이 없으면 익명으로 본문 실행(빈 풀이라 404), 있으면 검증합니다."""
     anonymous = await passing.get(MISSING)
@@ -192,7 +193,7 @@ async def test_optional_route_allows_anonymous_but_rejects_bad_token(
     assert forged.status_code == 401
 
 
-async def test_audience_is_checked_only_when_configured(signing_key: rsa.RSAPrivateKey) -> None:
+async def test_audience_is_checked_only_when_configured(signing_key: PrivateKey) -> None:
     settings = jwt_settings(jwt_audience="ai-serving")
     async with jwt_client(settings, pool=object()) as client:
         without = await client.get(FRIDGE, headers=bearer(make_token(signing_key)))
@@ -205,7 +206,7 @@ async def test_audience_is_checked_only_when_configured(signing_key: rsa.RSAPriv
 
 
 async def test_jwks_unreachable_is_503(
-    monkeypatch: pytest.MonkeyPatch, rejecting: AsyncClient, signing_key: rsa.RSAPrivateKey
+    monkeypatch: pytest.MonkeyPatch, rejecting: AsyncClient, signing_key: PrivateKey
 ) -> None:
     """auth 서버에 닿지 못하면 위조가 아니라 장애라 503 입니다 (풀 자리표시자라 DB 503 과 구분됩니다)."""
 
@@ -220,7 +221,7 @@ async def test_jwks_unreachable_is_503(
 
 
 def test_removed_key_is_rejected_after_jwks_cache_expires(
-    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey, other_key: rsa.RSAPrivateKey
+    monkeypatch: pytest.MonkeyPatch, signing_key: PrivateKey, other_key: PrivateKey
 ) -> None:
     """JWKS 에서 뺀 키는 캐시 수명이 지나면 더는 통하지 않습니다 (키별 LRU 캐시를 끈 이유)."""
     verifier = JwtVerifier(jwt_settings(jwt_jwks_cache_seconds=300))
@@ -236,9 +237,7 @@ def test_removed_key_is_rejected_after_jwks_cache_expires(
     assert excinfo.value.status_code == 401
 
 
-async def test_one_request_verifies_the_token_once(
-    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
-) -> None:
+async def test_one_request_verifies_the_token_once(monkeypatch: pytest.MonkeyPatch, signing_key: PrivateKey) -> None:
     """액세스 로그·rate limit 미들웨어와 의존성이 한 요청에서 서명을 한 번만 검증합니다."""
     calls = 0
     verify = JwtVerifier.claims
@@ -255,7 +254,7 @@ async def test_one_request_verifies_the_token_once(
 
 
 async def test_unreachable_jwks_is_tried_once_per_request(
-    monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey
+    monkeypatch: pytest.MonkeyPatch, signing_key: PrivateKey
 ) -> None:
     """auth 서버가 죽으면 요청 하나가 JWKS 를 한 번만 받으려 합니다.
 
@@ -274,7 +273,7 @@ async def test_unreachable_jwks_is_tried_once_per_request(
     assert attempts == 1
 
 
-async def test_rate_limit_keys_by_verified_user(signing_key: rsa.RSAPrivateKey) -> None:
+async def test_rate_limit_keys_by_verified_user(signing_key: PrivateKey) -> None:
     """rate limit 키는 검증을 통과한 사용자입니다. 다른 사용자는 서로 한도를 나누지 않습니다."""
     async with jwt_client(jwt_settings(rate_limit_per_minute=1), pool=_EmptyPool()) as client:
         first = await client.get(FRIDGE, headers=bearer(make_token(signing_key, sub="1")))
@@ -285,9 +284,7 @@ async def test_rate_limit_keys_by_verified_user(signing_key: rsa.RSAPrivateKey) 
         assert other.status_code == 200
 
 
-async def test_forged_token_cannot_exhaust_victim_bucket(
-    signing_key: rsa.RSAPrivateKey, other_key: rsa.RSAPrivateKey
-) -> None:
+async def test_forged_token_cannot_exhaust_victim_bucket(signing_key: PrivateKey, other_key: PrivateKey) -> None:
     """위조 토큰은 IP 버킷으로 세므로 대상 사용자의 정상 토큰은 그대로 통과합니다."""
     async with jwt_client(jwt_settings(rate_limit_per_minute=1), pool=_EmptyPool()) as client:
         forged = await client.get(FRIDGE, headers=bearer(make_token(other_key, sub="7")))

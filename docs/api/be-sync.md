@@ -46,8 +46,8 @@ BE 정책: 동기 호출은 JWT 원문을 전파하고 각 서비스가 auth 서
 - 검증: 서명(JWKS, `kid` 로 키 선택, 키 교체 시 자동 재조회), `exp`, 설정하면 `iss`·`aud`.
   실패는 모두 401 `UNAUTHORIZED` 이고 사유는 서버 로그에만 남깁니다. JWKS 를 받지 못하면 503.
 - 사용자 id: `sub` 를 양의 정수로 읽습니다. `sub` 가 정수 문자열이 아니면 401 입니다.
-  **BE 확인 필요**: `sub` 가 `users.id` 숫자 그대로인지, 다른 형식(UUID 등)이면 어느 클레임에
-  숫자 id 가 있는지.
+  BE 확인(2026-10-01): 사용자 토큰의 `sub` 는 `users.id` 숫자 문자열(예 `"8"`)입니다. 토큰에는
+  `role`(`USER`/`ADMIN`), `token_type`(`ACCESS`), `jti` 도 있으며 AI 서버는 `role` 만 봅니다(3절).
 - 비로그인 허용 경로(`RECIPE-03`)는 헤더가 없으면 익명, 있는데 틀리면 401 입니다.
 - rate limit 과 액세스 로그의 사용자 키도 토큰의 `sub` 입니다.
 - **처음 쓰는 사용자는 AI DB 에 자동 등록합니다.** AI DB 의 `app_user` 는 id 와 등록 시각만 가진 표이고,
@@ -61,14 +61,15 @@ BE 정책: 동기 호출은 JWT 원문을 전파하고 각 서비스가 auth 서
 | 키                       | 값                                            | 비고                                                       |
 | ------------------------ | --------------------------------------------- | ---------------------------------------------------------- |
 | `JWT_JWKS_URL`           | `http://<auth-service>/.well-known/jwks.json` | 비우면 X-User-Id 방식(로컬 전용)                           |
-| `JWT_ISSUER`             | auth 서버의 `iss` 값                          | 비우면 검사하지 않음. **BE 값 확인 필요**                  |
-| `JWT_AUDIENCE`           | AI 서버용 `aud` 값                            | 비우면 검사하지 않음. BE 가 aud 를 넣지 않으면 비워 둠     |
-| `JWT_ALGORITHMS`         | `RS256` (기본)                                | 쉼표 구분. BE 가 ES256 등을 쓰면 바꿈. **BE 값 확인 필요** |
+| `JWT_ISSUER`             | `https://api.cloudyim.store`                  | BE 확정값. 비우면 검사하지 않음                            |
+| `JWT_AUDIENCE`           | `cloudyim-client`                             | BE 확정값(사용자·관리자 공통). 비우면 검사하지 않음        |
+| `JWT_ALGORITHMS`         | `ES256` (기본)                                | BE 확정값. 쉼표 구분으로 여러 개 가능                      |
 | `JWT_LEEWAY_SECONDS`     | `30`                                          | 시계 오차 허용                                             |
 | `JWT_JWKS_CACHE_SECONDS` | `300`                                         | JWKS 캐시 수명                                             |
 
-BE 에 받아야 하는 값 세 가지: **JWKS URL(클러스터 내부 주소), `iss`, 서명 알고리즘**. `aud` 는
-쓰고 있다면 함께. -> 디스코드에 토론게시판에 클라우드팀이 공유하였으므로 참고합니다.
+2026-10-01 BE 가 실제 토큰 헤더·본문을 공유해 `alg`(ES256)·`iss`·`aud`·`sub` 형식이 확정됐습니다.
+남은 것은 **JWKS URL 의 클러스터 내부 주소** 하나입니다(공개 경로는 `<iss>/.well-known/jwks.json` 으로
+추정). 디스코드 토론게시판에 클라우드팀이 공유한 값을 참고합니다.
 
 ## 3. My냉장고 채우기 (BE -> AI)
 
@@ -93,8 +94,9 @@ Content-Type: application/json
 - 인증: 2절과 같은 JWKS 서명 검증을 거친 뒤 `role` 클레임이 `ADMIN` 인지 봅니다(클레임이 문자열이면
   같은 값, 배열이면 포함). 토큰이 없거나 틀리면 401, 관리자가 아니면 403 `FORBIDDEN`. 클레임 이름과
   값은 `JWT_ADMIN_ROLE_CLAIM`(기본 `role`)·`JWT_ADMIN_ROLE`(기본 `ADMIN`)로 바꿀 수 있습니다.
-  **BE 확인 필요**: 관리자 토큰의 role 클레임 이름과 값이 정확히 `role` / `"ADMIN"` 인지.
-- `user_id` 는 대상 사용자(users.id). 토큰의 `sub` 는 관리자 자신이라 쓰지 않습니다.
+  BE 확인(2026-10-01): 클레임 이름 `role`, 값 문자열 `"ADMIN"` 그대로입니다.
+- `user_id` 는 대상 사용자(users.id). 토큰의 `sub` 는 관리자 자신의 **`admins.id`** 라 `users.id` 와
+  다른 id 공간이고, AI 서버는 이 값을 rate limit·로그 키(`admin:<id>`)로만 씁니다.
   처음 보는 사용자는 `app_user` 에 자동 등록합니다(2절).
 - `items` 는 1~100 개, `product_id` 는 1절의 공통 id 이고 **한 요청 안에서 중복 불가**(422). BE 는
   같은 상품의 주문 라인을 합쳐 보냅니다. `quantity` 는 0 보다 큰 수, `unit` 은 1~20자,

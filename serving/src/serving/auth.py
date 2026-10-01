@@ -16,7 +16,9 @@ BE 서비스가 다른 사용자의 데이터를 쓰는 내부 엔드포인트(`
 부릅니다(BE 제안, `docs/api/be-sync.md` 3절). 같은 JWKS 검증을 거친 뒤 role 클레임
 (`JWT_ADMIN_ROLE_CLAIM`, 기본 `role`)이 `JWT_ADMIN_ROLE`(기본 `ADMIN`)인지 봅니다. 클레임이
 문자열이면 같은 값, 배열이면 그 값을 담고 있어야 합니다. 아니면 403 입니다. 이때 `sub` 는 관리자
-자신의 id 이고 대상 사용자는 요청 본문에서 받습니다. X-User-Id 모드(로컬)에서는 role 검사가 없습니다.
+자신의 id(BE `admins.id`, `users.id` 와 **다른 id 공간**)이고 대상 사용자는 요청 본문에서 받습니다.
+rate limit·액세스 로그의 사용자 키는 `admin:<id>` 로 구분해 같은 숫자의 일반 사용자와 버킷을 나누지
+않습니다. X-User-Id 모드(로컬)에서는 role 검사가 없습니다.
 
 ## 검증은 요청당 한 번, 미들웨어에서
 
@@ -53,6 +55,8 @@ BEARER_PREFIX = "bearer "
 STATE_USER_ID = "auth_user_id"
 STATE_CLAIMS = "auth_claims"
 STATE_ERROR = "auth_error"
+# 관리자 토큰의 sub 는 admins.id 라 users.id 와 겹칩니다. 미들웨어 키에서 접두사로 구분합니다.
+ADMIN_KEY_PREFIX = "admin:"
 
 logger = logging.getLogger("serving.auth")
 
@@ -212,15 +216,23 @@ async def resolve_user_key(request: Request) -> str | None:
     # 다시 검증하면 인증 서버가 죽었을 때 요청마다 JWKS 제한 시간을 두 번 기다립니다.
     if getattr(request.state, STATE_ERROR, None) is not None:
         return None
-    if (verified := getattr(request.state, STATE_USER_ID, None)) is not None:
-        return str(verified)
-    token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
-    if token is None:
-        return None
-    try:
-        user_id = await run_in_threadpool(_verify_and_remember, request, verifier, token)
-    except HTTPException:
-        return None
+    if getattr(request.state, STATE_USER_ID, None) is None:
+        token = bearer_token(request.headers.get(AUTHORIZATION_HEADER))
+        if token is None:
+            return None
+        try:
+            await run_in_threadpool(_verify_and_remember, request, verifier, token)
+        except HTTPException:
+            return None
+    return _state_key(request, verifier)
+
+
+def _state_key(request: Request, verifier: JwtVerifier) -> str:
+    """request.state 의 검증 결과로 미들웨어 키를 만듭니다. 관리자 토큰은 `admin:` 접두사를 붙입니다."""
+    user_id = getattr(request.state, STATE_USER_ID)
+    claims = getattr(request.state, STATE_CLAIMS, None)
+    if isinstance(claims, dict) and verifier.is_admin(claims):
+        return f"{ADMIN_KEY_PREFIX}{user_id}"
     return str(user_id)
 
 
