@@ -5,7 +5,7 @@ uvicorn 은 자기 로거(`uvicorn`, `uvicorn.error`, `uvicorn.access`)에만 �
 구조화 액세스 로그(`serving.access`), graceful shutdown 로그, 추천 이유 LLM 사용 여부와
 실패 사유가 전부 여기에 해당합니다. WARNING 이상만 파이썬의 최후 수단 출력으로 겨우 나갑니다.
 
-테스트는 `caplog` 가 로거 레벨을 직접 올려 통과하므로 이 공백을 잡지 못했습니다.
+`caplog` 는 로거 레벨을 직접 올려 통과하므로 테스트로는 이 공백을 잡지 못합니다.
 실제 프로세스에서 나가는지는 `test_request_log.py` 가 subprocess 로 확인합니다.
 """
 

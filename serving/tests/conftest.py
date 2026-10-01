@@ -53,9 +53,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     이 훅은 세션 전체 item 목록을 받습니다. 이 폴더 아래 테스트만 걸러내지 않으면,
     .env 가 없는 폴더의 훅이 다른 폴더의 DB 테스트까지 skip 시켜 버립니다.
 
-    llm 테스트는 실제 OpenRouter 를 불러 과금이 있습니다. 예전에는 `-m` 표현식에 `llm` 이라는 글자가
-    있는지로 판단해, `-m "db or not llm"` 처럼 오히려 빼려는 표현식이나 `llm_mock` 같은 다른 마커 이름에도
-    열렸습니다(PR #42 리뷰). 표현식을 해석하지 않고 명시 플래그로만 켭니다.
+    llm 테스트는 실제 OpenRouter 를 불러 과금이 있습니다. `-m` 표현식에 `llm` 이라는 글자가 있는지로
+    판단하면 `-m "db or not llm"` 처럼 오히려 빼려는 표현식이나 `llm_mock` 같은 다른 마커 이름에도
+    열립니다. 그래서 표현식을 해석하지 않고 명시 플래그로만 켭니다.
     """
     own_tests = Path(__file__).parent.resolve()
     own_items = [item for item in items if own_tests in Path(str(item.path)).resolve().parents]

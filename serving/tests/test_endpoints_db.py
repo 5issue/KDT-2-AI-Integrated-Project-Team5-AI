@@ -4,8 +4,8 @@
 결과가 0건이어도 통과입니다. 데이터가 아니라 쿼리와 응답 스키마를 검증합니다.
 
 lifespan 이 만든 실제 풀을 쓰므로 **읽기만 합니다.** 쓰기가 필요한 검사(My냉장고 CRUD 등)는
-롤백되는 `test_api_integration.py` 에 있습니다. 예전 `test_fridge_crud_cycle` 은 공용 DB 에 실제로
-커밋했다가 지우는 방식이라, 중간에 실패하면 행이 남아 그쪽으로 옮기고 지웠습니다.
+롤백되는 `test_api_integration.py` 에 있습니다. 커밋했다가 지우는 방식은 중간에 실패하면 공용 DB 에
+행이 남기 때문입니다.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ async def test_product_endpoints_query_runs(live_client: AsyncClient) -> None:
 async def test_recipe_endpoints_query_runs(live_client: AsyncClient) -> None:
     """레시피 2종이 실제 스키마에서 돕니다. 404 로 우회하지 않도록 실제 레시피를 찾아 200 을 요구합니다."""
     recipe_id = None
-    # 적재분의 recipe_id 는 1 부터가 아닙니다 (현재 1092~). 앞쪽 구간을 넉넉히 훑습니다.
+    # 적재분의 recipe_id 는 1 부터가 아닙니다. 앞쪽 구간과 적재분의 첫 구간(1092~)을 훑습니다.
     for candidate in list(range(1, 5)) + list(range(1092, 1112)):
         if (await live_client.get(f"/api/v1/recipes/{candidate}")).status_code == 200:
             recipe_id = candidate

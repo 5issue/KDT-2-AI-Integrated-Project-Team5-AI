@@ -242,7 +242,7 @@ async def test_lifespan_without_openrouter_key_starts_and_stops_cleanly() -> Non
 async def test_lifespan_with_key_but_no_db_stays_template(caplog: pytest.LogCaptureFixture) -> None:
     """키가 있어도 DB 가 없으면 재료 사전이 없어 LLM 을 켜지 않습니다 (PR #42 리뷰 A).
 
-    예전에는 빈 사전으로 클라이언트를 만들어, 지어낸 재료 검사가 항상 통과하는 상태로 켜졌습니다.
+    빈 사전으로 클라이언트를 만들면 지어낸 재료 검사가 항상 통과하는 상태로 켜집니다.
     """
     settings = Settings(_env_file=None, shutdown_delay_seconds=0, openrouter_api_key="test-key")  # type: ignore[call-arg]
     app = create_app(settings)
@@ -310,7 +310,7 @@ async def test_lifespan_loads_ingredient_vocabulary_and_closes_client(monkeypatc
 @pytest.mark.parametrize(
     ("pool", "expected_warning"),
     [
-        # 데이터 복원 전 DB. 예전에는 이 조회가 lifespan 을 깨뜨려 파드 전체가 CrashLoop 였습니다.
+        # 데이터 복원 전 DB. 이 조회 실패가 lifespan 을 깨뜨리면 파드 전체가 CrashLoop 에 빠집니다.
         (
             _VocabularyPool([], error=asyncpg.UndefinedTableError('relation "ingredient" does not exist')),
             "UndefinedTableError",

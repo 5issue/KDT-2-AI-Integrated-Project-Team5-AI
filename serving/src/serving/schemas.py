@@ -384,8 +384,8 @@ class RecommendedProduct(BaseModel):
 class ProductRecommendationInfo(BaseModel):
     """추천 근거 (명세 14장 recommendation 객체).
 
-    주문 로그가 아직 없어 score 는 "이 버블의 레시피 중 이 재료를 쓰는 수" 입니다.
-    인기도 원천이 쌓이면 점수 정의를 교체합니다 (필드 계약은 동일).
+    score 는 "이 버블의 레시피 중 이 재료를 쓰는 수" 입니다. 주문 기반 인기도를 쓰지 않는 이유는
+    `bubble_products.sql` 머리 주석에 있습니다. 점수 정의를 바꿔도 필드 계약은 같습니다.
     """
 
     score: float
