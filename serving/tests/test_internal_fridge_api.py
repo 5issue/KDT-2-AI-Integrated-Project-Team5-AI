@@ -1,6 +1,6 @@
 """BE 내부 냉장고 upsert(`POST /internal/fridge/items`) 테스트. DB 도 네트워크도 쓰지 않습니다.
 
-관리자 검사는 test_auth_jwt 와 같은 방식으로 RSA 키 쌍을 만들고 `PyJWKClient.fetch_data` 를
+관리자 검사는 test_auth_jwt 와 같은 방식으로 EC P-256 키 쌍(ES256)을 만들고 `PyJWKClient.fetch_data` 를
 monkeypatch 해 JWKS 를 꾸밉니다. upsert 분기는 문장별로 정해진 결과를 내는 가짜 연결로 봅니다.
 """
 
@@ -13,9 +13,9 @@ from typing import Any
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
-from jwt.algorithms import RSAAlgorithm
+from jwt.algorithms import ECAlgorithm
 
 from serving import app_user_sql, fridge_sql
 from serving.app import create_app
@@ -30,21 +30,21 @@ BODY = {"user_id": 42, "items": [{"product_id": 101, "quantity": 2, "unit": "개
 
 
 @pytest.fixture(scope="module")
-def signing_key() -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def signing_key() -> ec.EllipticCurvePrivateKey:
+    return ec.generate_private_key(ec.SECP256R1())
 
 
 @pytest.fixture(autouse=True)
-def _serve_jwks(monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey) -> None:
-    public = RSAAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
-    jwks = {"keys": [{**public, "kid": KID, "use": "sig", "alg": "RS256"}]}
+def _serve_jwks(monkeypatch: pytest.MonkeyPatch, signing_key: ec.EllipticCurvePrivateKey) -> None:
+    public = ECAlgorithm.to_jwk(signing_key.public_key(), as_dict=True)
+    jwks = {"keys": [{**public, "kid": KID, "use": "sig", "alg": "ES256"}]}
     monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", lambda self: jwks)
 
 
-def bearer(key: rsa.RSAPrivateKey, **extra: Any) -> dict[str, str]:
+def bearer(key: ec.EllipticCurvePrivateKey, **extra: Any) -> dict[str, str]:
     now = datetime.now(UTC)
     claims: dict[str, Any] = {"sub": "9", "iat": now, "exp": now + timedelta(minutes=10), **extra}
-    return {"Authorization": f"Bearer {jwt.encode(claims, key, algorithm='RS256', headers={'kid': KID})}"}
+    return {"Authorization": f"Bearer {jwt.encode(claims, key, algorithm='ES256', headers={'kid': KID})}"}
 
 
 class _UpsertConnection:
@@ -90,6 +90,9 @@ class _UpsertConnection:
             self.calls.append(("add", args[1]))
             # 기존 수량 3 에 새 수량을 더한 값. expires_at 은 플래그($6)가 참일 때만 새 값입니다.
             return [{"quantity": 3 + args[2], "unit": args[3], "expires_at": args[4] if args[5] else None}]
+        if sql.startswith("-- name:"):
+            # 카탈로그 조회(사용자 냉장고 GET 등)는 빈 목록. 관리자 버킷 분리 테스트가 지나갑니다.
+            return []
         assert sql == fridge_sql.INSERT_ITEM
         self.calls.append(("insert", args[1]))
         return [] if args[1] == 404 else [{"ingredient_id": 1}]
@@ -128,7 +131,7 @@ async def test_requires_token_in_jwt_mode(jwt_client: AsyncClient) -> None:
 
 @pytest.mark.parametrize("extra", [{}, {"role": "USER"}, {"role": ["USER"]}, {"role": 1}, {"roles": "ADMIN"}])
 async def test_non_admin_token_is_forbidden(
-    jwt_client: AsyncClient, signing_key: rsa.RSAPrivateKey, extra: dict[str, Any]
+    jwt_client: AsyncClient, signing_key: ec.EllipticCurvePrivateKey, extra: dict[str, Any]
 ) -> None:
     """서명은 맞지만 role 클레임이 ADMIN 이 아니면 403 FORBIDDEN 입니다. 클레임 이름이 다른 것도 거절합니다."""
     response = await jwt_client.post(PATH, headers=bearer(signing_key, **extra), json=BODY)
@@ -139,7 +142,7 @@ async def test_non_admin_token_is_forbidden(
 
 @pytest.mark.parametrize("extra", [{"role": "ADMIN"}, {"role": ["USER", "ADMIN"]}])
 async def test_admin_token_passes(
-    jwt_client: AsyncClient, signing_key: rsa.RSAPrivateKey, extra: dict[str, Any]
+    jwt_client: AsyncClient, signing_key: ec.EllipticCurvePrivateKey, extra: dict[str, Any]
 ) -> None:
     """role 이 문자열 ADMIN 이거나 배열에 ADMIN 이 있으면 통과해 본문이 실행됩니다."""
     response = await jwt_client.post(PATH, headers=bearer(signing_key, **extra), json=BODY)
@@ -152,7 +155,7 @@ async def test_admin_token_passes(
     ]
 
 
-async def test_admin_role_claim_name_and_value_are_configurable(signing_key: rsa.RSAPrivateKey) -> None:
+async def test_admin_role_claim_name_and_value_are_configurable(signing_key: ec.EllipticCurvePrivateKey) -> None:
     """클레임 이름과 값은 설정으로 바꿉니다 (BE 규약이 다를 때)."""
     settings = _settings(jwt_jwks_url=JWKS_URL, jwt_admin_role_claim="authorities", jwt_admin_role="ROLE_ADMIN")
     async with _client(settings, _UpsertConnection()) as client:
@@ -161,6 +164,19 @@ async def test_admin_role_claim_name_and_value_are_configurable(signing_key: rsa
 
     assert ok.status_code == 200
     assert rejected.status_code == 403
+
+
+async def test_admin_bucket_is_separate_from_same_numbered_user(signing_key: ec.EllipticCurvePrivateKey) -> None:
+    """관리자 sub 는 admins.id 라 같은 숫자의 users.id 와 rate limit 버킷을 나누지 않습니다."""
+    settings = _settings(jwt_jwks_url=JWKS_URL, rate_limit_per_minute=1)
+    async with _client(settings, _UpsertConnection()) as client:
+        admin = await client.post(PATH, headers=bearer(signing_key, role="ADMIN"), json=BODY)
+        user = await client.get("/api/v1/users/me/fridge", headers=bearer(signing_key, role="USER"))
+        admin_again = await client.post(PATH, headers=bearer(signing_key, role="ADMIN"), json=BODY)
+
+    assert admin.status_code == 200
+    assert user.status_code == 200, "관리자 호출이 같은 숫자 사용자의 버킷을 소진했습니다"
+    assert admin_again.status_code == 429
 
 
 async def test_header_mode_requires_caller_id(header_client: AsyncClient) -> None:

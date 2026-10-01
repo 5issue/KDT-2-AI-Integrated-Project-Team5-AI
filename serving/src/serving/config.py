@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     jwt_jwks_url: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = ""
-    jwt_algorithms: Annotated[tuple[str, ...], NoDecode] = ("RS256",)
+    jwt_algorithms: Annotated[tuple[str, ...], NoDecode] = ("ES256",)
     jwt_leeway_seconds: float = Field(default=30.0, ge=0)
     jwt_jwks_cache_seconds: int = Field(default=300, ge=1)
     jwt_jwks_timeout_seconds: float = Field(default=5.0, gt=0)
