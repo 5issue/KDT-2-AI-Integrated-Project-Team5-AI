@@ -74,6 +74,18 @@ async def test_probes_scrapes_and_unmatched_paths_are_not_counted(client: AsyncC
     assert "does-not-exist-12345" not in body
 
 
+async def test_trailing_slash_redirects_do_not_create_series(client: AsyncClient) -> None:
+    """끝에 슬래시만 붙은 요청은 307 리다이렉트이고, id 가 든 원래 경로로 시계열을 만들지 않습니다.
+
+    계측 라이브러리는 리다이렉트가 필요한 요청에 템플릿 대신 원래 경로를 라벨로 내므로 따로 뺍니다.
+    """
+    for path in ("/api/v1/products/12/", "/api/v1/products/34/"):
+        assert (await client.get(path, headers=USER, follow_redirects=False)).status_code == 307
+    body = (await client.get("/metrics")).text
+    assert "/api/v1/products/12/" not in body
+    assert "/api/v1/products/34/" not in body
+
+
 async def test_metrics_is_hidden_from_docs_and_access_log(
     client: AsyncClient, caplog: pytest.LogCaptureFixture
 ) -> None:

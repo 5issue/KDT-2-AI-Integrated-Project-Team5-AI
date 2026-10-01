@@ -4,6 +4,8 @@
 
 - `handler` 라벨은 경로 템플릿(`/api/v1/products/{product_id}`)입니다. id 마다 시계열이 늘지 않습니다.
   라우트에 맞지 않는 요청(스캐너의 404 등)은 세지 않습니다. 같은 이유입니다.
+- 끝에 슬래시만 붙은 요청(`/api/v1/products/12/`)은 307 리다이렉트인데, 계측 라이브러리가 템플릿 대신 원래
+  경로를 라벨로 냅니다. id 마다 시계열이 생기므로 세지 않습니다. 실제 라우트 템플릿은 슬래시로 끝나지 않습니다.
 - 상태 코드는 묶지 않습니다. 503(DB 미연결)과 500(처리되지 않은 예외)을 갈라 봐야 하기 때문입니다.
 - 헬스체크와 `/metrics` 자신은 세지 않습니다. 프로브·스크레이프가 요청 수와 지연 분포를 흐립니다.
 - 처리되지 않은 예외도 500 으로 셉니다. 계측 미들웨어가 다른 미들웨어보다 바깥에 서므로 rate limit 의
@@ -21,8 +23,8 @@ from prometheus_client import CollectorRegistry, GCCollector, PlatformCollector,
 from prometheus_fastapi_instrumentator import Instrumentator
 
 METRICS_PATH = "/metrics"
-# 세지 않는 경로(정규식). 헬스체크 프로브와 스크레이프 자신입니다.
-EXCLUDED_HANDLERS = [r"^/metrics$", r"^/health(/db)?$"]
+# 세지 않는 경로(정규식). 헬스체크 프로브, 스크레이프 자신, 슬래시 리다이렉트의 원래 경로입니다.
+EXCLUDED_HANDLERS = [r"^/metrics$", r"^/health(/db)?$", r"^/.+/$"]
 
 
 def install_metrics(app: FastAPI) -> None:

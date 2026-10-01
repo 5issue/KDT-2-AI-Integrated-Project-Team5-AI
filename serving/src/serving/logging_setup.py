@@ -23,6 +23,9 @@ from __future__ import annotations
 import logging
 import sys
 
+from uvicorn.config import LOGGING_CONFIG as UVICORN_DEFAULT_CONFIG
+from uvicorn.logging import DefaultFormatter
+
 from serving.request_log import access_logger
 
 LOGGER_NAMES = ("serving", "rag_lab")
@@ -46,9 +49,24 @@ class _Formatter(logging.Formatter):
         return super().format(record)
 
 
+_UVICORN_DEFAULT_FMT = UVICORN_DEFAULT_CONFIG["formatters"]["default"]["fmt"]
+
+
 def _is_uvicorn_default(handler: logging.Handler) -> bool:
-    """uvicorn 이 기본 설정(`uvicorn.config.LOGGING_CONFIG`)으로 단 핸들러인가. 직접 설정한 것은 아닙니다."""
-    return handler.formatter is not None and type(handler.formatter).__module__.startswith("uvicorn")
+    """uvicorn 이 기본 설정(`uvicorn.config.LOGGING_CONFIG`)으로 단 핸들러인가.
+
+    formatter 만 보지 않고 stream·level·filter 까지 기본과 같아야 참입니다. `--log-config` 에서 같은
+    formatter 를 쓰면서 stream 이나 level 을 바꾼 핸들러는 사용자 설정이라 바꾸지 않습니다.
+    """
+    formatter = handler.formatter
+    return (
+        type(handler) is logging.StreamHandler
+        and handler.stream is sys.stderr
+        and handler.level == logging.NOTSET
+        and not handler.filters
+        and type(formatter) is DefaultFormatter
+        and formatter._fmt == _UVICORN_DEFAULT_FMT
+    )
 
 
 def configure_logging() -> None:
@@ -75,6 +93,6 @@ def configure_logging() -> None:
             logger.addHandler(handler)
             logger.propagate = False
     uvicorn_logger = logging.getLogger(UVICORN_LOGGER)
-    if uvicorn_logger.handlers and all(_is_uvicorn_default(h) for h in uvicorn_logger.handlers):
+    if len(uvicorn_logger.handlers) == 1 and _is_uvicorn_default(uvicorn_logger.handlers[0]):
         uvicorn_logger.handlers = [handler]
     logging.getLogger(UVICORN_ACCESS_LOGGER).disabled = True

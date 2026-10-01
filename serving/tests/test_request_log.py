@@ -202,6 +202,21 @@ def test_uvicorn_plain_access_log_is_off_regardless_of_command() -> None:
     assert "GET /health" not in result.stdout + result.stderr
 
 
+def test_customized_uvicorn_handler_is_kept() -> None:
+    """`--log-config` 로 uvicorn 핸들러를 바꿨다면(같은 formatter 에 stream 만 stdout) 앱이 덮어쓰지 않습니다."""
+    result = _run_python(
+        "import copy, logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "config = copy.deepcopy(LOGGING_CONFIG)\n"
+        "config['handlers']['default']['stream'] = 'ext://sys.stdout'\n"
+        "logging.config.dictConfig(config)\n"
+        "import serving.app\n"
+        "logging.getLogger('uvicorn.error').info('Started server process')\n"
+    )
+    assert "Started server process" in result.stdout, result.stdout
+    assert "INFO uvicorn.error: Started server process" not in result.stdout + result.stderr
+
+
 def test_dev_server_turns_off_uvicorn_access_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """로컬 개발 서버(`uv run serving run`)도 이미지와 같게 uvicorn 평문 액세스 로그를 끕니다."""
     from serving import cli

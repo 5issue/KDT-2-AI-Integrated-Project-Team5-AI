@@ -367,18 +367,18 @@ spec:
       targetPort: 8000
 ```
 
-### 4-3. BFF 만 서빙에 닿게 하기 (NetworkPolicy)
+### 4-3. BFF·BE·Prometheus 만 서빙에 닿게 하기 (NetworkPolicy)
 
-JWT 검증이 켜지면 헤더 한 줄로 다른 사용자가 될 수는 없지만, 서빙을 부를 곳은 BFF 와 BE
-order-service(냉장고 채우기, `docs/api/be-sync.md` 3절)뿐입니다. 공격면을 줄이려고 그 파드만
-들어오게 막습니다. `JWT_JWKS_URL` 을 비워 X-User-Id 방식으로 띄운다면 이 정책이 유일한 방어라
+JWT 검증이 켜지면 헤더 한 줄로 다른 사용자가 될 수는 없지만, 서빙을 부를 곳은 BFF 와 BE 배송완료
+Admin API(냉장고 채우기, `docs/api/be-sync.md` 3절)뿐이고, Prometheus 가 `/metrics` 를 긁어 갑니다(4-4).
+공격면을 줄이려고 그 파드만 들어오게 막습니다. `JWT_JWKS_URL` 을 비워 X-User-Id 방식으로 띄운다면 이 정책이 유일한 방어라
 필수입니다.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: serving-allow-bff-only
+  name: serving-allow-callers
 spec:
   podSelector:
     matchLabels: { app: serving }
@@ -390,6 +390,15 @@ spec:
           # BFF 가 다른 네임스페이스면 같은 항목에 네임스페이스 조건을 함께 둡니다.
           # namespaceSelector:
           #   matchLabels: { kubernetes.io/metadata.name: <BFF 네임스페이스> }
+      ports:
+        - protocol: TCP
+          port: 8000
+    # BE 배송완료 Admin API 가 내부 냉장고 upsert(`/api/v1/internal/fridge/items`)를 부릅니다.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: <BE 네임스페이스> }
+          podSelector:
+            matchLabels: { app: <BE 배송완료 Admin API 파드 라벨> }
       ports:
         - protocol: TCP
           port: 8000
@@ -525,7 +534,7 @@ FORWARDED_ALLOW_IPS: "*"        # 서빙에 닿는 것이 BFF 뿐일 때 (Cluste
 
 **`"*"` 는 "서빙 앞단이 헤더를 덮어쓴다" 는 전제에서만 안전합니다.** 서빙에 직접 닿는 경로가
 생기면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를 `ClusterIP` 로 두고
-NetworkPolicy 로 BFF 만 들이라는 권고(4-3, 8절)와 같은 이유입니다.
+NetworkPolicy 로 정해진 파드만 들이라는 권고(4-3, 8절)와 같은 이유입니다.
 
 BFF 가 헤더를 넘기기 전까지는 공개 API 한도가 전원 공용이므로, 발표·시연처럼 한꺼번에 몰리는
 자리에서는 `RATE_LIMIT_PER_MINUTE` 를 넉넉히(예: 600) 올려 두는 것이 안전합니다.
