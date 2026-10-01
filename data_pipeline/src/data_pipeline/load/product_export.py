@@ -2,11 +2,10 @@
 
 ## 왜 있나
 
-AI 응답의 `product_id` 는 AI DB(kitchen) 기준이라 BE 상품 id 와 달랐습니다. 2026-09-29 BE 답변:
-AI 쪽 상품 데이터 DML SQL 을 주면 BE 가 그대로 적재해 **product_id 와 price 를 같은 값으로**
-맞추겠다고 했습니다. 그러면 매핑 컬럼(external_product_id) 없이 id 를 그대로 주고받습니다.
-재고(`stock_quantity`)는 초기값만 같고 주문이 일어나면 갈라집니다. 그건 프로젝트 기간 안에
-맞추지 않기로 했고, 화면 표시는 BE 값을 씁니다.
+AI 응답의 `product_id` 는 AI DB(kitchen) 기준입니다. BE 가 이 DML 을 그대로 적재해 **product_id 와
+price 를 같은 값으로** 맞추므로(`docs/api/be-sync.md` 1절), 매핑 컬럼(external_product_id) 없이 id 를
+그대로 주고받습니다. 재고(`stock_quantity`)는 초기값만 같고 주문이 일어나면 갈라지며, 화면 표시는
+BE 값을 씁니다.
 
 ## 무엇을 내나
 
@@ -19,9 +18,9 @@ PostgreSQL 전용 문법(`::jsonb`, `E''`, `ON CONFLICT`)을 쓰지 않습니다
 
 - **DB**(기본): 설정의 `DATABASE_URL` 에서 읽습니다.
 - **pg_dump 파일**(`--from-dump`): 팀장이 BE 에 넘긴 `production_backup.sql` 같은 plain 덤프의
-  `COPY public.category` / `COPY public.product` 블록을 읽습니다. 2026-09-30 확인 결과 dev 브랜치는
-  `image_url` 이 0건이고 production 백업은 2,500건이라, BE 에 주는 정본은 백업에서 만듭니다.
-  나머지 컬럼은 두 원천이 행 단위로 같았습니다.
+  `COPY public.category` / `COPY public.product` 블록을 읽습니다. DB 마다 채워진 컬럼이 다를 수 있어
+  (예: `image_url`) BE 에 주는 정본은 production 백업에서 만듭니다. 두 원천을 대조한 기록은
+  `docs/api/be-sync.md` 1절에 있습니다.
 
 `product` 는 `category_id` 로 `category` 를 참조하므로 category 문장이 먼저 나옵니다.
 문자열은 작은따옴표를 두 번 써서 이스케이프하고, 그 밖의 제어 문자는 원천에 없는 것을 검증합니다

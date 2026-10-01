@@ -107,10 +107,7 @@ def test_html_tags_are_stripped() -> None:
 
 
 def test_fraction_quantity_is_computed_not_concatenated() -> None:
-    """예전에는 숫자 아닌 글자를 전부 지워 `1/2알` 이 `12` 로 저장됐습니다.
-
-    COOKRCP01 5,813개 수량 표기 중 2건이 실제로 그렇게 들어갔습니다.
-    """
+    """숫자 아닌 글자를 전부 지우면 `1/2알` 이 `12` 로 저장됩니다. 분수는 분수로 계산해야 합니다."""
     assert rc._quantity("1/2알") == Decimal("0.5")
     assert rc._quantity("2/3작은술") == Decimal("0.67")
 

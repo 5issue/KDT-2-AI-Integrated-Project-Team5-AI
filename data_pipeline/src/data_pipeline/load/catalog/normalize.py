@@ -27,11 +27,11 @@ NULLISH = frozenset({"", "none", "null", "nan", "-"})
 # 바꿔 두는 편이 낫습니다. `docs/product-ingredient-storage-normalization-guide.md`
 # 4.3 절의 대응과 같습니다.
 #
-# 모르는 값은 지어내지 않고 **비웁니다.** 현재 raw 2,553행에는 아래 3종과
-# 빈 값(1,551행)뿐이지만, 원본이 늘면서 새 표기가 들어올 수 있습니다.
+# 모르는 값은 지어내지 않고 **비웁니다.** 원본이 늘면 아래 3종과 빈 값 말고 새 표기가
+# 들어올 수 있습니다.
 #
-# 원문 그대로 통과시키던 때가 있었는데, 그 뒤 alembic 0007 이 `ck_product_storage_type`
-# 으로 셋 중 하나만 받도록 했습니다. 그대로 두면 새 표기 한 건에 적재 전체가 롤백됩니다.
+# alembic 0007 의 `ck_product_storage_type` 이 셋 중 하나만 받으므로, 원문을 그대로 통과시키면
+# 새 표기 한 건에 적재 전체가 롤백됩니다.
 # 임의로 셋 중 하나에 끼워 넣는 것도 안 됩니다. 틀린 보관법은 없는 것보다 나쁩니다.
 # 버려진 값은 적재 리포트에 남아 눈에 띕니다.
 PRODUCT_STORAGE_TYPES: dict[str, str] = {
@@ -113,10 +113,10 @@ BRAND_NAME_LENGTH = 100
 def _brand_name(payload: dict[str, Any]) -> str | None:
     """브랜드 이름. 최상위 `brand` 를 먼저 보고, 없으면 `metadata.brand` 를 봅니다.
 
-    지금 raw(`product_raw.parquet`)는 `metadata` 안에만 싣고 오는데, 원천이 정리되면서
-    최상위 컬럼으로 올라올 수 있습니다. 둘 다 보면 raw 가 어느 쪽이든 동작합니다.
+    raw(`product_raw.parquet`)가 브랜드를 `metadata` 안에 싣든 최상위 컬럼으로 싣든 동작하도록
+    둘 다 봅니다.
 
-    **`brand_id` 가 아니라 이름을 담습니다.** `brand` 테이블이 없고, 지금 브랜드에
+    **`brand_id` 가 아니라 이름을 담습니다.** `brand` 테이블이 없고, 브랜드에
     달 속성이 이름뿐이라 표를 만들 이유가 없습니다(alembic `0011` 의 사유 참고).
     """
     direct = _text(payload.get("brand"))
