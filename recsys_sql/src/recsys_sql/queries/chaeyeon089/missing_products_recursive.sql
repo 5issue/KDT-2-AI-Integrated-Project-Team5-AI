@@ -72,7 +72,9 @@ ranked AS (
            ROW_NUMBER() OVER (
                PARTITION BY m.ingredient_id
                ORDER BY COALESCE(rp.recommendation_priority, 0) DESC,
-                        COALESCE(pop.popularity_score, 0) DESC,
+                        -- TODO(인기도): product_popularity 는 주문 로그 집계라, 실제 주문이 이 DB 에 쌓이면 아래 줄을
+                        -- 되살립니다. 데모 시드 값으로는 순위를 정하지 않습니다(ai_context 구매이력·인기도 TODO).
+                        -- COALESCE(pop.popularity_score, 0) DESC,
                         p.price ASC,
                         p.product_id ASC
            ) AS rank_in_ingredient
