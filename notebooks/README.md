@@ -5,4 +5,6 @@
 | `ingredient_master_storage_alignment.ipynb` | 재료 마스터 정렬과 보관 가이드 보강 | 셸 환경변수 |
 | `ai_safety_eval.ipynb` | 추천 이유 LLM 안전성 검증 (할루시네이션·Prompt Injection·편향, deepeval) | `notebooks/.env` (`.env.example` 참고) |
 
+검증 이후 대응책과 다음 실행에서 고칠 평가 코드는 `ai_safety_eval_followups.md` 에 있습니다.
+
 `.gitignore` 가 `*.ipynb` 를 제외하므로, 공유할 노트북은 `.gitignore` 에 예외(`!notebooks/<이름>.ipynb`)를 추가합니다.
