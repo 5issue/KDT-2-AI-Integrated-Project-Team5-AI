@@ -24,6 +24,7 @@ from serving.config import Settings, get_settings
 from serving.db import create_pool, mask_dsn
 from serving.exceptions import API_PREFIX, register_exception_handlers
 from serving.logging_setup import configure_logging
+from serving.metrics import install_metrics
 from serving.ratelimit import RateLimitMiddleware
 from serving.reason_runtime import ReasonRuntime
 from serving.request_log import RequestLogMiddleware
@@ -131,6 +132,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.add_middleware(RequestLogMiddleware)
+    # 계측은 가장 바깥에 둡니다. 429 와 처리되지 않은 예외(500)까지 셉니다(metrics.py).
+    install_metrics(app)
 
     register_exception_handlers(app)
 

@@ -105,7 +105,8 @@ JWT_ALGORITHMS=RS256
 | 항목 | 값 | 왜 |
 | --- | --- | --- |
 | `Service.type` | `ClusterIP` | 밖에서 부를 일이 없습니다. BFF 와 BE 서비스만 클러스터 안에서 부릅니다 |
-| `NetworkPolicy` | BFF 파드만 ingress 허용 | `ClusterIP` 는 클러스터 밖만 막습니다. 안의 다른 파드도 막아야 전제가 섭니다 (4-3) |
+| `NetworkPolicy` | BFF·BE 파드와 Prometheus 만 ingress 허용 | `ClusterIP` 는 클러스터 밖만 막습니다. 안의 다른 파드도 막아야 전제가 섭니다 (4-3) |
+| `ServiceMonitor` | `/metrics`, 30초 | kube-prometheus-stack 이 지표를 긁어 갑니다. `release` 라벨을 Prometheus 설정에 맞춥니다 (4-4) |
 | `terminationGracePeriodSeconds` | `30` | `SHUTDOWN_DELAY_SECONDS` + 처리 중 요청보다 커야 합니다 (5-6) |
 | `readinessProbe` | `/health/db`, `timeoutSeconds: 3` | `/health` 로 두면 DB 미연결을 못 잡습니다 (5-1). 기본 응답 제한 1초는 DB 왕복에 빠듯합니다 (4-2) |
 | `livenessProbe` | `/health` | DB 상태로 컨테이너를 재시작시키지 않기 위해 |
@@ -354,28 +355,30 @@ apiVersion: v1
 kind: Service
 metadata:
   name: serving
+  labels: { app: serving }   # ServiceMonitor 가 이 라벨로 Service 를 찾습니다 (4-4)
 spec:
   type: ClusterIP          # 외부 노출은 아직 이릅니다 (8절). 클러스터 안의 접근은 4-3 이 막습니다
   selector: { app: serving }
   ports:
     # VPC CNI 로 NetworkPolicy 를 집행하면 Service 포트와 컨테이너 포트가 같아야 합니다 (4-3).
-    # BFF 는 http://serving:8000 으로 부릅니다.
-    - port: 8000
+    # BFF 는 http://serving:8000 으로 부릅니다. 포트 이름은 ServiceMonitor 가 씁니다.
+    - name: http
+      port: 8000
       targetPort: 8000
 ```
 
-### 4-3. BFF 만 서빙에 닿게 하기 (NetworkPolicy)
+### 4-3. BFF·BE·Prometheus 만 서빙에 닿게 하기 (NetworkPolicy)
 
-JWT 검증이 켜지면 헤더 한 줄로 다른 사용자가 될 수는 없지만, 서빙을 부를 곳은 BFF 와 BE
-order-service(냉장고 채우기, `docs/api/be-sync.md` 3절)뿐입니다. 공격면을 줄이려고 그 파드만
-들어오게 막습니다. `JWT_JWKS_URL` 을 비워 X-User-Id 방식으로 띄운다면 이 정책이 유일한 방어라
+JWT 검증이 켜지면 헤더 한 줄로 다른 사용자가 될 수는 없지만, 서빙을 부를 곳은 BFF 와 BE 배송완료
+Admin API(냉장고 채우기, `docs/api/be-sync.md` 3절)뿐이고, Prometheus 가 `/metrics` 를 긁어 갑니다(4-4).
+공격면을 줄이려고 그 파드만 들어오게 막습니다. `JWT_JWKS_URL` 을 비워 X-User-Id 방식으로 띄운다면 이 정책이 유일한 방어라
 필수입니다.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: serving-allow-bff-only
+  name: serving-allow-callers
 spec:
   podSelector:
     matchLabels: { app: serving }
@@ -387,6 +390,24 @@ spec:
           # BFF 가 다른 네임스페이스면 같은 항목에 네임스페이스 조건을 함께 둡니다.
           # namespaceSelector:
           #   matchLabels: { kubernetes.io/metadata.name: <BFF 네임스페이스> }
+      ports:
+        - protocol: TCP
+          port: 8000
+    # BE 배송완료 Admin API 가 내부 냉장고 upsert(`/api/v1/internal/fridge/items`)를 부릅니다.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: <BE 네임스페이스> }
+          podSelector:
+            matchLabels: { app: <BE 배송완료 Admin API 파드 라벨> }
+      ports:
+        - protocol: TCP
+          port: 8000
+    # kube-prometheus-stack 의 Prometheus 가 /metrics 를 긁어 갑니다 (4-4).
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }   # 스택을 설치한 네임스페이스
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: prometheus }
       ports:
         - protocol: TCP
           port: 8000
@@ -403,6 +424,48 @@ spec:
 ```bash
 kubectl run np-check --rm -it --restart=Never --image=curlimages/curl -- curl -sS -m 3 http://serving:8000/health
 ```
+
+### 4-4. Prometheus 수집 (kube-prometheus-stack)
+
+서빙은 `/metrics` 에 Prometheus 형식 지표를 냅니다(`serving/src/serving/metrics.py`). 요청 수
+(`http_requests_total`), 지연 히스토그램(`http_request_duration_seconds`), 요청·응답 크기, 프로세스·GC
+지표입니다. `handler` 라벨은 경로 템플릿(`/api/v1/users/me/fridge`)이고 상태 코드는 묶지 않아 500 과
+503 이 갈립니다. 헬스체크와 `/metrics` 자신은 세지 않습니다.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: serving
+  labels:
+    release: kube-prometheus-stack   # Prometheus 의 serviceMonitorSelector 에 맞춥니다(대개 helm release 이름)
+spec:
+  selector:
+    matchLabels: { app: serving }    # 4-2 Service 의 metadata.labels
+  namespaceSelector:
+    matchNames: [<serving 네임스페이스>]
+  endpoints:
+    - port: http                     # 4-2 Service 의 포트 이름
+      path: /metrics
+      interval: 30s
+```
+
+- `/metrics` 는 인증이 없습니다. 밖으로 노출하지 않고(ClusterIP), NetworkPolicy 로 Prometheus 만
+  들입니다(4-3). 정책은 포트 단위라 Prometheus 는 API 에도 닿을 수 있지만, 스택 안의 신뢰된 파드입니다.
+- 지표는 프로세스 메모리에 쌓입니다. 이미지는 uvicorn 워커 하나라 그대로 맞고, 레플리카마다 따로
+  수집되어 Prometheus 에서 합칩니다.
+- 수집이 붙었는지는 Prometheus UI 의 Status > Targets 에서 `serviceMonitor/<ns>/serving` 이 UP 인지 봅니다.
+
+자주 쓰는 질의:
+
+```promql
+# 경로별 5xx 비율 (FE 가 본 500 이 어느 경로에서 얼마나 나는지)
+sum by (handler, status) (rate(http_requests_total{status=~"5.."}[5m]))
+# 경로별 p95 지연
+histogram_quantile(0.95, sum by (le, handler) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
+500 의 원인(traceback)은 지표에 없고 로그에서 봅니다(7절).
 
 ## 5. 밟기 쉬운 함정
 
@@ -471,7 +534,7 @@ FORWARDED_ALLOW_IPS: "*"        # 서빙에 닿는 것이 BFF 뿐일 때 (Cluste
 
 **`"*"` 는 "서빙 앞단이 헤더를 덮어쓴다" 는 전제에서만 안전합니다.** 서빙에 직접 닿는 경로가
 생기면 클라이언트가 `X-Forwarded-For` 를 위조해 한도를 우회합니다. Service 를 `ClusterIP` 로 두고
-NetworkPolicy 로 BFF 만 들이라는 권고(4-3, 8절)와 같은 이유입니다.
+NetworkPolicy 로 정해진 파드만 들이라는 권고(4-3, 8절)와 같은 이유입니다.
 
 BFF 가 헤더를 넘기기 전까지는 공개 API 한도가 전원 공용이므로, 발표·시연처럼 한꺼번에 몰리는
 자리에서는 `RATE_LIMIT_PER_MINUTE` 를 넉넉히(예: 600) 올려 두는 것이 안전합니다.
@@ -581,17 +644,18 @@ BFF 가 같은 헤더를 보내면 그 값을 그대로 이어받아 경계 간 
 
 ```bash
 curl -si localhost:8080/api/v1/home/bubbles | grep -i x-request-id
-kubectl logs -l app=serving | grep '"request_id":"<값>"'
+kubectl logs -l app=serving | grep '<request id 값>'
 ```
 
-헬스체크(`/health`, `/health/db`)는 로그를 남기지 않습니다. 프로브가 30초마다 찍는 노이즈를
-막기 위한 것이라, 프로브 실패는 로그가 아니라 `kubectl describe pod` 로 봅니다.
+헬스체크(`/health`, `/health/db`)와 `/metrics` 는 로그를 남기지 않습니다. 프로브·스크레이프가 주기적으로
+찍는 노이즈를 막기 위한 것이라, 프로브 실패는 로그가 아니라 `kubectl describe pod` 로 봅니다.
 같은 이유로 앱이 uvicorn 의 평문 액세스 로그를 코드에서 끕니다(`logging_setup.py`). 매니페스트가
 `command` 를 바꿔 `--no-access-log` 가 빠져도 같습니다. 액세스 로그는 앱의 JSON 한 줄뿐입니다.
 
-`serving`·`rag_lab` 로그는 앱이 단 핸들러로 stderr 에 나가고 루트로 전파하지 않습니다. 루트에도
+로그 설정은 `serving/src/serving/logging_setup.py` 한 곳에 있습니다. `serving`·`rag_lab` 로그와 uvicorn
+자신의 로그(`INFO uvicorn.error: ...`)가 같은 핸들러로 stderr 에 나가고 루트로 전파하지 않습니다. 루트에도
 핸들러가 있으면 한 줄이 두 번(하나는 루트 형식) 찍혀 JSON 한 줄 계약이 깨지기 때문입니다. 수집 형식을
-바꾸려면 uvicorn `--log-config` 에서 두 로거에 핸들러를 직접 지정하세요. 그러면 앱은 그 설정을 건드리지 않습니다.
+바꾸려면 uvicorn `--log-config` 로 로거에 핸들러를 직접 지정하세요. 그러면 앱은 그 설정을 건드리지 않습니다.
 
 ### 추천 이유 LLM 확인
 
@@ -619,8 +683,8 @@ for i in $(seq 1 70); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/
   `JWT_JWKS_URL`·`JWT_ISSUER`·서명 알고리즘은 BE auth 서버 값을 받아 채워야 하고, 아직 받지
   못했습니다. `JWT_JWKS_URL` 을 비우면 `X-User-Id` 헤더 방식으로 떠서 헤더 한 줄로 임의 사용자가
   되므로, 배포에서는 반드시 채우고 NetworkPolicy(4-3)도 함께 둡니다.
-- **메트릭 엔드포인트가 없습니다.** 요청 id 와 액세스 로그는 들어왔지만(#25) `/metrics` 는
-  아직입니다. 지연·에러율 집계는 로그를 긁어야 합니다.
+- **알림 규칙과 에러 추적 도구가 없습니다.** `/metrics` 는 있지만(4-4) 5xx 비율 알림(PrometheusRule)은
+  아직 두지 않았습니다. 500 의 traceback 은 로그로 보며, 에러 추적은 Sentry 로 따로 붙일 예정입니다.
 - **rate limit 이 프로세스 메모리입니다.** 단일 컨테이너 전제라 레플리카를 늘리면 실효 한도가
   배수가 됩니다(5-4). 정확한 한도가 필요하면 Redis 백엔드가 필요합니다.
 - **보안 헤더가 없습니다**(HSTS, `X-Content-Type-Options` 등). BFF 뒤에 있으면 대개 BFF 가
